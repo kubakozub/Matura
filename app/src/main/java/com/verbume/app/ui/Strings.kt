@@ -50,6 +50,12 @@ class Str(private val lang: UiLanguage) {
     val addRow get() = pick("Dodaj wiersz", "Add row")
     val save get() = pick("Zapisz", "Save")
     val delete get() = pick("Usuń", "Delete")
+    val confirmDelete get() = pick("Na pewno?", "Sure?")
+    val deleteHint
+        get() = pick(
+            "Wbudowanych zestawów nie da się usunąć. Własne kasujesz koszem — dwa razy, żeby nie zrobić tego przypadkiem.",
+            "Built-in sets cannot be removed. Your own go with the bin — twice, so it does not happen by accident."
+        )
     val swapLanguages get() = pick("Zamień strony", "Swap sides")
     val builtIn get() = pick("wbudowany", "built-in")
     val entriesLabel get() = pick("haseł", "entries")

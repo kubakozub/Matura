@@ -216,6 +216,7 @@ fun SetsScreen(
     onEdit: (WordSet) -> Unit,
     onDelete: (WordSet) -> Unit,
 ) {
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
     ScreenScaffold(str.sets, onBack, str.back) {
         Column(Modifier.fillMaxSize()) {
             Row(
@@ -282,17 +283,31 @@ fun SetsScreen(
                                 }
                                 if (!set.builtIn) {
                                     Spacer(Modifier.width(8.dp))
+                                    val armed = pendingDelete == set.id
                                     Box(
                                         Modifier
-                                            .background(Palette.Surface)
+                                            .background(if (armed) Palette.Danger else Palette.Surface)
                                             .border(3.dp, Palette.Danger)
-                                            .clickable { onDelete(set) }
+                                            .clickable {
+                                                // dwa tapniecia: pierwsze uzbraja, drugie kasuje
+                                                if (armed) {
+                                                    onDelete(set)
+                                                    pendingDelete = null
+                                                } else {
+                                                    pendingDelete = set.id
+                                                }
+                                            }
                                             .padding(horizontal = 16.dp, vertical = 12.dp)
                                     ) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             PixelImage(pixel(R.drawable.icon_trash), Modifier.size(14.dp))
                                             Spacer(Modifier.width(7.dp))
-                                            PixelText(str.delete, color = Palette.Danger, glyphHeight = 10.dp)
+                                            PixelText(
+                                                if (armed) str.confirmDelete else str.delete,
+                                                color = if (armed) Palette.Ink else Palette.Danger,
+                                                outline = if (armed) null else Palette.Ink,
+                                                glyphHeight = 10.dp,
+                                            )
                                         }
                                     }
                                 }
@@ -300,7 +315,11 @@ fun SetsScreen(
                         }
                     }
                 }
-                item { Spacer(Modifier.height(24.dp)) }
+                item {
+                    Spacer(Modifier.height(10.dp))
+                    InfoCard(str.deleteHint)
+                    Spacer(Modifier.height(24.dp))
+                }
             }
         }
     }

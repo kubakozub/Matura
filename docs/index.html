@@ -24,8 +24,13 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .primary:active{transform:translateY(2px);box-shadow:0 2px 0 #7CC242}
 .area{font-size:11px;letter-spacing:.12em;color:#A8E05A;margin:14px 0 6px;
   border-bottom:2px solid #2B2F4A;padding-bottom:5px;text-transform:uppercase}
+.rowwrap{display:flex;gap:6px;align-items:stretch;margin-bottom:6px}
 .row{background:#1A1E30;border:3px solid #2B2F4A;padding:11px;display:flex;gap:11px;
-  align-items:center;width:100%;text-align:left;margin-bottom:6px}
+  align-items:center;flex:1;min-width:0;text-align:left}
+.del{background:#1A1E30;border:3px solid #E0524F;padding:0 13px;display:flex;
+  align-items:center;justify-content:center;flex:0 0 auto}
+.del:active{background:#E0524F}
+.del img{height:18px}
 .row img{height:20px}
 .row b{display:block;font-size:13px}
 .row span{display:block;font-size:11px;color:#8F8A76;margin-top:2px;font-weight:400}
@@ -386,11 +391,19 @@ function fontCentred(text,cx,bottomY,scale,color,outline='#101322'){
 }
 function badgeSprite(m){ return m>=5?IMG.badge_x5:m>=3?IMG.badge_x3:m>=2?IMG.badge_x2:null; }
 
+// ---- etykiety --------------------------------------------------------------
+const MY_SETS_LABEL='Moje zestawy';
+const WORDS_LABEL='hase\u0142';
+const DELETE_LABEL='Usu\u0144 zestaw';
+const CONFIRM_DELETE='Usun\u0105\u0107 zestaw \u201e%s\u201d? Tego nie da si\u0119 cofn\u0105\u0107.';
+const DELETED_MSG='Usuni\u0119to \u201e%s\u201d.';
+const STORE_SETS='verbume_sets';
+
 // ---- data ------------------------------------------------------------------
 const BUILTIN = DEMO_SETS;
 
 let customSets=[];
-try{ customSets=JSON.parse(localStorage.getItem('verbume_sets')||'[]'); }catch(e){ customSets=[]; }
+try{ customSets=JSON.parse(localStorage.getItem(STORE_SETS)||'[]'); }catch(e){ customSets=[]; }
 const allSets=()=>[...BUILTIN,...customSets];
 
 // ---- state -----------------------------------------------------------------
@@ -621,9 +634,10 @@ function spriteKey(name,fn,flex,flip){
 function renderSetPick(){
   const list=$('setlist'); list.innerHTML='';
   let head=null;
+  const custom=new Set(customSets.map(s=>s.id));
   for(const s of allSets()){
     const usable=s.entries.some(e=>e.term.trim()&&e.definition.trim());
-    const area = s.title.includes(' \u00b7 ') ? s.title.split(' \u00b7 ')[0] : 'Moje zestawy';
+    const area = s.title.includes(' \u00b7 ') ? s.title.split(' \u00b7 ')[0] : MY_SETS_LABEL;
     if(area!==head){
       head=area;
       const h=document.createElement('div');
@@ -631,14 +645,35 @@ function renderSetPick(){
       list.appendChild(h);
     }
     const short = s.title.includes(' \u00b7 ') ? s.title.split(' \u00b7 ').slice(1).join(' \u00b7 ') : s.title;
+    const wrap=document.createElement('div'); wrap.className='rowwrap';
     const el=document.createElement('button');
     el.className='row'; el.disabled=!usable;
     el.innerHTML=`<img src="${SPRITES.icon_star}"><div><b>${escapeHtml(short)}</b>
-      <span>${s.entries.length} hase\u0142</span></div>`;
+      <span>${s.entries.length} ${WORDS_LABEL}</span></div>`;
     el.onclick=()=>startGame(s);
-    list.appendChild(el);
+    wrap.appendChild(el);
+    if(custom.has(s.id)){
+      // wbudowanych nie da sie skasowac, wlasne tak - tak samo jak w aplikacji
+      const del=document.createElement('button');
+      del.className='del'; del.setAttribute('aria-label', DELETE_LABEL);
+      del.innerHTML=`<img src="${SPRITES.icon_trash}">`;
+      del.onclick=ev=>{ ev.stopPropagation(); removeSet(s.id); };
+      wrap.appendChild(del);
+    }
+    list.appendChild(wrap);
   }
 }
+
+function removeSet(id){
+  const s=customSets.find(x=>x.id===id);
+  if(!s) return;
+  if(!confirm(CONFIRM_DELETE.replace('%s', s.title))) return;
+  customSets=customSets.filter(x=>x.id!==id);
+  localStorage.setItem(STORE_SETS, JSON.stringify(customSets));
+  renderSetPick();
+  $('importMsg').textContent = DELETED_MSG.replace('%s', s.title);
+}
+
 function startGame(set){
   chosenSet=set;
   engine=new Engine(set,opts.lives,opts.direction);
@@ -663,7 +698,7 @@ function importSet(){
   const title=$('setTitle').value.trim()||'Mój zestaw';
   const set={id:'u'+Date.now(), title, a:'?', b:'?', entries:filtered};
   customSets.push(set);
-  localStorage.setItem('verbume_sets',JSON.stringify(customSets));
+  localStorage.setItem(STORE_SETS,JSON.stringify(customSets));
   $('importMsg').textContent=`Dodano „${title}" — ${filtered.length} par` + (single&&filtered.length<entries.length ? ` (odrzucono ${entries.length-filtered.length} wielowyrazowych)`:'');
   $('paste').value=''; $('setTitle').value='';
   renderSetPick();
