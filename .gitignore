@@ -17,3 +17,6 @@ Thumbs.db
 
 # Robocze
 warmup.log
+
+# APK trafia do docs/ ręcznie przed publikacją na Pages, nie do historii
+docs/*.apk
