@@ -44,7 +44,8 @@ Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 - **Konta, logowanie, zestawy innych użytkowników, globalne rankingi** — wymagają serwera. Aplikacja jest w pełni offline, wszystko leży w prywatnym pliku JSON na urządzeniu. „Play anonymously" to jedyna ścieżka.
 - **TRUE/FALSE, MULTIPLE CHOICE, TIME ATTACK** — widoczne w menu wyboru trybu jako nieaktywne. Silnik jest pod nie przygotowany (dopasowywanie i model zestawu są wspólne), ale same tryby nie są napisane.
 - **Automatyczne tłumaczenie przyciskiem „T"** — wymaga płatnego Google Translate API i klucza.
-- **Grafika i dźwięk** — potworki, działko i pociski są rysowane wektorowo na Canvasie według makiet z dokumentu, nie ma plików graficznych. Dźwięk to krótkie tony systemowe.
+- **Dźwięk** — krótkie tony generowane na urządzeniu, bez plików audio.
+- **Grafika** — pełna paczka pixel-art jest w zasobach; nieużyte zostają `crate_power`, `bomb`, `freeze`, `shield`, `bullet_heavy` i `bullet_plasma`, bo nie ma jeszcze mechanik bonusów.
 
 ## Jedna decyzja projektowa, która nie wynika wprost z dokumentu
 
@@ -71,7 +72,7 @@ Minimalny Android: 7.0 (API 24). Aplikacja jest w orientacji pionowej.
 ```bash
 unzip verbume-src.zip && cd verbume
 ./gradlew :app:assembleDebug          # APK w app/build/outputs/apk/debug/
-./gradlew :app:testDebugUnitTest      # 34 testy jednostkowe
+./gradlew :app:testDebugUnitTest      # 43 testy jednostkowe
 ```
 
 Android Studio: `File → Open` na katalogu `verbume`. `local.properties` wygeneruje się samo.
@@ -90,9 +91,13 @@ app/src/main/java/com/verbume/app/
   ui/PlayScreen.kt           plansza, rysowanie, pętla klatek
   ui/Keyboard.kt             ograniczona klawiatura z dokumentu
   ui/Screens.kt              menu, zestawy, edytor, opcje, odznaki, wyniki
+  ui/Sprites.kt              rejestr sprite'ów, klatki animacji, kafelkowanie
+  ui/PixelFont.kt            renderer fontu bitmapowego font_8x8
+  data/BuiltInSets.kt        generowane zestawy słownictwa (nie edytuj ręcznie)
 app/src/test/java/com/verbume/app/
   EngineTest.kt              28 testów mechaniki
-  PersistenceTest.kt         6 testów zapisu i zestawów startowych
+  PersistenceTest.kt         6 testów zapisu i treści startowej
+  BuiltInSetsTest.kt         9 testów pilnujących reguły dwóch słów
 ```
 
 `GameEngine` celowo nie zna Androida ani Compose — dzięki temu cała mechanika jest
