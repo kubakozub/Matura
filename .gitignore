@@ -1,0 +1,19 @@
+# Gradle
+.gradle/
+build/
+*/build/
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# System
+.DS_Store
+Thumbs.db
+
+# Robocze
+warmup.log
