@@ -105,9 +105,19 @@ class BuiltInSetsTest {
     }
 
     @Test
+    fun `every set is small enough to be cleared in one run`() {
+        // Celem podzialu jest ok. 20 hasel: tyle przerabia sie w jednej rozgrywce,
+        // wiec kazde haslo wraca kilka razy zamiast pojawic sie raz na kwadrans.
+        val tooBig = BuiltInSets.all().filter { it.entries.size > 25 }.map { it.title }
+        assertTrue("sets over 25 entries: $tooBig", tooBig.isEmpty())
+        val tooSmall = BuiltInSets.all().filter { it.entries.size < 20 }.map { it.title }
+        assertTrue("sets under 20 entries: $tooSmall", tooSmall.isEmpty())
+    }
+
+    @Test
     fun `the collection is large enough to be worth studying`() {
         val total = BuiltInSets.all().sumOf { it.entries.size }
-        assertTrue("only $total entries", total >= 1500)
-        assertTrue("only ${BuiltInSets.all().size} sets", BuiltInSets.all().size >= 50)
+        assertTrue("only $total entries", total >= 2000)
+        assertTrue("only ${BuiltInSets.all().size} sets", BuiltInSets.all().size >= 100)
     }
 }
