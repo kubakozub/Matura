@@ -20,3 +20,8 @@ warmup.log
 
 # APK trafia do docs/ ręcznie przed publikacją na Pages, nie do historii
 docs/*.apk
+
+# Klucz do podpisu wydania - nigdy do repozytorium
+keystore.properties
+*.jks
+*.keystore

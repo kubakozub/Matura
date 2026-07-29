@@ -1,4 +1,4 @@
-package com.verbume.app.model
+package com.matura.app.model
 
 import kotlinx.serialization.Serializable
 

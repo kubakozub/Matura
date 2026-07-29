@@ -1,7 +1,7 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import androidx.compose.ui.graphics.Color
-import com.verbume.app.model.Texture
+import com.matura.app.model.Texture
 
 /**
  * The asset pack's own palette: eight colours plus the outline black #101322.

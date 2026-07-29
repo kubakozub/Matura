@@ -1,4 +1,4 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.Composable
@@ -13,13 +13,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
-import com.verbume.app.R
-import com.verbume.app.game.GameEngine
-import com.verbume.app.model.Texture
+import com.matura.app.R
+import com.matura.app.game.GameEngine
+import com.matura.app.model.Texture
 import kotlin.math.roundToInt
 
 /**
- * Pixel-art sprites from the Verbume asset pack.
+ * Pixel-art sprites from the original asset pack.
  *
  * The pack ships 1x (16x16 base grid) for the game and 4x for previews, and states
  * plainly: scale nearest-neighbour only. So the 1x files live in `drawable-nodpi`,

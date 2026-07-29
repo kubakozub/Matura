@@ -1,7 +1,7 @@
-package com.verbume.app.game
+package com.matura.app.game
 
-import com.verbume.app.model.Direction
-import com.verbume.app.model.WordSet
+import com.matura.app.model.Direction
+import com.matura.app.model.WordSet
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min

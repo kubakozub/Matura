@@ -1,4 +1,4 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -10,11 +10,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import com.verbume.app.data.Repository
-import com.verbume.app.model.Options
-import com.verbume.app.model.Profile
-import com.verbume.app.model.SaveData
-import com.verbume.app.model.WordSet
+import com.matura.app.data.Repository
+import com.matura.app.model.Options
+import com.matura.app.model.Profile
+import com.matura.app.model.SaveData
+import com.matura.app.model.WordSet
 
 sealed interface Screen {
     data object Start : Screen
@@ -30,7 +30,7 @@ sealed interface Screen {
 }
 
 @Composable
-fun VerbumeApp(repo: Repository, onExitApp: () -> Unit) {
+fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
     var data by remember { mutableStateOf(repo.load()) }
     var stack by remember { mutableStateOf(listOf<Screen>(Screen.Start)) }
 

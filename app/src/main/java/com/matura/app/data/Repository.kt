@@ -1,12 +1,12 @@
-package com.verbume.app.data
+package com.matura.app.data
 
 import android.content.Context
-import com.verbume.app.model.Entry
-import com.verbume.app.model.Profile
-import com.verbume.app.model.Options
-import com.verbume.app.model.SaveData
-import com.verbume.app.model.ScoreRecord
-import com.verbume.app.model.WordSet
+import com.matura.app.model.Entry
+import com.matura.app.model.Profile
+import com.matura.app.model.Options
+import com.matura.app.model.SaveData
+import com.matura.app.model.ScoreRecord
+import com.matura.app.model.WordSet
 import kotlinx.serialization.json.Json
 import java.io.File
 
@@ -18,7 +18,7 @@ import java.io.File
  */
 class Repository(context: Context) {
 
-    private val file = File(context.filesDir, "verbume.json")
+    private val file = File(context.filesDir, "matura.json")
     private val json = Json {
         prettyPrint = true
         ignoreUnknownKeys = true

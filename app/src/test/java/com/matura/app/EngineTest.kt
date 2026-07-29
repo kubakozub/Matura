@@ -1,13 +1,13 @@
-package com.verbume.app
+package com.matura.app
 
-import com.verbume.app.game.FlashKind
-import com.verbume.app.game.GameConfig
-import com.verbume.app.game.GameEngine
-import com.verbume.app.game.Matching
-import com.verbume.app.game.SubmitResult
-import com.verbume.app.model.Direction
-import com.verbume.app.model.Entry
-import com.verbume.app.model.WordSet
+import com.matura.app.game.FlashKind
+import com.matura.app.game.GameConfig
+import com.matura.app.game.GameEngine
+import com.matura.app.game.Matching
+import com.matura.app.game.SubmitResult
+import com.matura.app.model.Direction
+import com.matura.app.model.Entry
+import com.matura.app.model.WordSet
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull

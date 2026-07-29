@@ -1,4 +1,4 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,10 +38,10 @@ fun GameKeyboard(
     onRight: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val keyBackspace = pixel(com.verbume.app.R.drawable.key_backspace)
-    val keyEnter = pixel(com.verbume.app.R.drawable.key_enter)
-    val keySpace = pixel(com.verbume.app.R.drawable.key_space)
-    val keyArrows = pixel(com.verbume.app.R.drawable.key_arrows)
+    val keyBackspace = pixel(com.matura.app.R.drawable.key_backspace)
+    val keyEnter = pixel(com.matura.app.R.drawable.key_enter)
+    val keySpace = pixel(com.matura.app.R.drawable.key_space)
+    val keyArrows = pixel(com.matura.app.R.drawable.key_arrows)
 
     Column(
         modifier

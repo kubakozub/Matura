@@ -1,4 +1,4 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -33,16 +33,16 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.verbume.app.R
-import com.verbume.app.model.Achievement
-import com.verbume.app.model.Direction
-import com.verbume.app.model.Entry
-import com.verbume.app.model.Options
-import com.verbume.app.model.Profile
-import com.verbume.app.model.SaveData
-import com.verbume.app.model.Texture
-import com.verbume.app.model.UiLanguage
-import com.verbume.app.model.WordSet
+import com.matura.app.R
+import com.matura.app.model.Achievement
+import com.matura.app.model.Direction
+import com.matura.app.model.Entry
+import com.matura.app.model.Options
+import com.matura.app.model.Profile
+import com.matura.app.model.SaveData
+import com.matura.app.model.Texture
+import com.matura.app.model.UiLanguage
+import com.matura.app.model.WordSet
 
 // ---- shared input ----------------------------------------------------------
 
@@ -88,7 +88,7 @@ fun StartScreen(str: Str, profile: Profile, onPlayAnonymously: (String) -> Unit)
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PixelImage(pixel(R.drawable.logo_verbume), Modifier.fillMaxWidth(0.85f).height(78.dp))
+        PixelImage(pixel(R.drawable.logo_matura), Modifier.fillMaxWidth(0.85f).height(78.dp))
         Spacer(Modifier.height(8.dp))
         PixelText(str.appTagline, color = Palette.Muted, glyphHeight = 9.dp)
         Spacer(Modifier.height(38.dp))
@@ -131,7 +131,7 @@ fun MenuScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Spacer(Modifier.height(12.dp))
-        PixelImage(pixel(R.drawable.logo_verbume), Modifier.fillMaxWidth(0.7f).height(58.dp))
+        PixelImage(pixel(R.drawable.logo_matura), Modifier.fillMaxWidth(0.7f).height(58.dp))
         Spacer(Modifier.height(6.dp))
         PixelText(profile.name, color = Palette.Muted, glyphHeight = 10.dp)
         Spacer(Modifier.height(22.dp))

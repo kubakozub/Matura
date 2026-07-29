@@ -1,7 +1,7 @@
-package com.verbume.app.data
+package com.matura.app.data
 
-import com.verbume.app.model.Entry
-import com.verbume.app.model.WordSet
+import com.matura.app.model.Entry
+import com.matura.app.model.WordSet
 
 /**
  * Wbudowane zestawy: slownictwo pod zakres tematyczny matury podstawowej,

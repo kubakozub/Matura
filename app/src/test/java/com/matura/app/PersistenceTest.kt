@@ -1,17 +1,17 @@
-package com.verbume.app
+package com.matura.app
 
-import com.verbume.app.data.SampleData
-import com.verbume.app.game.GameConfig
-import com.verbume.app.game.GameEngine
-import com.verbume.app.game.Matching
-import com.verbume.app.model.Direction
-import com.verbume.app.model.Entry
-import com.verbume.app.model.Options
-import com.verbume.app.model.Profile
-import com.verbume.app.model.SaveData
-import com.verbume.app.model.ScoreRecord
-import com.verbume.app.model.Texture
-import com.verbume.app.model.WordSet
+import com.matura.app.data.SampleData
+import com.matura.app.game.GameConfig
+import com.matura.app.game.GameEngine
+import com.matura.app.game.Matching
+import com.matura.app.model.Direction
+import com.matura.app.model.Entry
+import com.matura.app.model.Options
+import com.matura.app.model.Profile
+import com.matura.app.model.SaveData
+import com.matura.app.model.ScoreRecord
+import com.matura.app.model.Texture
+import com.matura.app.model.WordSet
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -120,7 +120,7 @@ class PersistenceTest {
                 val result = engine.submit()
                 assertTrue(
                     "'${entry.term}' -> '$typed' was not accepted in ${set.title}",
-                    result is com.verbume.app.game.SubmitResult.Fired,
+                    result is com.matura.app.game.SubmitResult.Fired,
                 )
                 repeat(200) { engine.tick(0.016f) }
             }

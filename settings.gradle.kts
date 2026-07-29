@@ -20,5 +20,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Verbume"
+rootProject.name = "Matura"
 include(":app")

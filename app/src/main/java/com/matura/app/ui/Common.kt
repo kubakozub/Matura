@@ -1,4 +1,4 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,7 +23,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.verbume.app.R
+import com.matura.app.R
 
 /**
  * Everything is square-edged and hard-bordered so it sits with the pixel art.

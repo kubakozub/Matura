@@ -1,4 +1,4 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -34,15 +34,15 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.dp
-import com.verbume.app.game.Crate
-import com.verbume.app.game.FlashKind
-import com.verbume.app.game.GameConfig
-import com.verbume.app.game.GameEngine
-import com.verbume.app.game.GameSnapshot
-import com.verbume.app.game.SubmitResult
-import com.verbume.app.model.Options
-import com.verbume.app.model.ScoreRecord
-import com.verbume.app.model.WordSet
+import com.matura.app.game.Crate
+import com.matura.app.game.FlashKind
+import com.matura.app.game.GameConfig
+import com.matura.app.game.GameEngine
+import com.matura.app.game.GameSnapshot
+import com.matura.app.game.SubmitResult
+import com.matura.app.model.Options
+import com.matura.app.model.ScoreRecord
+import com.matura.app.model.WordSet
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
@@ -174,7 +174,7 @@ fun PlayScreen(
                     .padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    PixelImage(pixel(com.verbume.app.R.drawable.icon_pause), Modifier.size(13.dp))
+                    PixelImage(pixel(com.matura.app.R.drawable.icon_pause), Modifier.size(13.dp))
                     Spacer(Modifier.width(7.dp))
                     PixelText(
                         if (paused) str.resume else str.pause,
@@ -255,7 +255,7 @@ private fun GameOverOverlay(
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            PixelImage(pixel(com.verbume.app.R.drawable.skull), Modifier.size(60.dp))
+            PixelImage(pixel(com.matura.app.R.drawable.skull), Modifier.size(60.dp))
             Spacer(Modifier.height(12.dp))
             PixelText(str.gameOver, color = Palette.Danger, glyphHeight = 18.dp, font = font)
             Spacer(Modifier.height(16.dp))

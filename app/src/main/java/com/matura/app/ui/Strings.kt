@@ -1,6 +1,6 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
-import com.verbume.app.model.UiLanguage
+import com.matura.app.model.UiLanguage
 
 /**
  * Tiny two-language string table. OPTIONS offers "change language" in the design

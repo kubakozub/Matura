@@ -1,9 +1,9 @@
-package com.verbume.app
+package com.matura.app
 
-import com.verbume.app.data.BuiltInSets
-import com.verbume.app.game.GameConfig
-import com.verbume.app.game.GameEngine
-import com.verbume.app.game.Matching
+import com.matura.app.data.BuiltInSets
+import com.matura.app.game.GameConfig
+import com.matura.app.game.GameEngine
+import com.matura.app.game.Matching
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -87,7 +87,7 @@ class BuiltInSetsTest {
             engine.setTyped(Matching.normalize(entry.definition.substringBefore(',')))
             assertTrue(
                 "'${entry.term}' was not accepted in ${set.title}",
-                engine.submit() is com.verbume.app.game.SubmitResult.Fired
+                engine.submit() is com.matura.app.game.SubmitResult.Fired
             )
         }
     }

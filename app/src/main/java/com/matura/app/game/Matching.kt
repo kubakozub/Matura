@@ -1,4 +1,4 @@
-package com.verbume.app.game
+package com.matura.app.game
 
 /**
  * Answer normalisation and prefix matching.

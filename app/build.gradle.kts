@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -6,22 +8,44 @@ plugins {
 }
 
 android {
-    namespace = "com.verbume.app"
-    compileSdk = 35
+    namespace = "com.matura.app"
+    compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.verbume.app"
+        applicationId = "com.matura.app"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 5
-        versionName = "0.5.0"
+        targetSdk = 36
+        versionCode = 6
+        versionName = "0.6.0"
+    }
+
+    // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego
+    // celowo nie ma w repozytorium. Bez tego pliku buduje sie tylko debug.
+    val keystoreProps = Properties().apply {
+        val f = rootProject.file("keystore.properties")
+        if (f.exists()) f.inputStream().use { load(it) }
+    }
+
+    signingConfigs {
+        if (keystoreProps.containsKey("storeFile")) {
+            create("release") {
+                storeFile = file(keystoreProps.getProperty("storeFile"))
+                storePassword = keystoreProps.getProperty("storePassword")
+                keyAlias = keystoreProps.getProperty("keyAlias")
+                keyPassword = keystoreProps.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
+            // R8 wylaczone swiadomie: wiekszosc rozmiaru to grafika PNG, ktorej
+            // i tak nie skurczy, a wlaczenie go bez testu na urzadzeniu grozi
+            // wywrotka dopiero u testerow. Reguly sa gotowe w proguard-rules.pro.
             isMinifyEnabled = false
-            // Signed with the debug key so the produced APK is directly installable.
-            signingConfig = signingConfigs.getByName("debug")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.findByName("release")
+                ?: signingConfigs.getByName("debug")
         }
     }
 

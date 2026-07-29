@@ -1,17 +1,17 @@
-package com.verbume.app
+package com.matura.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import com.verbume.app.data.Repository
-import com.verbume.app.ui.VerbumeApp
+import com.matura.app.data.Repository
+import com.matura.app.ui.MaturaApp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val repo = Repository(applicationContext)
         setContent {
-            VerbumeApp(repo = repo, onExitApp = { finish() })
+            MaturaApp(repo = repo, onExitApp = { finish() })
         }
     }
 }

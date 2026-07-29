@@ -1,8 +1,8 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import android.media.AudioManager
 import android.media.ToneGenerator
-import com.verbume.app.game.FlashKind
+import com.matura.app.game.FlashKind
 
 /**
  * OPTIONS offers enable/disable sound. There are no audio assets in this build, so

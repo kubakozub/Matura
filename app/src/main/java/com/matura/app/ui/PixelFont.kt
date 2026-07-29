@@ -1,4 +1,4 @@
-package com.verbume.app.ui
+package com.matura.app.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
@@ -17,7 +17,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import com.verbume.app.R
+import com.matura.app.R
 import kotlin.math.max
 import kotlin.math.roundToInt
 

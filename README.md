@@ -1,12 +1,16 @@
-# Verbume — CLASSIC
+# Matura — CLASSIC
 
 Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
 *Verbume — Verbum + Game*. Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 
-**Wersja 0.5.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
+**Wersja 0.6.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
 
-- Demo w przeglądarce: **[kubakozub.github.io/Verbume](https://kubakozub.github.io/Verbume/)**
-- Pełna dokumentacja projektowa: [`docs/Verbume-dokumentacja.pdf`](docs/Verbume-dokumentacja.pdf)
+> Aplikacja nazywała się wcześniej **Verbume**. Zmieniła się nazwa i identyfikator
+> pakietu (`com.verbume.app` → `com.matura.app`); mechanika, słownictwo i grafika
+> zostały bez zmian.
+
+- Demo w przeglądarce: **[kubakozub.github.io/Matura](https://kubakozub.github.io/Matura/)**
+- Pełna dokumentacja projektowa: [`docs/Matura-dokumentacja.pdf`](docs/Matura-dokumentacja.pdf)
 
 ---
 
@@ -102,13 +106,13 @@ echo "sdk.dir=/sciezka/do/Android/Sdk" > local.properties
 ./gradlew :app:testDebugUnitTest      # 44 testy jednostkowe
 ```
 
-Android Studio: `File → Open` na katalogu repozytorium. Wymagany JDK 21 i Android SDK 35
+Android Studio: `File → Open` na katalogu repozytorium. Wymagany JDK 21 i Android SDK 36
 (kod bajtowy powstaje pod Javę 17).
 
 ## Mapa kodu
 
 ```
-app/src/main/java/com/verbume/app/
+app/src/main/java/com/matura/app/
   MainActivity.kt            punkt wejścia
   model/Models.kt            zestawy, opcje, profil, wyniki, odznaki
   data/Repository.kt         zapis do JSON
@@ -121,7 +125,7 @@ app/src/main/java/com/verbume/app/
   ui/Screens.kt              menu, zestawy, edytor, opcje, odznaki, wyniki
   ui/Sprites.kt              rejestr sprite'ów, klatki animacji, kafelkowanie
   ui/PixelFont.kt            renderer fontu bitmapowego font_8x8
-app/src/test/java/com/verbume/app/
+app/src/test/java/com/matura/app/
   EngineTest.kt              GameEngineTest (21) + MatchingTest (7)
   BuiltInSetsTest.kt         10 testów pilnujących reguł słownictwa
   PersistenceTest.kt         6 testów zapisu i odczytu
