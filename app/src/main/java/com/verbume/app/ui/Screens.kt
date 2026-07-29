@@ -90,7 +90,7 @@ fun StartScreen(str: Str, profile: Profile, onPlayAnonymously: (String) -> Unit)
     ) {
         PixelImage(pixel(R.drawable.logo_verbume), Modifier.fillMaxWidth(0.85f).height(78.dp))
         Spacer(Modifier.height(8.dp))
-        Text(str.appTagline, color = Palette.Muted, fontSize = 12.sp, fontFamily = PixelFamily)
+        PixelText(str.appTagline, color = Palette.Muted, glyphHeight = 9.dp)
         Spacer(Modifier.height(38.dp))
 
         Column(Modifier.fillMaxWidth()) {
@@ -133,13 +133,13 @@ fun MenuScreen(
         Spacer(Modifier.height(12.dp))
         PixelImage(pixel(R.drawable.logo_verbume), Modifier.fillMaxWidth(0.7f).height(58.dp))
         Spacer(Modifier.height(6.dp))
-        Text(profile.name, color = Palette.Muted, fontSize = 12.sp, fontFamily = PixelFamily)
+        PixelText(profile.name, color = Palette.Muted, glyphHeight = 10.dp)
         Spacer(Modifier.height(22.dp))
 
         // Icons follow the asset pack's own menu mapping.
         MenuButton(str.play, icon = pixel(R.drawable.icon_target), onClick = onPlay)
         MenuButton(str.sets, icon = pixel(R.drawable.mode_classic), onClick = onSets)
-        MenuButton(str.options, icon = pixel(R.drawable.icon_palette), onClick = onOptions)
+        MenuButton(str.options, icon = pixel(R.drawable.icon_settings), onClick = onOptions)
         MenuButton(str.achievements, icon = pixel(R.drawable.medal_gold), onClick = onAchievements)
         MenuButton(str.scores, icon = pixel(R.drawable.icon_trophy), onClick = onScores)
         MenuButton(str.exit, icon = pixel(R.drawable.cross), onClick = onExit)
@@ -187,7 +187,7 @@ fun ModePickScreen(
         val lock = pixel(R.drawable.lock)
         Column(Modifier.fillMaxSize()) {
             if (set != null) {
-                Text(set.title, color = Palette.Bone, fontSize = 15.sp, fontFamily = PixelFamily, fontWeight = FontWeight.Bold)
+                PixelText(set.title, color = Palette.Bone, glyphHeight = 11.dp, maxWidthDp = 300.dp)
                 Spacer(Modifier.height(12.dp))
             }
             MenuButton(
@@ -218,7 +218,22 @@ fun SetsScreen(
 ) {
     ScreenScaffold(str.sets, onBack, str.back) {
         Column(Modifier.fillMaxSize()) {
-            PrimaryButton(str.createSet, modifier = Modifier.fillMaxWidth(), onClick = onCreate)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Palette.AccentDim)
+                    .padding(bottom = 4.dp)
+                    .background(Palette.Accent)
+                    .border(3.dp, Palette.Ink)
+                    .clickable { onCreate() }
+                    .padding(horizontal = 18.dp, vertical = 13.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                PixelImage(pixel(R.drawable.icon_plus), Modifier.size(15.dp))
+                Spacer(Modifier.width(9.dp))
+                PixelText(str.createSet, color = Palette.Ink, outline = null, glyphHeight = 11.dp)
+            }
             Spacer(Modifier.height(12.dp))
             LazyColumn(Modifier.fillMaxSize()) {
                 items(sets, key = { it.id }) { set ->
@@ -236,12 +251,11 @@ fun SetsScreen(
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Text(
+                                PixelText(
                                     set.title,
                                     color = Palette.Bone,
-                                    fontSize = 15.sp,
-                                    fontFamily = PixelFamily,
-                                    fontWeight = FontWeight.Bold,
+                                    glyphHeight = 11.dp,
+                                    maxWidthDp = 220.dp,
                                     modifier = Modifier.weight(1f),
                                 )
                                 if (set.builtIn) Pill(str.builtIn, Palette.Accent)
@@ -254,7 +268,18 @@ fun SetsScreen(
                             )
                             Spacer(Modifier.height(11.dp))
                             Row {
-                                GhostButton(str.editSet) { onEdit(set) }
+                                Row(
+                                    Modifier
+                                        .background(Palette.Surface)
+                                        .border(3.dp, Palette.SurfaceHigh)
+                                        .clickable { onEdit(set) }
+                                        .padding(horizontal = 16.dp, vertical = 13.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    PixelImage(pixel(R.drawable.icon_edit), Modifier.size(14.dp))
+                                    Spacer(Modifier.width(7.dp))
+                                    PixelText(str.editSet, color = Palette.Bone, glyphHeight = 10.dp)
+                                }
                                 if (!set.builtIn) {
                                     Spacer(Modifier.width(8.dp))
                                     Box(
@@ -264,7 +289,11 @@ fun SetsScreen(
                                             .clickable { onDelete(set) }
                                             .padding(horizontal = 16.dp, vertical = 12.dp)
                                     ) {
-                                        Text(str.delete, color = Palette.Danger, fontSize = 13.sp, fontFamily = PixelFamily)
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            PixelImage(pixel(R.drawable.icon_trash), Modifier.size(14.dp))
+                                            Spacer(Modifier.width(7.dp))
+                                            PixelText(str.delete, color = Palette.Danger, glyphHeight = 10.dp)
+                                        }
                                     }
                                 }
                             }
@@ -305,7 +334,7 @@ fun SetEditorScreen(
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
-                        Text(str.terms, color = Palette.Accent, fontSize = 12.sp, fontFamily = PixelFamily, fontWeight = FontWeight.Bold)
+                        PixelText(str.terms, color = Palette.Accent, glyphHeight = 9.dp)
                         Spacer(Modifier.height(4.dp))
                         FieldInput(termLang, { termLang = it }, modifier = Modifier.fillMaxWidth(), fontSize = 12)
                     }
@@ -320,10 +349,10 @@ fun SetEditorScreen(
                             }
                             .padding(horizontal = 9.dp, vertical = 9.dp)
                     ) {
-                        Text("<>", color = Palette.Bone, fontSize = 14.sp, fontFamily = PixelFamily)
+                        PixelText("<>", color = Palette.Bone, glyphHeight = 11.dp)
                     }
                     Column(Modifier.weight(1f)) {
-                        Text(str.definitions, color = Palette.Accent, fontSize = 12.sp, fontFamily = PixelFamily, fontWeight = FontWeight.Bold)
+                        PixelText(str.definitions, color = Palette.Accent, glyphHeight = 9.dp)
                         Spacer(Modifier.height(4.dp))
                         FieldInput(defLang, { defLang = it }, modifier = Modifier.fillMaxWidth(), fontSize = 12)
                     }
@@ -492,13 +521,7 @@ private fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) {
             .clickable { onChange(!on) }
             .padding(horizontal = 16.dp, vertical = 7.dp)
     ) {
-        Text(
-            if (on) "ON" else "OFF",
-            color = if (on) Palette.Ink else Palette.Muted,
-            fontSize = 12.sp,
-            fontFamily = PixelFamily,
-            fontWeight = FontWeight.Bold,
-        )
+        PixelText(if (on) "ON" else "OFF", color = if (on) Palette.Ink else Palette.Muted, outline = null, glyphHeight = 9.dp)
     }
 }
 
@@ -506,14 +529,7 @@ private fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) {
 private fun Stepper(value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         StepButton("-") { if (value > min) onChange(value - 1) }
-        Text(
-            "$value",
-            color = Palette.Bone,
-            fontSize = 16.sp,
-            fontFamily = PixelFamily,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(horizontal = 14.dp),
-        )
+        PixelText("$value", color = Palette.Bone, glyphHeight = 13.dp, modifier = Modifier.padding(horizontal = 14.dp))
         StepButton("+") { if (value < max) onChange(value + 1) }
     }
 }
@@ -527,7 +543,7 @@ private fun StepButton(label: String, onClick: () -> Unit) {
             .clickable { onClick() }
             .padding(horizontal = 12.dp, vertical = 5.dp)
     ) {
-        Text(label, color = Palette.Bone, fontSize = 16.sp, fontFamily = PixelFamily, fontWeight = FontWeight.Bold)
+        PixelText(label, color = Palette.Bone, glyphHeight = 13.dp)
     }
 }
 
@@ -540,13 +556,7 @@ private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
             .clickable { onClick() }
             .padding(horizontal = 9.dp, vertical = 6.dp)
     ) {
-        Text(
-            label,
-            color = if (selected) Palette.Ink else Palette.Muted,
-            fontSize = 11.sp,
-            fontFamily = PixelFamily,
-            fontWeight = FontWeight.Bold,
-        )
+        PixelText(label, color = if (selected) Palette.Ink else Palette.Muted, outline = null, glyphHeight = 8.dp)
     }
 }
 
@@ -612,12 +622,11 @@ fun AchievementsScreen(str: Str, profile: Profile, onBack: () -> Unit) {
                         PixelImage(if (got) star else lock, Modifier.size(22.dp), alpha = if (got) 1f else 0.6f)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(
+                            PixelText(
                                 if (isPl) a.titlePl else a.titleEn,
                                 color = if (got) Palette.Bone else Palette.Dim,
-                                fontSize = 13.sp,
-                                fontFamily = PixelFamily,
-                                fontWeight = FontWeight.Bold,
+                                glyphHeight = 10.dp,
+                                maxWidthDp = 200.dp,
                             )
                             Text(
                                 if (isPl) a.descPl else a.descEn,
@@ -665,7 +674,7 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.height(16.dp))
-                Text(str.bestRuns, color = Palette.Accent, fontSize = 13.sp, fontFamily = PixelFamily, fontWeight = FontWeight.Bold)
+                PixelText(str.bestRuns, color = Palette.Accent, glyphHeight = 10.dp)
                 Spacer(Modifier.height(7.dp))
             }
             if (data.scores.isEmpty()) {
@@ -684,13 +693,7 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                     if (i < 3) {
                         PixelImage(medals[i], Modifier.size(24.dp))
                     } else {
-                        Text(
-                            "${i + 1}",
-                            color = Palette.Dim,
-                            fontSize = 12.sp,
-                            fontFamily = PixelFamily,
-                            modifier = Modifier.width(24.dp),
-                        )
+                        PixelText("${i + 1}", color = Palette.Dim, glyphHeight = 9.dp, modifier = Modifier.width(24.dp))
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
@@ -701,13 +704,7 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                             fontSize = 10.sp,
                         )
                     }
-                    Text(
-                        "${s.score}",
-                        color = Palette.Gold,
-                        fontSize = 16.sp,
-                        fontFamily = PixelFamily,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    PixelText("${s.score}", color = Palette.Gold, glyphHeight = 13.dp)
                 }
             }
             item { Spacer(Modifier.height(24.dp)) }

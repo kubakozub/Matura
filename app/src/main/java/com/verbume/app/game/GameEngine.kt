@@ -50,11 +50,26 @@ data class Projectile(
     val heavy: Boolean,
 )
 
+/**
+ * A monster that has just been killed, kept around only long enough for the UI to show
+ * its death frame. The asset pack ships one `_death` frame per monster and asks for
+ * roughly 350 ms on screen.
+ */
+data class Corpse(
+    val id: Long,
+    val x: Float,
+    val y: Float,
+    val spawnLevel: Int,
+    val variant: Int,
+    var ttl: Float,
+)
+
 /** Immutable view handed to the UI once per frame. */
 data class GameSnapshot(
     val monsters: List<Monster>,
     val crates: List<Crate>,
     val projectiles: List<Projectile>,
+    val corpses: List<Corpse>,
     val typed: String,
     val cursor: Int,
     val lives: Int,
@@ -69,6 +84,8 @@ data class GameSnapshot(
     val gameOver: Boolean,
     val elapsed: Float,
     val flash: FlashKind?,
+    /** Seconds left on the "new level" banner; zero when it should not be shown. */
+    val levelUpBanner: Float,
 )
 
 enum class FlashKind { HIT, ARMOR, MISS, CRATE, LIFE_LOST }
@@ -108,17 +125,24 @@ class GameEngine(
         private const val CRATE_TTL = 13f
         private const val CRATE_AMOUNT = 3
         const val MAX_MONSTERS = 7
+        const val DEATH_FRAME_TIME = 0.35f
+        const val LEVEL_BANNER_TIME = 1.6f
+        /** Walk cycle: the pack asks for the base frame and `_f2` to alternate ~every 200 ms. */
+        const val WALK_FRAME_TIME = 0.2f
     }
 
     private var nextId = 1L
     private val monsters = mutableListOf<Monster>()
     private val crates = mutableListOf<Crate>()
     private val projectiles = mutableListOf<Projectile>()
+    private val corpses = mutableListOf<Corpse>()
 
     private var spawnTimer = 0.9f
     private var crateTimer = CRATE_INTERVAL
     private var flash: FlashKind? = null
     private var flashTtl = 0f
+    private var levelUpTtl = 0f
+    private var lastLevel = 1
 
     var typed: String = ""
         private set
@@ -178,6 +202,7 @@ class GameEngine(
         monsters = monsters.map { it.copy() },
         crates = crates.map { it.copy() },
         projectiles = projectiles.map { it.copy() },
+        corpses = corpses.map { it.copy() },
         typed = typed,
         cursor = cursor,
         lives = lives,
@@ -192,6 +217,7 @@ class GameEngine(
         gameOver = gameOver,
         elapsed = elapsed,
         flash = flash,
+        levelUpBanner = levelUpTtl,
     )
 
     // ---- input -------------------------------------------------------------
@@ -285,6 +311,13 @@ class GameEngine(
             flashTtl -= dt
             if (flashTtl <= 0f) flash = null
         }
+        if (levelUpTtl > 0f) levelUpTtl -= dt
+        if (level != lastLevel) {
+            lastLevel = level
+            levelUpTtl = LEVEL_BANNER_TIME
+        }
+        for (c in corpses) c.ttl -= dt
+        corpses.removeAll { it.ttl <= 0f }
 
         moveProjectiles(dt)
         moveMonsters(dt)
@@ -325,6 +358,9 @@ class GameEngine(
             setFlash(FlashKind.ARMOR)
             return
         }
+        corpses.add(
+            Corpse(nextId++, target.x, target.y, target.spawnLevel, target.variant, DEATH_FRAME_TIME)
+        )
         monsters.remove(target)
         kills++
         streak++

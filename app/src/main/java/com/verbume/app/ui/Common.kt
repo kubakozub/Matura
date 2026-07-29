@@ -21,11 +21,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.verbume.app.R
 
-/** Everything is square-edged and hard-bordered so it sits with the pixel art. */
+/**
+ * Everything is square-edged and hard-bordered so it sits with the pixel art.
+ *
+ * Labels, headings, buttons and numbers use the pack's bitmap font. Long explanatory
+ * prose stays on the system face: a 5x7 glyph is great for a word above a monster and
+ * tiring for four lines of Polish, and the pack's sheet has no lower-case descenders
+ * deep enough to make paragraphs comfortable.
+ */
 val PixelFamily = FontFamily.Monospace
 
 @Composable
@@ -44,25 +51,22 @@ fun ScreenScaffold(
         Spacer(Modifier.height(18.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (onBack != null) {
-                Box(
+                Row(
                     Modifier
                         .background(Palette.Surface)
                         .border(2.dp, Palette.SurfaceHigh)
                         .clickable { onBack() }
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text("< $backLabel", color = Palette.Bone, fontSize = 13.sp, fontFamily = PixelFamily)
+                    PixelImage(pixel(R.drawable.icon_back), Modifier.size(14.dp))
+                    Spacer(Modifier.width(7.dp))
+                    PixelText(backLabel, color = Palette.Bone, glyphHeight = 9.dp)
                 }
                 Spacer(Modifier.width(12.dp))
             }
             if (title != null) {
-                Text(
-                    title,
-                    color = Palette.Accent,
-                    fontSize = 18.sp,
-                    fontFamily = PixelFamily,
-                    fontWeight = FontWeight.Bold,
-                )
+                PixelText(title, color = Palette.Accent, glyphHeight = 13.dp)
             }
         }
         Spacer(Modifier.height(14.dp))
@@ -100,13 +104,7 @@ fun MenuButton(
                 Spacer(Modifier.width(12.dp))
             }
             Column(Modifier.weight(1f)) {
-                Text(
-                    label,
-                    color = ink,
-                    fontSize = 15.sp,
-                    fontFamily = PixelFamily,
-                    fontWeight = FontWeight.Bold,
-                )
+                PixelText(label, color = ink, glyphHeight = 11.dp, maxWidthDp = 220.dp)
                 if (subtitle != null) {
                     Spacer(Modifier.height(4.dp))
                     Text(subtitle, color = Palette.Muted, fontSize = 12.sp, lineHeight = 16.sp)
@@ -118,7 +116,7 @@ fun MenuButton(
             }
             if (trailing != null) {
                 Spacer(Modifier.width(8.dp))
-                Text(trailing, color = Palette.Muted, fontSize = 11.sp, fontFamily = PixelFamily)
+                PixelText(trailing, color = Palette.Muted, glyphHeight = 8.dp)
             }
         }
     }
@@ -133,16 +131,10 @@ fun PrimaryButton(label: String, modifier: Modifier = Modifier, enabled: Boolean
             .background(if (enabled) Palette.Accent else Palette.Dim)
             .border(3.dp, Palette.Ink)
             .then(if (enabled) Modifier.clickable { onClick() } else Modifier)
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 13.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            label,
-            color = Palette.Ink,
-            fontWeight = FontWeight.Bold,
-            fontFamily = PixelFamily,
-            fontSize = 14.sp,
-        )
+        PixelText(label, color = Palette.Ink, outline = null, glyphHeight = 11.dp)
     }
 }
 
@@ -153,10 +145,10 @@ fun GhostButton(label: String, modifier: Modifier = Modifier, onClick: () -> Uni
             .background(Palette.Surface)
             .border(3.dp, Palette.SurfaceHigh)
             .clickable { onClick() }
-            .padding(horizontal = 18.dp, vertical = 12.dp),
+            .padding(horizontal = 18.dp, vertical = 13.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = Palette.Bone, fontSize = 13.sp, fontFamily = PixelFamily)
+        PixelText(label, color = Palette.Bone, glyphHeight = 10.dp)
     }
 }
 
@@ -182,14 +174,14 @@ fun StatRow(label: String, value: String, icon: ImageBitmap? = null) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
             if (icon != null) {
                 PixelImage(icon, Modifier.size(18.dp))
                 Spacer(Modifier.width(9.dp))
             }
             Text(label, color = Palette.Muted, fontSize = 13.sp)
         }
-        Text(value, color = Palette.Bone, fontSize = 14.sp, fontFamily = PixelFamily, fontWeight = FontWeight.Bold)
+        PixelText(value, color = Palette.Bone, glyphHeight = 10.dp)
     }
 }
 
@@ -199,8 +191,8 @@ fun Pill(text: String, color: Color) {
         Modifier
             .background(Palette.Ink)
             .border(2.dp, color)
-            .padding(horizontal = 8.dp, vertical = 3.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
-        Text(text, color = color, fontSize = 10.sp, fontFamily = PixelFamily, fontWeight = FontWeight.Bold)
+        PixelText(text, color = color, outline = null, glyphHeight = 7.dp)
     }
 }

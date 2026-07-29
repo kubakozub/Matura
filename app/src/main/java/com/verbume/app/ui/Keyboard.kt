@@ -30,7 +30,6 @@ import androidx.compose.ui.unit.sp
  */
 @Composable
 fun GameKeyboard(
-    sprites: Sprites,
     onChar: (Char) -> Unit,
     onBackspace: () -> Unit,
     onEnter: () -> Unit,
@@ -87,13 +86,7 @@ private fun RowScope.LetterKey(c: Char, onChar: (Char) -> Unit) {
             .clickable { onChar(c.lowercaseChar()) },
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            c.toString(),
-            color = Palette.Ink,
-            fontSize = 16.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold,
-        )
+        PixelText(c.toString(), color = Palette.Ink, outline = null, glyphHeight = 13.dp)
     }
 }
 

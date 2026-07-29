@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -31,24 +30,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextMeasurer
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.drawText
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.verbume.app.game.Crate
 import com.verbume.app.game.FlashKind
 import com.verbume.app.game.GameConfig
 import com.verbume.app.game.GameEngine
 import com.verbume.app.game.GameSnapshot
-import com.verbume.app.game.Monster
 import com.verbume.app.game.SubmitResult
 import com.verbume.app.model.Options
 import com.verbume.app.model.ScoreRecord
@@ -57,10 +47,8 @@ import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sin
-
-/** The pack is built on a 16x16 grid; a chunky mono face sits closest to its lettering. */
-private val PixelFont = FontFamily.Monospace
 
 @Composable
 fun PlayScreen(
@@ -86,6 +74,7 @@ fun PlayScreen(
     var muzzle by remember(engine) { mutableFloatStateOf(0f) }
 
     val sprites = rememberSprites()
+    val font = rememberPixelFont()
     val sfx = remember { Sfx() }
     DisposableEffect(Unit) { onDispose { sfx.release() } }
 
@@ -133,7 +122,6 @@ fun PlayScreen(
     }
 
     val theme = textureTheme(options.texture)
-    val measurer = rememberTextMeasurer()
 
     fun submit() {
         if (paused) return
@@ -154,22 +142,25 @@ fun PlayScreen(
                 .border(3.dp, Palette.Ink)
         ) {
             Canvas(Modifier.fillMaxSize()) {
-                drawField(snap, highlighted, highlightedCrates, theme, measurer, sprites, options, muzzle)
+                drawField(snap, highlighted, highlightedCrates, theme, sprites, font, options, muzzle)
             }
 
             if (!engine.isPlayable) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(
-                        str.emptySetWarning,
-                        color = Palette.Danger,
-                        fontSize = 15.sp,
-                        fontFamily = PixelFont,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier
+                    Box(
+                        Modifier
                             .background(Palette.Ink)
                             .border(3.dp, Palette.SurfaceHigh)
-                            .padding(16.dp),
-                    )
+                            .padding(14.dp)
+                    ) {
+                        PixelText(
+                            str.emptySetWarning,
+                            color = Palette.Danger,
+                            glyphHeight = 9.dp,
+                            maxWidthDp = 240.dp,
+                            font = font,
+                        )
+                    }
                 }
             }
 
@@ -180,25 +171,28 @@ fun PlayScreen(
                     .background(Palette.Ink.copy(alpha = 0.75f))
                     .border(2.dp, Palette.SurfaceHigh)
                     .clickable { paused = !paused }
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
-                Text(
-                    if (paused) str.resume else str.pause,
-                    color = Palette.Bone,
-                    fontSize = 11.sp,
-                    fontFamily = PixelFont,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    PixelImage(pixel(com.verbume.app.R.drawable.icon_pause), Modifier.size(13.dp))
+                    Spacer(Modifier.width(7.dp))
+                    PixelText(
+                        if (paused) str.resume else str.pause,
+                        color = Palette.Bone,
+                        glyphHeight = 8.dp,
+                        font = font,
+                    )
+                }
             }
 
             if (snap.gameOver) {
-                GameOverOverlay(snap, str, sprites, onAgain = { restarts++ }, onMenu = onExit)
+                GameOverOverlay(snap, str, sprites, font, onAgain = { restarts++ }, onMenu = onExit)
             }
         }
 
-        AnswerBar(snap.typed, snap.cursor)
+        AnswerBar(snap.typed, snap.cursor, font)
 
         GameKeyboard(
-            sprites = sprites,
             onChar = { c -> if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
             onBackspace = { if (!paused) engine.backspace() },
             onEnter = { submit() },
@@ -210,7 +204,7 @@ fun PlayScreen(
 }
 
 @Composable
-private fun AnswerBar(typed: String, cursor: Int) {
+private fun AnswerBar(typed: String, cursor: Int, font: PixelFont) {
     // The design puts the answer on a bone panel with ink lettering and a green caret.
     Box(
         Modifier
@@ -222,29 +216,23 @@ private fun AnswerBar(typed: String, cursor: Int) {
     ) {
         val safe = cursor.coerceIn(0, typed.length)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            if (typed.isNotEmpty()) {
-                Text(
+            if (safe > 0) {
+                PixelText(
                     typed.substring(0, safe),
                     color = Palette.Ink,
-                    fontSize = 26.sp,
-                    fontFamily = PixelFont,
-                    fontWeight = FontWeight.Bold,
+                    outline = null,
+                    glyphHeight = 17.dp,
+                    font = font,
                 )
             }
-            Text(
-                "_",
-                color = Palette.AccentDim,
-                fontSize = 26.sp,
-                fontFamily = PixelFont,
-                fontWeight = FontWeight.Bold,
-            )
+            PixelText("_", color = Palette.AccentDim, outline = null, glyphHeight = 17.dp, font = font)
             if (safe < typed.length) {
-                Text(
+                PixelText(
                     typed.substring(safe),
                     color = Palette.Ink,
-                    fontSize = 26.sp,
-                    fontFamily = PixelFont,
-                    fontWeight = FontWeight.Bold,
+                    outline = null,
+                    glyphHeight = 17.dp,
+                    font = font,
                 )
             }
         }
@@ -256,6 +244,7 @@ private fun GameOverOverlay(
     snap: GameSnapshot,
     str: Str,
     sprites: Sprites,
+    font: PixelFont,
     onAgain: () -> Unit,
     onMenu: () -> Unit,
 ) {
@@ -266,36 +255,23 @@ private fun GameOverOverlay(
         contentAlignment = Alignment.Center,
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            PixelImage(sprites.explosion, Modifier.size(72.dp))
-            Spacer(Modifier.height(10.dp))
-            Text(
-                str.gameOver,
-                color = Palette.Danger,
-                fontSize = 26.sp,
-                fontFamily = PixelFont,
-                fontWeight = FontWeight.Black,
-            )
-            Spacer(Modifier.height(14.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PixelImage(sprites.coin, Modifier.size(28.dp))
-                Spacer(Modifier.width(9.dp))
-                Text(
-                    "${snap.score}",
-                    color = Palette.Gold,
-                    fontSize = 40.sp,
-                    fontFamily = PixelFont,
-                    fontWeight = FontWeight.Black,
-                )
-            }
+            PixelImage(pixel(com.verbume.app.R.drawable.skull), Modifier.size(60.dp))
             Spacer(Modifier.height(12.dp))
-            Row {
-                Text("${str.level} ${snap.level}", color = Palette.Muted, fontSize = 13.sp, fontFamily = PixelFont)
-                Spacer(Modifier.width(14.dp))
-                Text("${str.killsLabel} ${snap.kills}", color = Palette.Muted, fontSize = 13.sp, fontFamily = PixelFont)
-                Spacer(Modifier.width(14.dp))
-                Text("${str.bestStreakLabel} ${snap.bestStreak}", color = Palette.Muted, fontSize = 13.sp, fontFamily = PixelFont)
+            PixelText(str.gameOver, color = Palette.Danger, glyphHeight = 18.dp, font = font)
+            Spacer(Modifier.height(16.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PixelImage(sprites.coin, Modifier.size(26.dp))
+                Spacer(Modifier.width(9.dp))
+                PixelText("${snap.score}", color = Palette.Gold, glyphHeight = 26.dp, font = font)
             }
-            Spacer(Modifier.height(26.dp))
+            Spacer(Modifier.height(14.dp))
+            PixelText(
+                "LVL ${snap.level}  ${str.killsLabel} ${snap.kills}  x${snap.bestStreak}",
+                color = Palette.Muted,
+                glyphHeight = 9.dp,
+                font = font,
+            )
+            Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.Center) {
                 PrimaryButton(str.playAgain, onClick = onAgain)
                 Spacer(Modifier.width(12.dp))
@@ -312,38 +288,126 @@ private fun DrawScope.drawField(
     highlighted: Set<Long>,
     highlightedCrates: Set<Long>,
     theme: FieldTheme,
-    measurer: TextMeasurer,
     sprites: Sprites,
+    font: PixelFont,
     options: Options,
     muzzle: Float,
 ) {
     val w = size.width
     val h = size.height
     val unit = min(w, h)
+    val fs = (unit * 0.0065f).roundToInt().coerceAtLeast(1).toFloat()
 
     drawRect(color = theme.field)
     clipRect {
-        drawTiledBackground(sprites.tile(options.texture), (unit * 0.11f).coerceAtLeast(24f))
+        drawTiledBackground(sprites.tiles(options.texture), (unit * 0.11f).coerceAtLeast(24f))
     }
 
-    fun px(x: Float) = x * w
-    fun py(y: Float) = y * h
+    // A hit knocks the whole field about a little; keeps the camera alive without animation.
+    val shake = if (snap.flash == FlashKind.LIFE_LOST) unit * 0.006f else 0f
 
-    val cx = px(GameEngine.CANNON_X)
-    val cy = py(GameEngine.CANNON_Y)
+    translate(
+        left = if (shake > 0f) (snap.elapsed * 97f % 2f - 1f) * shake else 0f,
+        top = if (shake > 0f) (snap.elapsed * 61f % 2f - 1f) * shake else 0f,
+    ) {
+        fun px(x: Float) = x * w
+        fun py(y: Float) = y * h
 
-    val aim = snap.monsters
-        .filter { highlighted.isEmpty() || it.id in highlighted }
-        .minByOrNull { hypot(px(it.x) - cx, py(it.y) - cy) }
-    val aimAngle = if (aim != null) {
-        Math.toDegrees(atan2((py(aim.y) - cy).toDouble(), (px(aim.x) - cx).toDouble())).toFloat()
-    } else 0f
+        val cx = px(GameEngine.CANNON_X)
+        val cy = py(GameEngine.CANNON_Y)
 
-    drawCrates(snap.crates, highlightedCrates, ::px, ::py, unit, measurer, sprites, theme)
-    drawMonsters(snap.monsters, highlighted, ::px, ::py, unit, measurer, sprites, theme)
-    drawTurret(cx, cy, unit, aimAngle, sprites, muzzle)
-    drawProjectiles(snap, ::px, ::py, unit, sprites)
-    drawHud(snap, w, h, unit, measurer, sprites)
+        val aim = snap.monsters
+            .filter { highlighted.isEmpty() || it.id in highlighted }
+            .minByOrNull { hypot(px(it.x) - cx, py(it.y) - cy) }
+        val aimAngle = if (aim != null) {
+            Math.toDegrees(atan2((py(aim.y) - cy).toDouble(), (px(aim.x) - cx).toDouble())).toFloat()
+        } else 0f
+
+        // corpses first, so a fresh kill sits behind whatever walks over it
+        for (c in snap.corpses) {
+            val art = sprites.art(c.spawnLevel, c.variant)
+            drawSprite(
+                art.death, px(c.x), py(c.y), unit * 0.105f,
+                alpha = (c.ttl / GameEngine.DEATH_FRAME_TIME).coerceIn(0f, 1f),
+            )
+        }
+
+        for (c in snap.crates) {
+            val x = px(c.x)
+            val y = py(c.y)
+            val hgt = unit * 0.085f
+            val blink = if (c.ttl < 4f) (if ((c.ttl * 6f).toInt() % 2 == 0) 0.4f else 1f) else 1f
+            drawSprite(sprites.crateAmmo, x, y, hgt, alpha = blink)
+            drawCentredLabel(
+                font, c.prompt, x, y - hgt * 0.62f, fs * 0.85f,
+                if (c.id in highlightedCrates) Palette.Accent else theme.hudInk,
+            )
+        }
+
+        for (m in snap.monsters) {
+            val x = px(m.x)
+            val y = py(m.y)
+            val hgt = unit * 0.105f
+            val art = sprites.art(m.spawnLevel, m.variant)
+            drawSprite(sprites.walkFrame(art, snap.elapsed, (m.id % 2).toInt()), x, y, hgt)
+            if (m.armored) {
+                drawSprite(sprites.armorFor(m.spawnLevel, m.variant), x, y + hgt * 0.14f, hgt * 0.30f)
+            }
+            if (m.hitFlash > 0f) {
+                drawSprite(sprites.hitFlash, x, y, hgt * 1.05f, alpha = (m.hitFlash / 0.18f).coerceIn(0f, 1f))
+            }
+            drawCentredLabel(
+                font, m.prompt, x, y - hgt * 0.62f, fs,
+                if (m.id in highlighted) Palette.Accent else theme.hudInk,
+            )
+        }
+
+        drawTurret(cx, cy, unit, aimAngle, sprites, muzzle)
+
+        for (p in snap.projectiles) {
+            val target = snap.monsters.firstOrNull { it.id == p.targetId } ?: continue
+            val x = px(p.x)
+            val y = py(p.y)
+            val a = Math.toDegrees(
+                atan2((py(target.y) - y).toDouble(), (px(target.x) - x).toDouble())
+            ).toFloat()
+            val sprite = if (p.heavy) sprites.bulletMid else sprites.bulletBasic
+            val hgt = unit * (if (p.heavy) 0.048f else 0.038f)
+            rotate(degrees = a, pivot = Offset(x, y)) { drawSprite(sprite, x, y, hgt) }
+        }
+
+        drawHud(snap, w, h, unit, fs, sprites, font)
+
+        if (snap.levelUpBanner > 0f) {
+            val alpha = (snap.levelUpBanner / GameEngine.LEVEL_BANNER_TIME).coerceIn(0f, 1f)
+            val bh = unit * 0.075f
+            val by = h * 0.28f
+            drawSprite(sprites.bannerLevelUp, w / 2f, by, bh, alpha = alpha)
+            drawCentredLabel(font, "LVL ${snap.level}", w / 2f, by + bh * 0.18f, fs, Palette.Ink, outline = null)
+        }
+    }
+}
+
+/** Centres one line of bitmap text horizontally on [cx], with its baseline box above [bottomY]. */
+private fun DrawScope.drawCentredLabel(
+    font: PixelFont,
+    text: String,
+    cx: Float,
+    bottomY: Float,
+    scale: Float,
+    color: Color,
+    outline: Color? = Palette.Ink,
+) {
+    val width = font.widthPx(text, scale)
+    drawPixelText(
+        font = font,
+        text = text,
+        x = cx - width / 2f,
+        y = bottomY - PixelFont.GLYPH_H * scale,
+        scale = scale,
+        color = color,
+        outline = outline,
+    )
 }
 
 private fun DrawScope.drawTurret(
@@ -356,7 +420,6 @@ private fun DrawScope.drawTurret(
 ) {
     val barrelH = unit * 0.036f
     val baseH = unit * 0.072f
-    // Barrel first so the base sits over its mounting end, as in the design.
     drawSpriteRotatedFromPivot(
         sprite = sprites.turretBarrel,
         pivotX = cx, pivotY = cy,
@@ -378,175 +441,63 @@ private fun DrawScope.drawTurret(
     drawSprite(sprites.turretBase, cx, cy, baseH)
 }
 
-private fun DrawScope.drawMonsters(
-    monsters: List<Monster>,
-    highlighted: Set<Long>,
-    px: (Float) -> Float,
-    py: (Float) -> Float,
-    unit: Float,
-    measurer: TextMeasurer,
-    sprites: Sprites,
-    theme: FieldTheme,
-) {
-    for (m in monsters) {
-        val x = px(m.x)
-        val y = py(m.y)
-        val hgt = unit * 0.105f
-        val lit = m.id in highlighted
-
-        drawSprite(sprites.monster(m.spawnLevel, m.variant), x, y, hgt)
-        // Armour sits over the body's chest and simply disappears when knocked off.
-        if (m.armored) {
-            drawSprite(sprites.armorPlate, x, y + hgt * 0.14f, hgt * 0.30f)
-        }
-        if (m.hitFlash > 0f) {
-            drawSprite(sprites.hitFlash, x, y, hgt * 1.05f, alpha = (m.hitFlash / 0.18f).coerceIn(0f, 1f))
-        }
-
-        // Word above the monster, ink drop-shadow like the design's text-shadow.
-        val ink = measurer.measure(
-            AnnotatedString(m.prompt),
-            style = TextStyle(color = Palette.Ink, fontSize = 15.sp, fontFamily = PixelFont, fontWeight = FontWeight.Bold),
-        )
-        val face = measurer.measure(
-            AnnotatedString(m.prompt),
-            style = TextStyle(
-                color = if (lit) Palette.Accent else theme.hudInk,
-                fontSize = 15.sp,
-                fontFamily = PixelFont,
-                fontWeight = FontWeight.Bold,
-            ),
-        )
-        val tx = x - face.size.width / 2f
-        val ty = y - hgt * 0.62f - face.size.height
-        drawText(ink, topLeft = Offset(tx + 3f, ty + 3f))
-        drawText(face, topLeft = Offset(tx, ty))
-    }
-}
-
-private fun DrawScope.drawCrates(
-    crates: List<Crate>,
-    highlighted: Set<Long>,
-    px: (Float) -> Float,
-    py: (Float) -> Float,
-    unit: Float,
-    measurer: TextMeasurer,
-    sprites: Sprites,
-    theme: FieldTheme,
-) {
-    for (c in crates) {
-        val x = px(c.x)
-        val y = py(c.y)
-        val hgt = unit * 0.085f
-        val lit = c.id in highlighted
-        val blink = if (c.ttl < 4f) 0.5f else 1f
-
-        drawSprite(sprites.crateAmmo, x, y, hgt, alpha = blink)
-
-        val ink = measurer.measure(
-            AnnotatedString(c.prompt),
-            style = TextStyle(color = Palette.Ink, fontSize = 13.sp, fontFamily = PixelFont, fontWeight = FontWeight.Bold),
-        )
-        val face = measurer.measure(
-            AnnotatedString(c.prompt),
-            style = TextStyle(
-                color = if (lit) Palette.Accent else theme.hudInk,
-                fontSize = 13.sp,
-                fontFamily = PixelFont,
-                fontWeight = FontWeight.Bold,
-            ),
-        )
-        val tx = x - face.size.width / 2f
-        val ty = y - hgt * 0.62f - face.size.height
-        drawText(ink, topLeft = Offset(tx + 3f, ty + 3f))
-        drawText(face, topLeft = Offset(tx, ty))
-    }
-}
-
-private fun DrawScope.drawProjectiles(
-    snap: GameSnapshot,
-    px: (Float) -> Float,
-    py: (Float) -> Float,
-    unit: Float,
-    sprites: Sprites,
-) {
-    for (p in snap.projectiles) {
-        val target = snap.monsters.firstOrNull { it.id == p.targetId } ?: continue
-        val x = px(p.x)
-        val y = py(p.y)
-        val a = Math.toDegrees(
-            atan2((py(target.y) - y).toDouble(), (px(target.x) - x).toDouble())
-        ).toFloat()
-        val sprite = if (p.heavy) sprites.bulletMid else sprites.bulletBasic
-        val hgt = unit * (if (p.heavy) 0.048f else 0.038f)
-        rotate(degrees = a, pivot = Offset(x, y)) {
-            drawSprite(sprite, x, y, hgt)
-        }
-    }
-}
-
 private fun DrawScope.drawHud(
     snap: GameSnapshot,
     w: Float,
     h: Float,
     unit: Float,
-    measurer: TextMeasurer,
+    fs: Float,
     sprites: Sprites,
+    font: PixelFont,
 ) {
     val pad = unit * 0.030f
     val iconH = unit * 0.048f
 
-    fun label(text: String, size: Int, color: androidx.compose.ui.graphics.Color) = measurer.measure(
-        AnnotatedString(text),
-        style = TextStyle(color = color, fontSize = size.sp, fontFamily = PixelFont, fontWeight = FontWeight.Bold),
-    )
-
-    fun shadowed(text: String, size: Int, color: androidx.compose.ui.graphics.Color, x: Float, y: Float) {
-        val ink = label(text, size, Palette.Ink)
-        drawText(ink, topLeft = Offset(x + 3f, y + 3f))
-        drawText(label(text, size, color), topLeft = Offset(x, y))
-    }
-
-    // lives, top-left — filled hearts then empty ones
+    // lives, top-left
     for (i in 0 until snap.maxLives) {
         val sprite = if (i < snap.lives) sprites.heart else sprites.heartEmpty
         drawSprite(sprite, pad + iconH / 2f + i * (iconH + unit * 0.012f), pad + iconH / 2f, iconH)
     }
 
     // ammo, top-right: heavy count over the mid bullet, then the endless basic round
-    val heavyText = label("${snap.heavyAmmo}", 16, Palette.Bone)
-    val slash = label("/", 16, Palette.Muted)
-    val infinity = label("∞", 18, Palette.Bone)
+    val midY = pad + iconH / 2f
+    val textTop = midY - PixelFont.GLYPH_H * fs / 2f
     var rx = w - pad
-    rx -= infinity.size.width; drawText(infinity, topLeft = Offset(rx, pad))
-    rx -= unit * 0.008f
-    rx -= iconH * 0.8f
-    drawSprite(sprites.bulletBasic, rx + iconH * 0.4f, pad + iconH * 0.42f, iconH * 0.8f)
-    rx -= unit * 0.010f
-    rx -= slash.size.width; drawText(slash, topLeft = Offset(rx, pad))
-    rx -= unit * 0.010f
-    rx -= heavyText.size.width; drawText(heavyText, topLeft = Offset(rx, pad))
-    rx -= unit * 0.008f
-    rx -= iconH
-    drawSprite(sprites.bulletMid, rx + iconH / 2f, pad + iconH * 0.42f, iconH)
+    val inf = font.widthPx("∞", fs)
+    rx -= inf
+    drawPixelText(font, "∞", rx, textTop, fs, Palette.Bone)
+    rx -= unit * 0.016f + iconH * 0.8f
+    drawSprite(sprites.bulletBasic, rx + iconH * 0.4f, midY, iconH * 0.8f)
+    rx -= unit * 0.016f
+    val slash = font.widthPx("/", fs)
+    rx -= slash
+    drawPixelText(font, "/", rx, textTop, fs, Palette.Muted)
+    rx -= unit * 0.016f
+    val heavy = "${snap.heavyAmmo}"
+    rx -= font.widthPx(heavy, fs)
+    drawPixelText(font, heavy, rx, textTop, fs, Palette.Bone)
+    rx -= unit * 0.016f + iconH
+    drawSprite(sprites.bulletMid, rx + iconH / 2f, midY, iconH)
 
-    // score, bottom-left: coin, number, and the streak badge when one is active
-    val scoreY = h - pad - iconH
-    drawSprite(sprites.coin, pad + iconH / 2f, scoreY + iconH / 2f, iconH * 0.85f)
-    val scoreLabel = label("${snap.score}", 17, Palette.Bone)
-    shadowed("${snap.score}", 17, Palette.Bone, pad + iconH + unit * 0.012f, scoreY + iconH * 0.18f)
+    // score, bottom-left
+    val bottomMid = h - pad - iconH / 2f
+    val bottomTop = bottomMid - PixelFont.GLYPH_H * fs / 2f
+    drawSprite(sprites.coin, pad + iconH / 2f, bottomMid, iconH * 0.85f)
+    val score = "${snap.score}"
+    val scoreX = pad + iconH + unit * 0.012f
+    drawPixelText(font, score, scoreX, bottomTop, fs, Palette.Bone)
     sprites.badge(snap.multiplier)?.let { badge ->
         drawSprite(
             badge,
-            pad + iconH + unit * 0.024f + scoreLabel.size.width + iconH * 0.6f,
-            scoreY + iconH / 2f,
+            scoreX + font.widthPx(score, fs) + unit * 0.014f + iconH * 0.5f,
+            bottomMid,
             iconH * 0.85f,
         )
     }
 
-    // level, bottom-right: crosshair plus LVL n in gold
-    val lvl = label("LVL ${snap.level}", 17, Palette.Gold)
-    val lx = w - pad - lvl.size.width
-    shadowed("LVL ${snap.level}", 17, Palette.Gold, lx, scoreY + iconH * 0.18f)
-    drawSprite(sprites.iconTarget, lx - unit * 0.014f - iconH * 0.45f, scoreY + iconH / 2f, iconH * 0.8f)
+    // level, bottom-right
+    val lvl = "LVL ${snap.level}"
+    val lx = w - pad - font.widthPx(lvl, fs)
+    drawPixelText(font, lvl, lx, bottomTop, fs, Palette.Gold)
+    drawSprite(sprites.iconTarget, lx - unit * 0.014f - iconH * 0.45f, bottomMid, iconH * 0.8f)
 }

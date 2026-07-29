@@ -14,6 +14,7 @@ import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import com.verbume.app.R
+import com.verbume.app.game.GameEngine
 import com.verbume.app.model.Texture
 import kotlin.math.roundToInt
 
@@ -25,6 +26,10 @@ import kotlin.math.roundToInt
  * where Android will not resample them on load, and every draw call passes
  * [FilterQuality.None]. Any smoothing here would turn crisp pixel art to mush.
  */
+
+/** The three frames the pack ships per monster: idle, second walk frame, death. */
+class MonsterArt(val idle: ImageBitmap, val walk: ImageBitmap, val death: ImageBitmap)
+
 class Sprites(
     val turretBase: ImageBitmap,
     val turretBarrel: ImageBitmap,
@@ -34,8 +39,10 @@ class Sprites(
     val bulletHeavy: ImageBitmap,
     val crateAmmo: ImageBitmap,
     val armorPlate: ImageBitmap,
+    val armorPlateLarge: ImageBitmap,
     val hitFlash: ImageBitmap,
     val explosion: ImageBitmap,
+    val bannerLevelUp: ImageBitmap,
     val heart: ImageBitmap,
     val heartEmpty: ImageBitmap,
     val coin: ImageBitmap,
@@ -43,24 +50,15 @@ class Sprites(
     val badgeX2: ImageBitmap,
     val badgeX3: ImageBitmap,
     val badgeX5: ImageBitmap,
-    val cloud: ImageBitmap,
-    val rock: ImageBitmap,
-    val tileGrass: ImageBitmap,
-    val tileNight: ImageBitmap,
-    val tileSand: ImageBitmap,
-    val slime: ImageBitmap,
-    val slimePurple: ImageBitmap,
-    val slimeRed: ImageBitmap,
-    val bat: ImageBitmap,
-    val spider: ImageBitmap,
-    val ghost: ImageBitmap,
-    val brute: ImageBitmap,
-    val boss: ImageBitmap,
+    private val tilesGrass: List<ImageBitmap>,
+    private val tilesNight: List<ImageBitmap>,
+    private val tilesSand: List<ImageBitmap>,
+    private val monsters: List<MonsterArt>,
 ) {
-    fun tile(t: Texture): ImageBitmap = when (t) {
-        Texture.CLASSIC -> tileGrass
-        Texture.NIGHT -> tileNight
-        Texture.DESERT -> tileSand
+    fun tiles(t: Texture): List<ImageBitmap> = when (t) {
+        Texture.CLASSIC -> tilesGrass
+        Texture.NIGHT -> tilesNight
+        Texture.DESERT -> tilesSand
     }
 
     fun badge(multiplier: Int): ImageBitmap? = when {
@@ -71,22 +69,41 @@ class Sprites(
     }
 
     /**
-     * The pack describes the colour variants as difficulty tiers, so the body is
-     * chosen purely by the level a monster spawned at. Armour is never baked into
-     * the body — it is the separate [armorPlate] overlay, which the pack calls
-     * "pancerz (nakładka)". Keeping it separate means losing the armour is visible
-     * on every monster type, not just one.
+     * The pack describes the colour variants as difficulty tiers, so the body is chosen
+     * purely by the level a monster spawned at. Armour is never baked into the body —
+     * it is the separate `armor_plate` overlay, which the pack calls "pancerz (nakładka)".
      */
-    fun monster(level: Int, variant: Int): ImageBitmap = when {
-        level <= 2 -> slime
-        level <= 4 -> if (variant % 2 == 0) slime else slimePurple
-        level <= 6 -> if (variant % 2 == 0) slimePurple else slimeRed
-        level <= 8 -> if (variant % 2 == 0) slimeRed else bat
-        level <= 10 -> if (variant % 2 == 0) bat else spider
-        level <= 12 -> if (variant % 2 == 0) spider else ghost
-        else -> if (variant % 2 == 0) brute else boss
+    fun art(level: Int, variant: Int): MonsterArt {
+        val tier = when {
+            level <= 2 -> 0
+            level <= 4 -> if (variant % 2 == 0) 0 else 1
+            level <= 6 -> if (variant % 2 == 0) 1 else 2
+            level <= 8 -> if (variant % 2 == 0) 2 else 3
+            level <= 10 -> if (variant % 2 == 0) 3 else 4
+            level <= 12 -> if (variant % 2 == 0) 4 else 5
+            else -> if (variant % 2 == 0) 6 else 7
+        }
+        return monsters[tier]
     }
+
+    /** Alternates the two walk frames; [phase] staggers monsters so they do not march in lockstep. */
+    fun walkFrame(art: MonsterArt, elapsed: Float, phase: Int): ImageBitmap {
+        val step = (elapsed / GameEngine.WALK_FRAME_TIME).toInt() + phase
+        return if (step % 2 == 0) art.idle else art.walk
+    }
+
+    /** Bigger plate for the 20x20 boss, which the standard 14x8 one looks lost on. */
+    fun armorFor(level: Int, variant: Int): ImageBitmap =
+        if (art(level, variant) === monsters[7]) armorPlateLarge else armorPlate
 }
+
+/** Local helper is not an option here: `imageResource` is composable, so it needs its own function. */
+@Composable
+private fun monsterArt(idle: Int, walk: Int, death: Int) = MonsterArt(
+    ImageBitmap.imageResource(idle),
+    ImageBitmap.imageResource(walk),
+    ImageBitmap.imageResource(death),
+)
 
 @Composable
 fun rememberSprites(): Sprites {
@@ -98,8 +115,10 @@ fun rememberSprites(): Sprites {
     val bulletHeavy = ImageBitmap.imageResource(R.drawable.bullet_heavy)
     val crateAmmo = ImageBitmap.imageResource(R.drawable.crate_ammo)
     val armorPlate = ImageBitmap.imageResource(R.drawable.armor_plate)
+    val armorPlateLarge = ImageBitmap.imageResource(R.drawable.armor_plate_large)
     val hitFlash = ImageBitmap.imageResource(R.drawable.hit_flash)
     val explosion = ImageBitmap.imageResource(R.drawable.explosion)
+    val banner = ImageBitmap.imageResource(R.drawable.banner_levelup)
     val heart = ImageBitmap.imageResource(R.drawable.heart)
     val heartEmpty = ImageBitmap.imageResource(R.drawable.heart_empty)
     val coin = ImageBitmap.imageResource(R.drawable.coin)
@@ -107,30 +126,42 @@ fun rememberSprites(): Sprites {
     val badgeX2 = ImageBitmap.imageResource(R.drawable.badge_x2)
     val badgeX3 = ImageBitmap.imageResource(R.drawable.badge_x3)
     val badgeX5 = ImageBitmap.imageResource(R.drawable.badge_x5)
-    val cloud = ImageBitmap.imageResource(R.drawable.cloud)
-    val rock = ImageBitmap.imageResource(R.drawable.rock)
-    val tileGrass = ImageBitmap.imageResource(R.drawable.tile_grass)
-    val tileNight = ImageBitmap.imageResource(R.drawable.tile_night)
-    val tileSand = ImageBitmap.imageResource(R.drawable.tile_sand)
-    val slime = ImageBitmap.imageResource(R.drawable.slime)
-    val slimePurple = ImageBitmap.imageResource(R.drawable.slime_purple)
-    val slimeRed = ImageBitmap.imageResource(R.drawable.slime_red)
-    val bat = ImageBitmap.imageResource(R.drawable.bat)
-    val spider = ImageBitmap.imageResource(R.drawable.spider)
-    val ghost = ImageBitmap.imageResource(R.drawable.ghost)
-    val brute = ImageBitmap.imageResource(R.drawable.brute)
-    val boss = ImageBitmap.imageResource(R.drawable.boss)
+
+    val grass = listOf(
+        ImageBitmap.imageResource(R.drawable.tile_grass),
+        ImageBitmap.imageResource(R.drawable.tile_grass_2),
+        ImageBitmap.imageResource(R.drawable.tile_grass_3),
+    )
+    val night = listOf(
+        ImageBitmap.imageResource(R.drawable.tile_night),
+        ImageBitmap.imageResource(R.drawable.tile_night_2),
+        ImageBitmap.imageResource(R.drawable.tile_night_3),
+    )
+    val sand = listOf(
+        ImageBitmap.imageResource(R.drawable.tile_sand),
+        ImageBitmap.imageResource(R.drawable.tile_sand_2),
+        ImageBitmap.imageResource(R.drawable.tile_sand_3),
+    )
+
+    val monsters = listOf(
+        monsterArt(R.drawable.slime, R.drawable.slime_f2, R.drawable.slime_death),
+        monsterArt(R.drawable.slime_purple, R.drawable.slime_purple_f2, R.drawable.slime_purple_death),
+        monsterArt(R.drawable.slime_red, R.drawable.slime_red_f2, R.drawable.slime_red_death),
+        monsterArt(R.drawable.bat, R.drawable.bat_f2, R.drawable.bat_death),
+        monsterArt(R.drawable.spider, R.drawable.spider_f2, R.drawable.spider_death),
+        monsterArt(R.drawable.ghost, R.drawable.ghost_f2, R.drawable.ghost_death),
+        monsterArt(R.drawable.brute, R.drawable.brute_f2, R.drawable.brute_death),
+        monsterArt(R.drawable.boss, R.drawable.boss_f2, R.drawable.boss_death),
+    )
 
     return remember(turretBase) {
         Sprites(
             turretBase, turretBarrel, muzzleFlash,
             bulletBasic, bulletMid, bulletHeavy,
-            crateAmmo, armorPlate, hitFlash, explosion,
+            crateAmmo, armorPlate, armorPlateLarge, hitFlash, explosion, banner,
             heart, heartEmpty, coin, iconTarget,
             badgeX2, badgeX3, badgeX5,
-            cloud, rock,
-            tileGrass, tileNight, tileSand,
-            slime, slimePurple, slimeRed, bat, spider, ghost, brute, boss,
+            grass, night, sand, monsters,
         )
     }
 }
@@ -138,20 +169,27 @@ fun rememberSprites(): Sprites {
 // ---- draw helpers ----------------------------------------------------------
 
 /**
- * Fills the whole draw area with a repeating tile.
+ * Fills the whole draw area with repeating tiles, mixing the variants the pack ships so
+ * the ground does not read as one stamp repeated.
  *
  * Tile size and offsets are integers and the step equals the drawn size exactly —
  * rounding each tile independently leaves one-pixel gaps that show up as a grid of
  * dark seams across the field.
  */
-fun DrawScope.drawTiledBackground(tile: ImageBitmap, approxSize: Float) {
+fun DrawScope.drawTiledBackground(tiles: List<ImageBitmap>, approxSize: Float) {
+    if (tiles.isEmpty()) return
     val step = approxSize.roundToInt().coerceAtLeast(8)
     val w = size.width.toInt()
     val h = size.height.toInt()
+    var row = 0
     var ty = 0
     while (ty < h) {
+        var col = 0
         var tx = 0
         while (tx < w) {
+            // deterministic scatter: same cell always gets the same variant, no flicker
+            val pick = ((col * 7 + row * 13) xor (col * row * 3)) % tiles.size
+            val tile = tiles[if (pick < 0) -pick else pick]
             drawImage(
                 image = tile,
                 srcOffset = IntOffset.Zero,
@@ -161,8 +199,10 @@ fun DrawScope.drawTiledBackground(tile: ImageBitmap, approxSize: Float) {
                 filterQuality = FilterQuality.None,
             )
             tx += step
+            col++
         }
         ty += step
+        row++
     }
 }
 

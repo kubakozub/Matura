@@ -33,7 +33,10 @@ Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 - ACHIEVEMENTS: 8 odznak liczonych z Twoich statystyk
 - SCORES: lokalny ranking, najlepsze przebiegi, najpopularniejszy zestaw (punkt 13)
 - **66 wbudowanych zestawów, 1695 haseł** — słownictwo pod zakres tematyczny matury podstawowej, podzielone na 14 działów (Człowiek, Miejsce zamieszkania, Edukacja, Praca, Życie prywatne, Żywienie, Zakupy, Podróże, Kultura, Sport, Zdrowie, Nauka i technika, Przyroda, Życie społeczne)
-- **Grafika pixel-art** z paczki `Pakiet grafiki pixel-art do gry`: 65 sprite'ów 16×16 skalowanych wyłącznie nearest-neighbour, paleta ośmiu kolorów z konturem `#101322`
+- **Grafika pixel-art** z paczki `Pakiet grafiki pixel-art do gry`: 96 sprite'ów 16×16 skalowanych wyłącznie nearest-neighbour, paleta ośmiu kolorów z konturem `#101322`
+- **Font bitmapowy** `font_8x8` — cały interfejs poza dłuższą prozą rysowany glifami 5×7 z arkusza, z konturem +1/+1 zgodnie z `assets/font-layout.md`; obsługa polskich znaków przez mapę glifów, nie przez systemowy krój
+- **Animacje**: dwuklatkowy chód potworków co 200 ms, klatka zgonu przez 350 ms, błysk trafienia, baner nowego poziomu
+- Trzy warianty kafla na motyw, mieszane deterministycznie — ten sam kafel zawsze w tym samym miejscu, więc tło nie migocze
 - **Demo przeglądarkowe** — jeden plik HTML z tą samą mechaniką, do pokazania bez instalowania czegokolwiek
 
 ## Czego nie ma i dlaczego
