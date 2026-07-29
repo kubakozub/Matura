@@ -44,8 +44,9 @@ android {
             // wywrotka dopiero u testerow. Reguly sa gotowe w proguard-rules.pro.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // brak keystore.properties -> paczka wychodzi niepodpisana,
+            // do podpisania osobno (jarsigner) na maszynie, ktora ma klucz
             signingConfig = signingConfigs.findByName("release")
-                ?: signingConfigs.getByName("debug")
         }
     }
 
