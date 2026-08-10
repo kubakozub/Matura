@@ -38,7 +38,20 @@ data class Options(
     val texture: Texture = Texture.CLASSIC,
     val direction: Direction = Direction.TERM_TO_DEF,
     val uiLanguage: UiLanguage = UiLanguage.PL,
+    val speed: Speed = Speed.NORMAL,
 )
+
+/**
+ * How fast monsters walk toward the cannon. Testers with slower typing asked for a
+ * gentler pace, so tempo is a setting rather than a fixed constant; the multiplier
+ * scales the whole speed curve, including the per-level increase.
+ */
+@Serializable
+enum class Speed(val factor: Float) {
+    SLOW(0.75f),
+    NORMAL(1.0f),
+    FAST(1.3f),
+}
 
 @Serializable
 enum class Texture { CLASSIC, NIGHT, DESERT }
