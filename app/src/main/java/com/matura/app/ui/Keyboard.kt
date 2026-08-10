@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,10 +48,11 @@ fun GameKeyboard(
             .fillMaxWidth()
             .background(Palette.Surface)
             .border(3.dp, Palette.Ink)
-            // Pasek nawigacji systemu zjadal dolny wiersz — tester zglosil, ze spacja
-            // "jest minimalnie za nisko" i trudno w nia trafic. Od 0.7.0 klawiatura
-            // odsuwa sie od paska gestow, a dolny wiersz jest wyzszy niz reszta.
-            .navigationBarsPadding()
+            // Tester zglosil, ze spacja "jest minimalnie za nisko" i trudno w nia
+            // trafic — zjadal ja pasek gestow. Odsuniecie od paska nawigacji robi
+            // teraz safeDrawingPadding() w MaturaApp, wspolnie dla wszystkich
+            // ekranow; tutaj zostaje tylko luz pod dolnym wierszem, ktory i tak
+            // jest wyzszy niz reszta klawiatury.
             .padding(horizontal = 3.dp)
             .padding(top = 5.dp, bottom = 9.dp)
     ) {
