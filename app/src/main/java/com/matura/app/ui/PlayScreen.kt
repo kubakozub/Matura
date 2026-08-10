@@ -60,10 +60,14 @@ fun PlayScreen(
     onFinished: (ScoreRecord) -> Unit,
 ) {
     var restarts by remember { mutableIntStateOf(0) }
-    val engine = remember(set.id, restarts, options.lives, options.direction) {
+    val engine = remember(set.id, restarts, options.lives, options.direction, options.speed) {
         GameEngine(
             set = set,
-            config = GameConfig(lives = options.lives, direction = options.direction),
+            config = GameConfig(
+                lives = options.lives,
+                direction = options.direction,
+                speed = options.speed,
+            ),
         )
     }
     var snap by remember(engine) { mutableStateOf(engine.snapshot()) }
@@ -341,6 +345,7 @@ private fun DrawScope.drawField(
             drawCentredLabel(
                 font, c.prompt, x, y - hgt * 0.62f, fs * 0.85f,
                 if (c.id in highlightedCrates) Palette.Accent else theme.hudInk,
+                clampToCanvas = true,
             )
         }
 
@@ -359,6 +364,7 @@ private fun DrawScope.drawField(
             drawCentredLabel(
                 font, m.prompt, x, y - hgt * 0.62f, fs,
                 if (m.id in highlighted) Palette.Accent else theme.hudInk,
+                clampToCanvas = true,
             )
         }
 
@@ -388,7 +394,14 @@ private fun DrawScope.drawField(
     }
 }
 
-/** Centres one line of bitmap text horizontally on [cx], with its baseline box above [bottomY]. */
+/**
+ * Centres one line of bitmap text horizontally on [cx], with its baseline box above [bottomY].
+ *
+ * Monsters enter from just outside the canvas, so a label centred on the sprite would hang off
+ * the edge — until 0.7.0 a long word like "disciplined" read as "plined" for the first couple of
+ * seconds, which is exactly the time the player needs to start typing. The label is therefore
+ * kept inside the canvas; only the sprite walks in from off-screen.
+ */
 private fun DrawScope.drawCentredLabel(
     font: PixelFont,
     text: String,
@@ -397,12 +410,21 @@ private fun DrawScope.drawCentredLabel(
     scale: Float,
     color: Color,
     outline: Color? = Palette.Ink,
+    clampToCanvas: Boolean = false,
 ) {
     val width = font.widthPx(text, scale)
+    var x = cx - width / 2f
+    if (clampToCanvas) {
+        val margin = 2f * scale
+        x = when {
+            width + 2 * margin >= size.width -> (size.width - width) / 2f   // dłuższe niż ekran
+            else -> x.coerceIn(margin, size.width - width - margin)
+        }
+    }
     drawPixelText(
         font = font,
         text = text,
-        x = cx - width / 2f,
+        x = x,
         y = bottomY - PixelFont.GLYPH_H * scale,
         scale = scale,
         color = color,

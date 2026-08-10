@@ -7,6 +7,7 @@ import com.matura.app.game.Matching
 import com.matura.app.game.SubmitResult
 import com.matura.app.model.Direction
 import com.matura.app.model.Entry
+import com.matura.app.model.Speed
 import com.matura.app.model.WordSet
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -79,7 +80,7 @@ class GameEngineTest {
      * otherwise a monster spawning mid-assertion would make counts non-deterministic.
      * Auto-spawning itself is covered by [the field does not overflow with monsters].
      */
-    private fun engine(lives: Int = 3): GameEngine = GameEngine(
+    private fun engine(lives: Int = 3, speed: Speed = Speed.NORMAL): GameEngine = GameEngine(
         set = WordSet(
             id = "t",
             title = "test",
@@ -89,7 +90,12 @@ class GameEngineTest {
                 Entry("tart", "cierpki"),
             ),
         ),
-        config = GameConfig(lives = lives, direction = Direction.TERM_TO_DEF, autoSpawn = false),
+        config = GameConfig(
+            lives = lives,
+            direction = Direction.TERM_TO_DEF,
+            speed = speed,
+            autoSpawn = false,
+        ),
         random = Random(42),
     )
 
@@ -226,6 +232,43 @@ class GameEngineTest {
         e.type('x')
         assertEquals("typing is ignored after game over", before, e.snapshot().typed)
         assertTrue(e.submit() is SubmitResult.Ignored)
+    }
+
+    /**
+     * Tempo z OPCJI. Tester zglosil, ze przy dluzszych haslach nie zdazyl dopisac
+     * odpowiedzi — SLOW ma dawac wyraznie wiecej czasu, FAST mniej, a punktacja
+     * zostaje ta sama.
+     */
+    @Test
+    fun `speed setting scales how fast monsters close in on the cannon`() {
+        fun travelledInFiveSeconds(speed: Speed): Float {
+            val e = engine(speed = speed)
+            e.debugAddMonster("agile", "zręczny", x = 0.05f, y = GameEngine.CANNON_Y)
+            repeat(100) { e.tick(0.05f) }
+            val m = e.snapshot().monsters.single()
+            return m.x - 0.05f
+        }
+
+        val slow = travelledInFiveSeconds(Speed.SLOW)
+        val normal = travelledInFiveSeconds(Speed.NORMAL)
+        val fast = travelledInFiveSeconds(Speed.FAST)
+
+        assertTrue("WOLNO musi być wolniejsze niż NORMALNIE", slow < normal)
+        assertTrue("SZYBKO musi być szybsze niż NORMALNIE", normal < fast)
+        assertTrue("każde tempo musi w ogóle ruszać potworkiem", slow > 0f)
+    }
+
+    @Test
+    fun `tempo does not change scoring`() {
+        fun scoreForOneKill(speed: Speed): Int {
+            val e = engine(speed = speed)
+            e.debugAddMonster("agile", "zręczny", x = 0.05f, y = GameEngine.CANNON_Y)
+            e.setTyped("zreczny"); e.submit()
+            e.resolveShots()
+            return e.score
+        }
+        assertEquals(scoreForOneKill(Speed.NORMAL), scoreForOneKill(Speed.SLOW))
+        assertEquals(scoreForOneKill(Speed.NORMAL), scoreForOneKill(Speed.FAST))
     }
 
     @Test

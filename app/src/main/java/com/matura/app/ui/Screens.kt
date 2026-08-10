@@ -40,6 +40,7 @@ import com.matura.app.model.Entry
 import com.matura.app.model.Options
 import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
+import com.matura.app.model.Speed
 import com.matura.app.model.Texture
 import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordSet
@@ -481,6 +482,21 @@ fun OptionsScreen(
                         }
                     }
                 }
+                OptionRow(str.speed, icon = R.drawable.icon_clock) {
+                    Row {
+                        Speed.entries.forEach { s ->
+                            ChoiceChip(
+                                label = when (s) {
+                                    Speed.SLOW -> str.speedSlow
+                                    Speed.NORMAL -> str.speedNormal
+                                    Speed.FAST -> str.speedFast
+                                },
+                                selected = options.speed == s,
+                            ) { onChange(options.copy(speed = s)) }
+                            Spacer(Modifier.width(5.dp))
+                        }
+                    }
+                }
                 OptionRow(str.language, icon = R.drawable.icon_globe) {
                     Row {
                         UiLanguage.entries.forEach { l ->
@@ -506,6 +522,8 @@ fun OptionsScreen(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                InfoCard(str.speedNote)
+                Spacer(Modifier.height(10.dp))
                 InfoCard(str.soundNote)
                 Spacer(Modifier.height(30.dp))
             }
