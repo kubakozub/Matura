@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +49,9 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
         Modifier
             .fillMaxSize()
             .background(Palette.Background)
+            // Android 15 rysuje aplikacje pod paskiem stanu. Bez tego zegarek
+            // systemowy lezal na sercach i liczniku amunicji.
+            .statusBarsPadding()
     ) {
         when (val s = screen) {
             Screen.Start -> StartScreen(

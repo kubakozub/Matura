@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,7 +49,12 @@ fun GameKeyboard(
             .fillMaxWidth()
             .background(Palette.Surface)
             .border(3.dp, Palette.Ink)
-            .padding(horizontal = 3.dp, vertical = 5.dp)
+            // Pasek nawigacji systemu zjadal dolny wiersz — tester zglosil, ze spacja
+            // "jest minimalnie za nisko" i trudno w nia trafic. Od 0.7.0 klawiatura
+            // odsuwa sie od paska gestow, a dolny wiersz jest wyzszy niz reszta.
+            .navigationBarsPadding()
+            .padding(horizontal = 3.dp)
+            .padding(top = 5.dp, bottom = 9.dp)
     ) {
         Row(Modifier.fillMaxWidth().height(48.dp)) {
             "QWERTYUIOP".forEach { LetterKey(it, onChar) }
@@ -63,14 +69,18 @@ fun GameKeyboard(
             "ZXCVBNM".forEach { LetterKey(it, onChar) }
             SpriteKey(keyEnter, weight = 1.6f, onClick = onEnter)
         }
-        Row(Modifier.fillMaxWidth().height(48.dp)) {
-            Box(Modifier.weight(0.7f))
-            SpriteKey(keySpace, weight = 5.5f, onClick = onSpace)
-            ArrowKey(keyArrows, weight = 2.2f, onLeft = onLeft, onRight = onRight)
-            Box(Modifier.weight(0.7f))
+        Row(Modifier.fillMaxWidth().height(SPACE_ROW_HEIGHT)) {
+            SpriteKey(keySpace, weight = 6.6f, onClick = onSpace)
+            ArrowKey(keyArrows, weight = 2.4f, onLeft = onLeft, onRight = onRight)
         }
     }
 }
+
+/**
+ * The bottom row is deliberately taller than the letter rows: it is the row closest to
+ * the edge of the screen and the one testers missed most often.
+ */
+private val SPACE_ROW_HEIGHT = 56.dp
 
 @Composable
 private fun RowScope.LetterKey(c: Char, onChar: (Char) -> Unit) {
