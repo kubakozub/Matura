@@ -20,12 +20,15 @@ Wszystkie trzy zmiany wynikają wprost z uwag z testów.
 - **Tempo jako ustawienie.** OPCJE → *Tempo*: `WOLNO` (×0,75), `NORMALNIE` (×1),
   `SZYBKO` (×1,3). Mnożnik skaluje całą krzywą prędkości, razem z przyrostem na poziom.
   Punktacja się nie zmienia — wynik z WOLNO liczy się tak samo.
-- **Spacja była za nisko.** Klawiatura nie odsuwała się od systemowego paska nawigacji,
-  więc dolny wiersz na części telefonów leżał pod paskiem gestów. Doszedł
-  `navigationBarsPadding()`, dolny wiersz jest wyższy (56 dp zamiast 48 dp), spacja
-  szersza (waga 6,6 zamiast 5,5), a boczne wypełniacze zniknęły. Przy okazji cała
-  aplikacja odsuwa się od paska stanu — na Androidzie 15 zegarek systemowy leżał na
-  sercach i liczniku amunicji.
+- **Spacja była za nisko.** Dolny wiersz klawiatury na części telefonów leżał pod
+  paskiem gestów. Dolny wiersz jest teraz wyższy (56 dp zamiast 48 dp), spacja szersza
+  (waga 6,6 zamiast 5,5), a boczne wypełniacze zniknęły.
+- **Jedno miejsce na chrom systemu.** `MaturaApp` woła `safeDrawingPadding()`, więc od
+  korzenia w dół treść omija pasek stanu, pasek nawigacji, wycięcie w ekranie i otwartą
+  klawiaturę systemową. Wcześniej odsuwała się tylko klawiatura gry — MENU, OPCJE, SETS
+  i edytor kończyły się stałym odstępem i ostatni przycisk potrafił wpaść pod pasek
+  gestów. Na Androidzie 15 zegarek systemowy leżał dodatkowo na sercach i liczniku
+  amunicji.
 
 - Demo w przeglądarce: **[kubakozub.github.io/Matura](https://kubakozub.github.io/Matura/)**
 - Pełna dokumentacja projektowa: [`docs/Matura-dokumentacja.pdf`](docs/Matura-dokumentacja.pdf)
