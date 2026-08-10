@@ -10,6 +10,7 @@ import com.matura.app.model.Options
 import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
 import com.matura.app.model.ScoreRecord
+import com.matura.app.model.Speed
 import com.matura.app.model.Texture
 import com.matura.app.model.WordSet
 import kotlinx.serialization.json.Json
@@ -35,7 +36,13 @@ class PersistenceTest {
     fun `save data survives a write and read round trip`() {
         val original = SaveData(
             profile = Profile(name = "Kuba", anonymous = true, gamesPlayed = 4, totalKills = 40, bestScore = 900, bestStreak = 7),
-            options = Options(lives = 5, soundEnabled = false, texture = Texture.NIGHT, direction = Direction.RANDOM),
+            options = Options(
+                lives = 5,
+                soundEnabled = false,
+                texture = Texture.NIGHT,
+                direction = Direction.RANDOM,
+                speed = Speed.SLOW,
+            ),
             sets = SampleData.builtInSets() + WordSet(
                 id = "user-1",
                 title = "Moje słówka",
@@ -50,7 +57,33 @@ class PersistenceTest {
         assertEquals(original, restored)
         assertEquals(Texture.NIGHT, restored.options.texture)
         assertEquals(Direction.RANDOM, restored.options.direction)
+        assertEquals(Speed.SLOW, restored.options.speed)
         assertEquals("Moje słówka", restored.sets.last().title)
+    }
+
+    /**
+     * Testerzy z zamknietego testu aktualizuja aplikacje na wierzch 0.6.0, wiec plik
+     * zapisu nie zna jeszcze pola `speed`. Musi wczytac sie bez wyjatku i przyjac
+     * domyslne tempo, inaczej po aktualizacji wywali sie przed menu.
+     */
+    @Test
+    fun `a save file written by 0_6_0 loads and picks the default speed`() {
+        val legacy = """
+            {
+              "profile": { "name": "Kuba", "anonymous": true, "gamesPlayed": 3 },
+              "options": { "lives": 4, "soundEnabled": false, "texture": "NIGHT",
+                           "direction": "RANDOM", "uiLanguage": "PL" },
+              "sets": [],
+              "scores": []
+            }
+        """.trimIndent()
+
+        val restored = json.decodeFromString(SaveData.serializer(), legacy)
+
+        assertEquals(4, restored.options.lives)
+        assertEquals(Texture.NIGHT, restored.options.texture)
+        assertEquals("nowe pole musi mieć wartość domyślną", Speed.NORMAL, restored.options.speed)
+        assertEquals("Kuba", restored.profile.name)
     }
 
     @Test
