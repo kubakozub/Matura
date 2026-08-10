@@ -3,11 +3,29 @@
 Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
 *Verbume — Verbum + Game*. Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 
-**Wersja 0.6.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
+**Wersja 0.7.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
 
 > Aplikacja nazywała się wcześniej **Verbume**. Zmieniła się nazwa i identyfikator
 > pakietu (`com.verbume.app` → `com.matura.app`); mechanika, słownictwo i grafika
 > zostały bez zmian.
+
+## Co nowego w 0.7.0
+
+Wszystkie trzy zmiany wynikają wprost z uwag z testów.
+
+- **Wolniejsze tempo.** Bazowa prędkość potworków spadła z `0.030` do `0.024`, przyrost
+  na poziom z `0.0055` do `0.0042`, a fale są rzadsze (`3.8 s` zamiast `3.4 s`, minimum
+  `1.4 s` zamiast `1.0 s`). Przy dłuższych hasłach potworek dochodził do działka, zanim
+  dało się dokończyć pisanie.
+- **Tempo jako ustawienie.** OPCJE → *Tempo*: `WOLNO` (×0,75), `NORMALNIE` (×1),
+  `SZYBKO` (×1,3). Mnożnik skaluje całą krzywą prędkości, razem z przyrostem na poziom.
+  Punktacja się nie zmienia — wynik z WOLNO liczy się tak samo.
+- **Spacja była za nisko.** Klawiatura nie odsuwała się od systemowego paska nawigacji,
+  więc dolny wiersz na części telefonów leżał pod paskiem gestów. Doszedł
+  `navigationBarsPadding()`, dolny wiersz jest wyższy (56 dp zamiast 48 dp), spacja
+  szersza (waga 6,6 zamiast 5,5), a boczne wypełniacze zniknęły. Przy okazji cała
+  aplikacja odsuwa się od paska stanu — na Androidzie 15 zegarek systemowy leżał na
+  sercach i liczniku amunicji.
 
 - Demo w przeglądarce: **[kubakozub.github.io/Matura](https://kubakozub.github.io/Matura/)**
 - Pełna dokumentacja projektowa: [`docs/Matura-dokumentacja.pdf`](docs/Matura-dokumentacja.pdf)
@@ -49,7 +67,8 @@ jeśli tekst pasuje dokładnie; przy kilku pasujących celem zostaje ten najbli�
 - SETS: lista zestawów, edytor w układzie Quizleta — numerowane wiersze, dwie kolumny z językami
   i przyciskiem zamiany stron (punkty 10–11). Własne zestawy kasujesz koszem: pierwsze tapnięcie
   uzbraja przycisk, drugie usuwa. Wbudowanych nie da się usunąć.
-- OPTIONS: dźwięk, liczba żyć, tekstury, język interfejsu (PL/EN), kierunek tłumaczenia (punkt 12)
+- OPTIONS: dźwięk, liczba żyć, tekstury, tempo potworków, język interfejsu (PL/EN),
+  kierunek tłumaczenia (punkt 12)
 - ACHIEVEMENTS: 8 odznak liczonych z Twoich statystyk
 - SCORES: lokalny ranking, najlepsze przebiegi, najpopularniejszy zestaw (punkt 13)
 - **102 zestawy, 2084 hasła** — słownictwo pod zakres tematyczny matury podstawowej, podzielone
@@ -103,8 +122,12 @@ Minimalny Android: 7.0 (API 24). Aplikacja jest w orientacji pionowej.
 ```bash
 echo "sdk.dir=/sciezka/do/Android/Sdk" > local.properties
 ./gradlew :app:assembleDebug          # APK w app/build/outputs/apk/debug/
-./gradlew :app:testDebugUnitTest      # 44 testy jednostkowe
+./gradlew :app:bundleRelease          # AAB do Google Play w app/build/outputs/bundle/release/
+./gradlew :app:testDebugUnitTest      # 47 testów jednostkowych
 ```
+
+Bez `keystore.properties` paczka release wychodzi niepodpisana — podpis zakłada się
+osobno, na maszynie, która ma klucz.
 
 Android Studio: `File → Open` na katalogu repozytorium. Wymagany JDK 21 i Android SDK 36
 (kod bajtowy powstaje pod Javę 17).
@@ -126,19 +149,24 @@ app/src/main/java/com/matura/app/
   ui/Sprites.kt              rejestr sprite'ów, klatki animacji, kafelkowanie
   ui/PixelFont.kt            renderer fontu bitmapowego font_8x8
 app/src/test/java/com/matura/app/
-  EngineTest.kt              GameEngineTest (21) + MatchingTest (7)
+  EngineTest.kt              GameEngineTest (23) + MatchingTest (7)
   BuiltInSetsTest.kt         10 testów pilnujących reguł słownictwa
-  PersistenceTest.kt         6 testów zapisu i odczytu
+  PersistenceTest.kt         7 testów zapisu i odczytu
 ```
 
 `GameEngine` celowo nie zna Androida ani Compose — dzięki temu cała mechanika jest testowana
-zwykłym JUnitem, bez emulatora. Razem 44 testy.
+zwykłym JUnitem, bez emulatora. Razem 47 testów.
 
 ## Publikacja
 
 `docs/` jest źródłem dla GitHub Pages — w ustawieniach repozytorium: gałąź **master**,
 folder **/docs**. APK celowo nie jest wersjonowany: jednorazowe wrzucenie go rozdmuchało
 katalog `.git` z kilkuset kilobajtów do jedenastu megabajtów.
+
+Dlatego APK wisi w **GitHub Releases**, nie w `docs/`. `docs/pobierz.html` linkuje do
+`releases/latest/download/MaturaV070.apk`, więc przy każdym wydaniu plik musi nazywać się
+dokładnie tak — inaczej przycisk pobierania zwróci 404. Do 0.7.0 link prowadził do pliku
+w `docs/`, którego tam nie było, i pobieranie po prostu nie działało.
 
 ## Siostrzana aplikacja
 
