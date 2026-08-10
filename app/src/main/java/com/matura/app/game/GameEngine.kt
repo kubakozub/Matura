@@ -1,6 +1,7 @@
 package com.matura.app.game
 
 import com.matura.app.model.Direction
+import com.matura.app.model.Speed
 import com.matura.app.model.WordSet
 import kotlin.math.hypot
 import kotlin.math.max
@@ -101,6 +102,8 @@ sealed interface SubmitResult {
 data class GameConfig(
     val lives: Int = 3,
     val direction: Direction = Direction.TERM_TO_DEF,
+    /** Player-chosen tempo; scales the whole monster speed curve. */
+    val speed: Speed = Speed.NORMAL,
     /** Test seam: with automatic waves off, a test controls exactly what is on the field. */
     val autoSpawn: Boolean = true,
 )
@@ -115,11 +118,14 @@ class GameEngine(
         const val CANNON_Y = 0.5f
         const val CANNON_RADIUS = 0.06f
 
-        private const val BASE_SPEED = 0.030f
-        private const val SPEED_PER_LEVEL = 0.0055f
+        // Tempo obnizone w 0.7.0. Testerzy zglaszali, ze przy dluzszych haslach
+        // potworek dochodzil do dzialka, zanim dalo sie dokonczyc pisanie —
+        // wolniejszy marsz i rzadsze fale daja czas na wpisanie calego slowa.
+        private const val BASE_SPEED = 0.024f
+        private const val SPEED_PER_LEVEL = 0.0042f
         private const val PROJECTILE_SPEED = 1.25f
-        private const val BASE_SPAWN_INTERVAL = 3.4f
-        private const val MIN_SPAWN_INTERVAL = 1.0f
+        private const val BASE_SPAWN_INTERVAL = 3.8f
+        private const val MIN_SPAWN_INTERVAL = 1.4f
         private const val KILLS_PER_LEVEL = 8
         private const val CRATE_INTERVAL = 19f
         private const val CRATE_TTL = 13f
@@ -407,7 +413,8 @@ class GameEngine(
     private fun spawnInterval(): Float =
         max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - (level - 1) * 0.22f)
 
-    private fun monsterSpeed(): Float = BASE_SPEED + (level - 1) * SPEED_PER_LEVEL
+    private fun monsterSpeed(): Float =
+        (BASE_SPEED + (level - 1) * SPEED_PER_LEVEL) * config.speed.factor
 
     private fun armorChance(): Float =
         if (level < 3) 0f else min(0.6f, (level - 2) * 0.12f)
