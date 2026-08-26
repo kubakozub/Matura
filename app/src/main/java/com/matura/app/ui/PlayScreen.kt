@@ -306,7 +306,7 @@ private fun AnswerBar(typed: String, cursor: Int, font: PixelFont) {
 }
 
 @Composable
-private fun GameOverOverlay(
+internal fun GameOverOverlay(
     snap: GameSnapshot,
     str: Str,
     sprites: Sprites,
@@ -318,9 +318,21 @@ private fun GameOverOverlay(
         Modifier
             .fillMaxSize()
             .background(Palette.Ink.copy(alpha = 0.86f)),
-        contentAlignment = Alignment.Center,
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        // Przyciski musza byc widoczne zawsze — to jedyna droga wyjscia z tego ekranu.
+        // Na telefonie w poziomie okno ma 411 dp, a caly uklad z pelna lista potrzebuje
+        // wiecej, wiec cos musi ustapic i moze to byc wylacznie lista. Dlatego dostaje
+        // `weight(1f, fill = false)`: bierze to, co zostanie po elementach o stalej
+        // wysokosci, i ani piksela wiecej. Zadnych stalych liczbowych — pierwsze podejscie
+        // odejmowalo zgadniete 300 dp i bylo za male, bo font bitmapowy zajmuje wiecej,
+        // niz wynika z samego `glyphHeight`.
+        Column(
+            Modifier
+                .fillMaxSize()
+                .padding(vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
             PixelImage(pixel(com.matura.app.R.drawable.skull), Modifier.size(60.dp))
             Spacer(Modifier.height(12.dp))
             PixelText(str.gameOver, color = Palette.Danger, glyphHeight = 18.dp, font = font)
@@ -338,7 +350,7 @@ private fun GameOverOverlay(
                 font = font,
             )
             Spacer(Modifier.height(16.dp))
-            ReviewList(snap.missedWords, str, font)
+            ReviewList(snap.missedWords, str, font, Modifier.weight(1f, fill = false))
             Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.Center) {
                 PrimaryButton(str.playAgain, onClick = onAgain)
@@ -357,9 +369,14 @@ private fun GameOverOverlay(
  * the buttons off the bottom of the screen.
  */
 @Composable
-private fun ReviewList(missed: List<MissedWord>, str: Str, font: PixelFont) {
+private fun ReviewList(
+    missed: List<MissedWord>,
+    str: Str,
+    font: PixelFont,
+    modifier: Modifier = Modifier,
+) {
     Column(
-        Modifier
+        modifier
             .widthIn(max = 300.dp)
             .background(Palette.Ink)
             .border(2.dp, Palette.SurfaceHigh)
@@ -371,6 +388,8 @@ private fun ReviewList(missed: List<MissedWord>, str: Str, font: PixelFont) {
             PixelText(str.reviewClean, color = Palette.Muted, glyphHeight = 8.dp, font = font)
             return@Column
         }
+        // Na wysokim ekranie lista konczy sie na wlasnej tresci, najwyzej 136 dp;
+        // na niskim przycina ja `weight` rodzica, a przewijanie zostawia dostep do reszty.
         Column(
             Modifier
                 .heightIn(max = 136.dp)
