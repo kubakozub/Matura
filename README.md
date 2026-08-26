@@ -3,11 +3,35 @@
 Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
 *Verbume — Verbum + Game*. Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 
-**Wersja 0.7.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
+**Wersja 0.8.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
 
 > Aplikacja nazywała się wcześniej **Verbume**. Zmieniła się nazwa i identyfikator
 > pakietu (`com.verbume.app` → `com.matura.app`); mechanika, słownictwo i grafika
 > zostały bez zmian.
+
+## Co nowego w 0.8.0
+
+Znowu wszystko z uwag testerów.
+
+- **Hasło z łącznikiem można wpisać.** Tester wylosował „otwarty" i nie miał jak
+  odpowiedzieć `open-minded`: klawiatura ma tylko A–Z, a łącznik i tak zamienia się
+  w normalizacji na spację. Do przyjmowanych odpowiedzi dochodzi wariant **bez
+  odstępu**, więc zaliczają się i `open minded`, i `openminded`, a podświetlanie
+  prefiksu działa w obu. Dotyczy to wszystkich 665 haseł wielowyrazowych, nie tylko
+  37 z łącznikiem.
+- **Lista DO POWTÓRKI po grze.** Ekran KONIEC GRY pokazuje pod wynikiem każde hasło,
+  które doszło do działka, wraz z tłumaczeniem w oryginalnej pisowni — z ogonkami
+  i łącznikiem, nie w postaci znormalizowanej. To samo słowo przegrane dwa razy to
+  jedna pozycja z licznikiem `x2`. Lista przewija się we własnej ramce o stałej
+  wysokości, więc długa rozgrywka nie zepchnie przycisków poza ekran.
+- **Koniec z kumulacją tych samych słów.** Losowanie było ze zwracaniem, więc jedno
+  hasło potrafiło wracać bez przerwy, a inne nie paść ani razu. Teraz działa worek:
+  cały zestaw jest tasowany i dobierany bez zwracania, a nowe tasowanie następuje
+  dopiero po jego wyczerpaniu. Nowa kolejka nie zaczyna się tym, czym skończyła się
+  poprzednia. Powtórki w obrębie rozgrywki zostają — o nie chodzi w zestawach po
+  około dwadzieścia haseł — ale rozkładają się równo.
+
+Demo w przeglądarce dostało te same trzy zmiany, żeby dalej odpowiadało silnikowi.
 
 ## Co nowego w 0.7.0
 
@@ -126,7 +150,7 @@ Minimalny Android: 7.0 (API 24). Aplikacja jest w orientacji pionowej.
 echo "sdk.dir=/sciezka/do/Android/Sdk" > local.properties
 ./gradlew :app:assembleDebug          # APK w app/build/outputs/apk/debug/
 ./gradlew :app:bundleRelease          # AAB do Google Play w app/build/outputs/bundle/release/
-./gradlew :app:testDebugUnitTest      # 47 testów jednostkowych
+./gradlew :app:testDebugUnitTest      # 54 testy jednostkowe
 ```
 
 Bez `keystore.properties` paczka release wychodzi niepodpisana — podpis zakłada się
@@ -152,13 +176,13 @@ app/src/main/java/com/matura/app/
   ui/Sprites.kt              rejestr sprite'ów, klatki animacji, kafelkowanie
   ui/PixelFont.kt            renderer fontu bitmapowego font_8x8
 app/src/test/java/com/matura/app/
-  EngineTest.kt              GameEngineTest (23) + MatchingTest (7)
+  EngineTest.kt              GameEngineTest (28) + MatchingTest (9)
   BuiltInSetsTest.kt         10 testów pilnujących reguł słownictwa
   PersistenceTest.kt         7 testów zapisu i odczytu
 ```
 
 `GameEngine` celowo nie zna Androida ani Compose — dzięki temu cała mechanika jest testowana
-zwykłym JUnitem, bez emulatora. Razem 47 testów.
+zwykłym JUnitem, bez emulatora. Razem 54 testy.
 
 ## Publikacja
 
@@ -167,7 +191,7 @@ folder **/docs**. APK celowo nie jest wersjonowany: jednorazowe wrzucenie go roz
 katalog `.git` z kilkuset kilobajtów do jedenastu megabajtów.
 
 Dlatego APK wisi w **GitHub Releases**, nie w `docs/`. `docs/pobierz.html` linkuje do
-`releases/latest/download/MaturaV070.apk`, więc przy każdym wydaniu plik musi nazywać się
+`releases/latest/download/MaturaV080.apk`, więc przy każdym wydaniu plik musi nazywać się
 dokładnie tak — inaczej przycisk pobierania zwróci 404. Do 0.7.0 link prowadził do pliku
 w `docs/`, którego tam nie było, i pobieranie po prostu nie działało.
 

@@ -1,0 +1,30 @@
+Informacje o wersji 0.8.0 — do wklejenia w Play Console
+(Testowanie -> Testy zamkniete -> Utworz nowa wersje -> Informacje o wersji)
+
+--------------------------------------------------------------------------
+
+Hasla z lacznikiem mozna wreszcie wpisac. Klawiatura ma tylko litery A-Z,
+wiec "open-minded" bylo nie do napisania. Teraz zaliczaja sie obie postacie:
+"open minded" i "openminded". To samo dotyczy kazdego hasla z dwoch slow —
+"stan cywilny" mozna napisac jednym ciagiem.
+
+Po grze widzisz, co Ci ucieklo. Ekran KONIEC GRY pokazuje liste DO POWTORKI:
+kazde haslo, ktore doszlo do dzialka, razem z tlumaczeniem. Slowo przegrane
+dwa razy ma przy sobie licznik.
+
+Koniec z tym samym slowem w kolko. Losowanie zmienilo sie tak, ze zanim
+jakiekolwiek haslo wroci, musza pojawic sie wszystkie pozostale z zestawu.
+
+--------------------------------------------------------------------------
+
+Prosba do testerow:
+
+1. Jesli klawiatura chowala Ci sie pod paskiem nawigacji i nie dalo sie
+   trafic w spacje — to bylo naprawione juz w 0.7.0. Sprawdz, prosze, czy
+   u Ciebie spacja jest widoczna. Jesli nadal jej nie ma, napisz koniecznie,
+   bo to znaczy, ze poprawka nie zadziala na Twoim telefonie.
+
+2. Zostawcie aplikacje na telefonie i odpalajcie ja czasem na kilka minut.
+   Google patrzy nie tylko na to, czy aplikacja stoi na telefonie, ale tez
+   czy ktos jej faktycznie uzywa. Licznik 14 dni liczy sie od momentu
+   dolaczenia do testu — ta aktualizacja go nie zeruje.

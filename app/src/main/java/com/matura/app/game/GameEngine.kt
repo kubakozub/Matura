@@ -21,6 +21,15 @@ data class Monster(
     val id: Long,
     val prompt: String,
     val answers: List<String>,
+    /**
+     * The counterpart of this monster's own entry, spelled as the set spells it.
+     *
+     * Carried per monster rather than looked up by [prompt]: 115 Polish and 120 English
+     * prompts repeat across the built-in sets ("uprzejmy" is both `kind` and `polite`),
+     * so a prompt does not identify an entry and a lookup would show the wrong answer
+     * on the review list.
+     */
+    val solution: String = "",
     var x: Float,
     var y: Float,
     val speed: Float,
@@ -87,6 +96,20 @@ data class GameSnapshot(
     val flash: FlashKind?,
     /** Seconds left on the "new level" banner; zero when it should not be shown. */
     val levelUpBanner: Float,
+    /** Words that got through to the cannon — the review list on the game-over screen. */
+    val missedWords: List<MissedWord> = emptyList(),
+)
+
+/**
+ * One word the player let through, together with the answer that was expected.
+ *
+ * A tester asked for a list of everything missed "wraz z ich tłumaczeniem" at the end of
+ * a run, to repeat straight away; [times] counts how often the same word beat them.
+ */
+data class MissedWord(
+    val prompt: String,
+    val solution: String,
+    val times: Int,
 )
 
 enum class FlashKind { HIT, ARMOR, MISS, CRATE, LIFE_LOST }
@@ -186,23 +209,94 @@ class GameEngine(
             else -> 1
         }
 
-    private val playable: List<Pair<String, List<String>>> = buildPlayable()
+    /**
+     * A word as the field uses it: what stands over the monster, what counts as typed
+     * correctly, and how the answer is spelled for the player to read afterwards.
+     */
+    private data class PlayableWord(
+        val prompt: String,
+        val answers: List<String>,
+        /** The counterpart exactly as the set spells it — with hyphens and diacritics. */
+        val solution: String,
+    )
 
-    private fun buildPlayable(): List<Pair<String, List<String>>> {
-        val out = mutableListOf<Pair<String, List<String>>>()
+    private val playable: List<PlayableWord> = buildPlayable()
+
+    private fun buildPlayable(): List<PlayableWord> {
+        val out = mutableListOf<PlayableWord>()
         for (e in set.entries) {
-            val termToDef = e.term.trim() to Matching.acceptedAnswers(e.definition)
-            val defToTerm = e.definition.trim() to Matching.acceptedAnswers(e.term)
+            val term = e.term.trim()
+            val definition = e.definition.trim()
+            val termToDef = PlayableWord(term, Matching.acceptedAnswers(definition), definition)
+            val defToTerm = PlayableWord(definition, Matching.acceptedAnswers(term), term)
             when (config.direction) {
                 Direction.TERM_TO_DEF -> out.add(termToDef)
                 Direction.DEF_TO_TERM -> out.add(defToTerm)
                 Direction.RANDOM -> out.add(if (random.nextBoolean()) termToDef else defToTerm)
             }
         }
-        return out.filter { it.first.isNotBlank() && it.second.isNotEmpty() }
+        return out.filter { it.prompt.isNotBlank() && it.answers.isNotEmpty() }
     }
 
     val isPlayable: Boolean get() = playable.isNotEmpty()
+
+    // Tester: "ograniczenie powtarzania sie slowek, tak aby w jednej rozgrywce dane slowo
+    // nie pojawialo sie ponownie". Losowanie ze zwracaniem potrafilo pokazac jedno haslo
+    // pieciokrotnie, a innego nie pokazac wcale. Worek tasuje caly zestaw i dobiera bez
+    // zwracania; dopiero po jego wyczerpaniu tasuje od nowa. Slowa nadal wracaja w ciagu
+    // rozgrywki — o to chodzi w zestawach po ok. 20 hasel — ale rowno, po kolejce.
+    private val bag = ArrayDeque<PlayableWord>()
+    private var lastDrawn: String? = null
+
+    private fun refillBag() {
+        val shuffled = playable.shuffled(random).toMutableList()
+        // Nowa kolejka nie zaczyna sie haslem, ktorym skonczyla sie poprzednia — inaczej
+        // na styku dwoch kolejek to samo slowo wypadaloby dwa razy pod rzad.
+        if (shuffled.size > 1 && shuffled.first().prompt == lastDrawn) {
+            val other = 1 + random.nextInt(shuffled.size - 1)
+            val head = shuffled[0]
+            shuffled[0] = shuffled[other]
+            shuffled[other] = head
+        }
+        bag.addAll(shuffled)
+    }
+
+    /**
+     * Next word for a monster or a crate, skipping anything already on the field.
+     * A word standing on the field stays in the bag and comes back on the next draw.
+     */
+    private fun drawWord(taken: Set<String>): PlayableWord? {
+        if (playable.isEmpty()) return null
+        if (bag.isEmpty()) refillBag()
+        val free = bag.firstOrNull { it.prompt !in taken }
+        if (free != null) {
+            bag.remove(free)
+            lastDrawn = free.prompt
+            return free
+        }
+        // Maly zestaw, caly worek stoi juz na planszy: bierz cokolwiek, byle nie duplikat.
+        val rest = playable.filter { it.prompt !in taken }.ifEmpty { playable }
+        val pick = rest[random.nextInt(rest.size)]
+        lastDrawn = pick.prompt
+        return pick
+    }
+
+    // Kolejnosc wstawiania = kolejnosc, w jakiej gracz je przegral. Kluczem jest para
+    // haslo+odpowiedz, a nie samo haslo: "uprzejmy" to w zestawach zarowno `kind`, jak
+    // i `polite`, wiec klucz po samym tekscie zlalby dwa rozne wpisy w jeden licznik.
+    private val missed = LinkedHashMap<String, MissedWord>()
+
+    /** Words that reached the cannon, in the order they got through. */
+    val missedWords: List<MissedWord> get() = missed.values.toList()
+
+    private fun recordMiss(monster: Monster) {
+        if (monster.solution.isBlank()) return
+        val key = monster.prompt + "\u0000" + monster.solution
+        val seen = missed[key]
+        missed[key] =
+            if (seen == null) MissedWord(monster.prompt, monster.solution, 1)
+            else seen.copy(times = seen.times + 1)
+    }
 
     fun snapshot(): GameSnapshot = GameSnapshot(
         monsters = monsters.map { it.copy() },
@@ -224,6 +318,7 @@ class GameEngine(
         elapsed = elapsed,
         flash = flash,
         levelUpBanner = levelUpTtl,
+        missedWords = missedWords,
     )
 
     // ---- input -------------------------------------------------------------
@@ -394,6 +489,7 @@ class GameEngine(
             for (m in reached) {
                 monsters.remove(m)
                 projectiles.removeAll { it.targetId == m.id }
+                recordMiss(m)
             }
             lives -= reached.size
             streak = 0
@@ -429,16 +525,15 @@ class GameEngine(
     }
 
     fun spawnMonster() {
-        if (playable.isEmpty()) return
         val taken = monsters.map { it.prompt }.toSet() + crates.map { it.prompt }.toSet()
-        val choices = playable.filter { it.first !in taken }.ifEmpty { playable }
-        val (prompt, answers) = choices[random.nextInt(choices.size)]
+        val word = drawWord(taken) ?: return
         val fromLeft = random.nextBoolean()
         monsters.add(
             Monster(
                 id = nextId++,
-                prompt = prompt,
-                answers = answers,
+                prompt = word.prompt,
+                answers = word.answers,
+                solution = word.solution,
                 x = if (fromLeft) -0.04f else 1.04f,
                 y = 0.12f + random.nextFloat() * 0.76f,
                 speed = monsterSpeed() * (0.9f + random.nextFloat() * 0.25f),
@@ -454,15 +549,14 @@ class GameEngine(
         crateTimer -= dt
         if (crateTimer > 0f) return
         crateTimer = CRATE_INTERVAL
-        if (crates.size >= 2 || playable.isEmpty()) return
+        if (crates.size >= 2) return
         val taken = monsters.map { it.prompt }.toSet() + crates.map { it.prompt }.toSet()
-        val choices = playable.filter { it.first !in taken }.ifEmpty { playable }
-        val (prompt, answers) = choices[random.nextInt(choices.size)]
+        val word = drawWord(taken) ?: return
         crates.add(
             Crate(
                 id = nextId++,
-                prompt = prompt,
-                answers = answers,
+                prompt = word.prompt,
+                answers = word.answers,
                 x = 0.12f + random.nextFloat() * 0.76f,
                 y = 0.12f + random.nextFloat() * 0.5f,
                 ttl = CRATE_TTL,
@@ -484,6 +578,7 @@ class GameEngine(
             id = nextId++,
             prompt = prompt,
             answers = Matching.acceptedAnswers(definition),
+            solution = definition,
             x = x, y = y,
             speed = monsterSpeed(),
             armored = armored,

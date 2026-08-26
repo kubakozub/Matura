@@ -6,8 +6,9 @@ package com.matura.app.game
  * The in-game keyboard drawn in the design document has only A-Z, space, backspace
  * and cursor keys — no Polish diacritics. A player therefore cannot literally type
  * "zręczny", so matching has to be diacritic-insensitive or the game is unplayable
- * with its own keyboard. Comparison is also case-insensitive and tolerant of
- * repeated whitespace.
+ * with its own keyboard. Comparison is also case-insensitive, tolerant of repeated
+ * whitespace, and — because the keyboard has no hyphen either — accepts a hyphenated
+ * or multi-word answer written with or without the gap.
  */
 object Matching {
 
@@ -56,7 +57,13 @@ object Matching {
         val out = LinkedHashSet<String>()
         fun add(s: String) {
             val n = normalize(s)
-            if (n.isNotEmpty()) out.add(n)
+            if (n.isEmpty()) return
+            out.add(n)
+            // Tester nie mial jak wpisac "open-minded": lacznik nie miesci sie na
+            // klawiaturze A-Z, a normalizacja zamienia go na spacje. Wersja bez spacji
+            // jest przyjmowana obok tej ze spacja, wiec i "open minded", i "openminded"
+            // sa poprawne — a podpowiedz prefiksu dziala w obu przypadkach.
+            if (' ' in n) out.add(n.replace(" ", ""))
         }
         add(definition)
         for (part in definition.split(',', ';', '/')) {

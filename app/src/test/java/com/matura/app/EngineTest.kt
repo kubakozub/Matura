@@ -71,6 +71,26 @@ class MatchingTest {
         assertTrue(Matching.isExactMatch("zręczny", ans))
         assertFalse(Matching.isExactMatch("zreczn", ans))
     }
+
+    @Test
+    fun `a hyphenated answer counts with or without the gap`() {
+        // Tester wylosowal "otwarty" i nie mial jak odpowiedziec: klawiatura A-Z nie ma
+        // lacznika, wiec "open-minded" bylo nie do wpisania.
+        val ans = Matching.acceptedAnswers("open-minded")
+        assertTrue(Matching.isExactMatch("open minded", ans))
+        assertTrue(Matching.isExactMatch("openminded", ans))
+        assertTrue(Matching.isExactMatch("OPEN-MINDED", ans))
+        assertTrue("prefiks bez spacji tez podswietla", Matching.isPrefixOfAny("openm", ans))
+        assertFalse("polowa hasla to nadal nie odpowiedz", Matching.isExactMatch("open", ans))
+    }
+
+    @Test
+    fun `a two word answer counts written as one word`() {
+        val ans = Matching.acceptedAnswers("stan cywilny")
+        assertTrue(Matching.isExactMatch("stan cywilny", ans))
+        assertTrue(Matching.isExactMatch("stancywilny", ans))
+        assertTrue(Matching.isPrefixOfAny("stanc", ans))
+    }
 }
 
 class GameEngineTest {
@@ -438,5 +458,81 @@ class GameEngineTest {
         e.resolveShots()
         assertNotNull(e.snapshot().flash)
         assertEquals(FlashKind.HIT, e.snapshot().flash)
+    }
+
+    @Test
+    fun `every word comes up once before any word comes up twice`() {
+        // Tester poprosil o "ograniczenie powtarzania sie slowek". Losowanie ze zwracaniem
+        // potrafilo pokazac jedno haslo kilka razy, zanim inne pojawilo sie choc raz.
+        val entries = (1..5).map { Entry("w$it", "t$it") }
+        val e = GameEngine(
+            set = WordSet(id = "t", title = "bag", entries = entries),
+            config = GameConfig(autoSpawn = false),
+            random = Random(7),
+        )
+        val seen = mutableListOf<String>()
+        repeat(10) {
+            e.spawnMonster()
+            val m = e.snapshot().monsters.single()
+            seen.add(m.prompt)
+            e.setTyped(m.answers.first())
+            e.submit()
+            e.resolveShots()
+        }
+        val all = entries.map { it.term }.toSet()
+        assertEquals("pierwsza kolejka to caly zestaw", all, seen.take(5).toSet())
+        assertEquals("druga kolejka tez, bez powtorek w srodku", all, seen.drop(5).toSet())
+        assertTrue("kolejka nie zaczyna sie tym, czym poprzednia sie skonczyla", seen[4] != seen[5])
+    }
+
+    @Test
+    fun `a word that reaches the cannon lands on the review list with its translation`() {
+        val e = engine()
+        e.debugAddMonster("agile", "zręczny", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
+        e.tick(0.016f)
+
+        assertEquals(2, e.lives)
+        val missed = e.missedWords.single()
+        assertEquals("agile", missed.prompt)
+        // Tlumaczenie tak, jak stoi w zestawie — z ogonkami, nie w postaci znormalizowanej.
+        assertEquals("zręczny", missed.solution)
+        assertEquals(1, missed.times)
+        assertEquals(missed, e.snapshot().missedWords.single())
+    }
+
+    @Test
+    fun `the same word missed twice is one line with a counter`() {
+        val e = engine(lives = 5)
+        repeat(2) {
+            e.debugAddMonster("agile", "zręczny", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
+            e.tick(0.016f)
+        }
+        assertEquals(1, e.missedWords.size)
+        assertEquals(2, e.missedWords.single().times)
+    }
+
+    @Test
+    fun `two entries sharing a prompt stay apart on the review list`() {
+        // "uprzejmy" jest w zestawach tlumaczeniem i `kind`, i `polite`. Klucz po samym
+        // hasle zlalby je w jeden wpis i pokazal cudza odpowiedz — 115 polskich i 120
+        // angielskich promptow powtarza sie w BuiltInSets, wiec to nie jest przypadek brzegowy.
+        val e = engine(lives = 5)
+        e.debugAddMonster("uprzejmy", "kind", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
+        e.tick(0.016f)
+        e.debugAddMonster("uprzejmy", "polite", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
+        e.tick(0.016f)
+
+        assertEquals("dwa osobne wpisy, nie jeden z licznikiem", 2, e.missedWords.size)
+        assertEquals(listOf("kind", "polite"), e.missedWords.map { it.solution })
+        assertTrue(e.missedWords.all { it.prompt == "uprzejmy" && it.times == 1 })
+    }
+
+    @Test
+    fun `a clean run leaves the review list empty`() {
+        val e = engine()
+        e.debugAddMonster("agile", "zręczny", x = 0.9f, y = 0.5f)
+        e.setTyped("zreczny"); e.submit()
+        e.resolveShots()
+        assertTrue(e.missedWords.isEmpty())
     }
 }
