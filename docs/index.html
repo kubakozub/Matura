@@ -13,6 +13,12 @@ html,body{height:100%;background:#0D0F1A;color:#E8E4D2;
 .screen{flex:1;display:none;flex-direction:column;padding:18px;gap:12px;overflow-y:auto}
 h1{font-size:15px;color:#A8E05A;letter-spacing:.08em}
 .sub{font-size:12px;color:#8F8A76;line-height:1.6}
+#finalReview{margin:14px auto 0;max-width:300px;text-align:left;background:#101322;
+  border:2px solid #2B2F4A;padding:10px 12px;max-height:150px;overflow-y:auto}
+.revTitle{font-size:11px;letter-spacing:.12em;color:#A8E05A;margin-bottom:8px}
+.revRow{font-size:12px;color:#8F8A76;line-height:1.5;margin-bottom:7px}
+.revRow b{color:#E8E4D2;font-weight:600}
+.revTimes{color:#F2B23C}
 button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .btn{background:#1A1E30;border:3px solid #2B2F4A;padding:13px 16px;display:flex;
   align-items:center;gap:12px;font-size:14px;font-weight:700;width:100%;text-align:left}
@@ -134,6 +140,7 @@ label.chk{display:flex;gap:8px;align-items:center;font-size:12px;color:#8F8A76}
   <h1 style="color:#E0524F;font-size:22px">KONIEC GRY</h1>
   <div class="big" id="finalScore">0</div>
   <div class="sub" id="finalMeta"></div>
+  <div id="finalReview"></div>
   <div style="height:16px"></div>
   <button class="btn primary" id="btnAgain">JESZCZE RAZ</button>
   <button class="btn" id="btnMenu">Do menu</button>
@@ -161,7 +168,9 @@ function normalize(raw){
 
 function acceptedAnswers(def){
   const set=new Set();
-  const add=s=>{ const n=normalize(s); if(n) set.add(n); };
+  // Lacznika nie ma na klawiaturze A-Z, a normalizacja zamienia go na spacje, wiec
+  // "open-minded" przyjmuje sie tez napisane jednym ciagiem. Mirror Matching.kt.
+  const add=s=>{ const n=normalize(s); if(!n) return; set.add(n); if(n.includes(' ')) set.add(n.replace(/ /g,'')); };
   add(def);
   for(const part of def.split(/[,;/]/)){
     add(part);
@@ -191,14 +200,16 @@ class Engine {
     this.typed=''; this.cursor=0; this.lives=lives; this.heavyAmmo=0;
     this.score=0; this.kills=0; this.streak=0; this.bestStreak=0;
     this.gameOver=false; this.elapsed=0; this.shake=0;
+    this.bag=[]; this.lastDrawn=null; this.missed=new Map();
     this.playable=[];
     for(const e of set.entries){
-      const a={prompt:e.term.trim(), answers:acceptedAnswers(e.definition)};
-      const b={prompt:e.definition.trim(), answers:acceptedAnswers(e.term)};
+      const a={prompt:e.term.trim(), answers:acceptedAnswers(e.definition), solution:e.definition.trim()};
+      const b={prompt:e.definition.trim(), answers:acceptedAnswers(e.term), solution:e.term.trim()};
       let pick = direction==='TERM_TO_DEF'?a:direction==='DEF_TO_TERM'?b:(Math.random()<0.5?a:b);
       if(pick.prompt && pick.answers.length) this.playable.push(pick);
     }
   }
+  get byPrompt(){ if(!this._byPrompt){ this._byPrompt=new Map(this.playable.map(p=>[p.prompt,p])); } return this._byPrompt; }
   get level(){ return 1 + Math.floor(this.kills/KILLS_PER_LEVEL); }
   get multiplier(){ const s=this.streak; return s>=12?5:s>=9?4:s>=6?3:s>=3?2:1; }
   get isPlayable(){ return this.playable.length>0; }
@@ -268,6 +279,7 @@ class Engine {
       for(const m of reached){
         this.monsters=this.monsters.filter(x=>x!==m);
         this.projectiles=this.projectiles.filter(p=>p.targetId!==m.id);
+        this.recordMiss(m.prompt);
       }
       this.lives-=reached.length; this.streak=0; this.shake=0.35;
       if(this.lives<=0){ this.lives=0; this.gameOver=true; }
@@ -298,15 +310,37 @@ class Engine {
     bursts.push({x:t.x,y:t.y,ttl:0.3});
   }
 
-  pickWord(){
-    const taken=new Set([...this.monsters.map(m=>m.prompt), ...this.crates.map(c=>c.prompt)]);
-    let choices=this.playable.filter(p=>!taken.has(p.prompt));
-    if(!choices.length) choices=this.playable;
-    return choices[Math.floor(Math.random()*choices.length)];
+  // Worek: caly zestaw tasowany i dobierany bez zwracania, nowe tasowanie dopiero po
+  // wyczerpaniu. Slowa nadal wracaja w ciagu rozgrywki, ale rowno - po kolejce.
+  refillBag(){
+    const b=this.playable.slice();
+    for(let i=b.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [b[i],b[j]]=[b[j],b[i]]; }
+    if(b.length>1 && b[0].prompt===this.lastDrawn){
+      const k=1+Math.floor(Math.random()*(b.length-1)); [b[0],b[k]]=[b[k],b[0]];
+    }
+    this.bag=b;
   }
+  pickWord(){
+    if(!this.playable.length) return null;
+    const taken=new Set([...this.monsters.map(m=>m.prompt), ...this.crates.map(c=>c.prompt)]);
+    if(!this.bag.length) this.refillBag();
+    const i=this.bag.findIndex(p=>!taken.has(p.prompt));
+    if(i>=0){ const w=this.bag.splice(i,1)[0]; this.lastDrawn=w.prompt; return w; }
+    let rest=this.playable.filter(p=>!taken.has(p.prompt));
+    if(!rest.length) rest=this.playable;
+    const w=rest[Math.floor(Math.random()*rest.length)];
+    this.lastDrawn=w.prompt; return w;
+  }
+  recordMiss(prompt){
+    const w=this.byPrompt.get(prompt); if(!w) return;
+    const seen=this.missed.get(prompt);
+    this.missed.set(prompt, seen ? {prompt:seen.prompt, solution:seen.solution, times:seen.times+1}
+                                 : {prompt:w.prompt, solution:w.solution, times:1});
+  }
+  get missedWords(){ return [...this.missed.values()]; }
   spawn(){
-    if(!this.playable.length) return;
     const w=this.pickWord();
+    if(!w) return;
     const armorChance = this.level<3?0:Math.min(0.6,(this.level-2)*0.12);
     const fromLeft=Math.random()<0.5;
     this.monsters.push({id:this.nextId++, prompt:w.prompt, answers:w.answers,
@@ -316,8 +350,9 @@ class Engine {
       incoming:0, spawnLevel:this.level, hitFlash:0});
   }
   spawnCrate(){
-    if(this.crates.length>=2||!this.playable.length) return;
+    if(this.crates.length>=2) return;
     const w=this.pickWord();
+    if(!w) return;
     this.crates.push({id:this.nextId++, prompt:w.prompt, answers:w.answers,
       x:0.12+Math.random()*0.76, y:0.12+Math.random()*0.5, ttl:CRATE_TTL, amount:CRATE_AMOUNT});
   }
@@ -601,6 +636,12 @@ const escapeHtml=s=>s.replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;',
 function finish(){
   $('finalScore').textContent=engine.score;
   $('finalMeta').textContent=`LVL ${engine.level} · zabić ${engine.kills} · seria ${engine.bestStreak}`;
+  const missed=engine.missedWords;
+  $('finalReview').innerHTML = '<div class="revTitle">DO POWTÓRKI</div>' + (missed.length
+    ? missed.map(w=>`<div class="revRow"><b>${escapeHtml(w.prompt)}</b>`
+        + (w.times>1?` <span class="revTimes">x${w.times}</span>`:'')
+        + `<br>${escapeHtml(w.solution)}</div>`).join('')
+    : '<div class="revRow">Ani jednego pudła.</div>');
   show('over');
   const best=Math.max(Number(localStorage.getItem(STORE_BEST)||0), engine.score);
   localStorage.setItem(STORE_BEST,best);

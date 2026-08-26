@@ -15,8 +15,9 @@ android {
         applicationId = "com.matura.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 7
-        versionName = "0.7.0"
+        // Play zna juz versionCode 8 (0.7.0 w torze alpha od 10 sie), wiec 8 jest spalona.
+        versionCode = 9
+        versionName = "0.8.0"
     }
 
     // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego

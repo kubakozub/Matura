@@ -104,6 +104,10 @@ class Str(private val lang: UiLanguage) {
     val pause get() = pick("Pauza", "Pause")
     val resume get() = pick("Wróć do gry", "Resume")
     val killsLabel get() = pick("Zabicia", "Kills")
+
+    /** Game-over review list: the words that got through, asked for by a tester. */
+    val reviewTitle get() = pick("DO POWTÓRKI", "TO REVIEW")
+    val reviewClean get() = pick("Ani jednego pudła.", "Not a single miss.")
     val bestStreakLabel get() = pick("Najdłuższa seria", "Best streak")
     val noScores get() = pick("Brak wyników — zagraj pierwszą grę.", "No scores yet — play your first game.")
     val gamesPlayed get() = pick("Rozegrane gry", "Games played")

@@ -4,6 +4,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,9 +14,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +43,7 @@ import com.matura.app.game.FlashKind
 import com.matura.app.game.GameConfig
 import com.matura.app.game.GameEngine
 import com.matura.app.game.GameSnapshot
+import com.matura.app.game.MissedWord
 import com.matura.app.game.SubmitResult
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
@@ -275,11 +280,62 @@ private fun GameOverOverlay(
                 glyphHeight = 9.dp,
                 font = font,
             )
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(16.dp))
+            ReviewList(snap.missedWords, str, font)
+            Spacer(Modifier.height(20.dp))
             Row(horizontalArrangement = Arrangement.Center) {
                 PrimaryButton(str.playAgain, onClick = onAgain)
                 Spacer(Modifier.width(12.dp))
                 GhostButton(str.toMenu, onClick = onMenu)
+            }
+        }
+    }
+}
+
+/**
+ * The words that reached the cannon, each with the answer spelled out in full — hyphens,
+ * diacritics and all. A tester asked for exactly this: a list of what got through
+ * "wraz z ich tlumaczeniem", to repeat straight after the run instead of hunting for the
+ * words in the set. The list scrolls inside a fixed height, so a long run can never push
+ * the buttons off the bottom of the screen.
+ */
+@Composable
+private fun ReviewList(missed: List<MissedWord>, str: Str, font: PixelFont) {
+    Column(
+        Modifier
+            .widthIn(max = 300.dp)
+            .background(Palette.Ink)
+            .border(2.dp, Palette.SurfaceHigh)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
+    ) {
+        PixelText(str.reviewTitle, color = Palette.Accent, glyphHeight = 9.dp, font = font)
+        Spacer(Modifier.height(9.dp))
+        if (missed.isEmpty()) {
+            PixelText(str.reviewClean, color = Palette.Muted, glyphHeight = 8.dp, font = font)
+            return@Column
+        }
+        Column(
+            Modifier
+                .heightIn(max = 136.dp)
+                .verticalScroll(rememberScrollState())
+        ) {
+            for (word in missed) {
+                val repeats = if (word.times > 1) "  x${word.times}" else ""
+                PixelText(
+                    word.prompt + repeats,
+                    color = Palette.Bone,
+                    glyphHeight = 8.dp,
+                    maxWidthDp = 272.dp,
+                    font = font,
+                )
+                PixelText(
+                    word.solution,
+                    color = Palette.Muted,
+                    glyphHeight = 8.dp,
+                    maxWidthDp = 272.dp,
+                    font = font,
+                )
+                Spacer(Modifier.height(8.dp))
             }
         }
     }
