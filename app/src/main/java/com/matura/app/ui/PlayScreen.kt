@@ -8,9 +8,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -138,77 +140,132 @@ fun PlayScreen(
         if (r is SubmitResult.Fired) muzzle = 0.11f
     }
 
-    Column(
+    // Android 16 ignoruje android:screenOrientation na ekranach od 600dp w gore, wiec gra
+    // musi przezyc okno w poziomie. Ulozone jedno pod drugim, plansza schodzi do paska:
+    // na telefonie 891x411dp sama klawiatura zjada ponad polowe wysokosci. Obok siebie
+    // obie polowy zachowuja uzyteczny ksztalt.
+    BoxWithConstraints(
         Modifier
             .fillMaxSize()
             .background(Palette.Background)
     ) {
-        Box(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(5.dp)
-                .border(3.dp, Palette.Ink)
-        ) {
-            Canvas(Modifier.fillMaxSize()) {
-                drawField(snap, highlighted, highlightedCrates, theme, sprites, font, options, muzzle)
-            }
+        val obokSiebie = maxWidth > maxHeight
 
-            if (!engine.isPlayable) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Box(
-                        Modifier
-                            .background(Palette.Ink)
-                            .border(3.dp, Palette.SurfaceHigh)
-                            .padding(14.dp)
-                    ) {
-                        PixelText(
-                            str.emptySetWarning,
-                            color = Palette.Danger,
-                            glyphHeight = 9.dp,
-                            maxWidthDp = 240.dp,
-                            font = font,
-                        )
-                    }
+        val keyboard: @Composable () -> Unit = {
+            GameKeyboard(
+                onChar = { c -> if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
+                onBackspace = { if (!paused) engine.backspace() },
+                onEnter = { submit() },
+                onSpace = { if (!paused) engine.type(' ') },
+                onLeft = { engine.cursorLeft() },
+                onRight = { engine.cursorRight() },
+            )
+        }
+
+        if (obokSiebie) {
+            Row(Modifier.fillMaxSize()) {
+                PlayField(
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                    snap = snap, highlighted = highlighted, highlightedCrates = highlightedCrates,
+                    theme = theme, sprites = sprites, font = font, options = options,
+                    muzzle = muzzle, playable = engine.isPlayable, paused = paused, str = str,
+                    onTogglePause = { paused = !paused },
+                )
+                Column(
+                    Modifier.weight(1f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.Bottom,
+                ) {
+                    AnswerBar(snap.typed, snap.cursor, font)
+                    keyboard()
                 }
             }
+        } else {
+            Column(Modifier.fillMaxSize()) {
+                PlayField(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    snap = snap, highlighted = highlighted, highlightedCrates = highlightedCrates,
+                    theme = theme, sprites = sprites, font = font, options = options,
+                    muzzle = muzzle, playable = engine.isPlayable, paused = paused, str = str,
+                    onTogglePause = { paused = !paused },
+                )
+                AnswerBar(snap.typed, snap.cursor, font)
+                keyboard()
+            }
+        }
 
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 5.dp)
-                    .background(Palette.Ink.copy(alpha = 0.75f))
-                    .border(2.dp, Palette.SurfaceHigh)
-                    .clickable { paused = !paused }
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PixelImage(pixel(com.matura.app.R.drawable.icon_pause), Modifier.size(13.dp))
-                    Spacer(Modifier.width(7.dp))
+        // Podsumowanie idzie na caly ekran, nie na sama plansze - w poziomie plansza to
+        // polowa szerokosci i lista do powtorki nie miescilaby sie w niej.
+        if (snap.gameOver) {
+            GameOverOverlay(snap, str, sprites, font, onAgain = { restarts++ }, onMenu = onExit)
+        }
+    }
+}
+
+/** The playfield with its HUD overlays; the same block in both layouts. */
+@Composable
+private fun PlayField(
+    modifier: Modifier,
+    snap: GameSnapshot,
+    highlighted: Set<Long>,
+    highlightedCrates: Set<Long>,
+    theme: FieldTheme,
+    sprites: Sprites,
+    font: PixelFont,
+    options: Options,
+    muzzle: Float,
+    playable: Boolean,
+    paused: Boolean,
+    str: Str,
+    onTogglePause: () -> Unit,
+) {
+    Box(
+        modifier
+            .padding(5.dp)
+            .border(3.dp, Palette.Ink)
+    ) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawField(snap, highlighted, highlightedCrates, theme, sprites, font, options, muzzle)
+        }
+
+        if (!playable) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier
+                        .background(Palette.Ink)
+                        .border(3.dp, Palette.SurfaceHigh)
+                        .padding(14.dp)
+                ) {
                     PixelText(
-                        if (paused) str.resume else str.pause,
-                        color = Palette.Bone,
-                        glyphHeight = 8.dp,
+                        str.emptySetWarning,
+                        color = Palette.Danger,
+                        glyphHeight = 9.dp,
+                        maxWidthDp = 240.dp,
                         font = font,
                     )
                 }
             }
-
-            if (snap.gameOver) {
-                GameOverOverlay(snap, str, sprites, font, onAgain = { restarts++ }, onMenu = onExit)
-            }
         }
 
-        AnswerBar(snap.typed, snap.cursor, font)
-
-        GameKeyboard(
-            onChar = { c -> if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
-            onBackspace = { if (!paused) engine.backspace() },
-            onEnter = { submit() },
-            onSpace = { if (!paused) engine.type(' ') },
-            onLeft = { engine.cursorLeft() },
-            onRight = { engine.cursorRight() },
-        )
+        Box(
+            Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 5.dp)
+                .background(Palette.Ink.copy(alpha = 0.75f))
+                .border(2.dp, Palette.SurfaceHigh)
+                .clickable { onTogglePause() }
+                .padding(horizontal = 10.dp, vertical = 5.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                PixelImage(pixel(com.matura.app.R.drawable.icon_pause), Modifier.size(13.dp))
+                Spacer(Modifier.width(7.dp))
+                PixelText(
+                    if (paused) str.resume else str.pause,
+                    color = Palette.Bone,
+                    glyphHeight = 8.dp,
+                    font = font,
+                )
+            }
+        }
     }
 }
 
