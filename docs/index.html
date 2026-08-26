@@ -209,7 +209,6 @@ class Engine {
       if(pick.prompt && pick.answers.length) this.playable.push(pick);
     }
   }
-  get byPrompt(){ if(!this._byPrompt){ this._byPrompt=new Map(this.playable.map(p=>[p.prompt,p])); } return this._byPrompt; }
   get level(){ return 1 + Math.floor(this.kills/KILLS_PER_LEVEL); }
   get multiplier(){ const s=this.streak; return s>=12?5:s>=9?4:s>=6?3:s>=3?2:1; }
   get isPlayable(){ return this.playable.length>0; }
@@ -279,7 +278,7 @@ class Engine {
       for(const m of reached){
         this.monsters=this.monsters.filter(x=>x!==m);
         this.projectiles=this.projectiles.filter(p=>p.targetId!==m.id);
-        this.recordMiss(m.prompt);
+        this.recordMiss(m);
       }
       this.lives-=reached.length; this.streak=0; this.shake=0.35;
       if(this.lives<=0){ this.lives=0; this.gameOver=true; }
@@ -331,11 +330,14 @@ class Engine {
     const w=rest[Math.floor(Math.random()*rest.length)];
     this.lastDrawn=w.prompt; return w;
   }
-  recordMiss(prompt){
-    const w=this.byPrompt.get(prompt); if(!w) return;
-    const seen=this.missed.get(prompt);
-    this.missed.set(prompt, seen ? {prompt:seen.prompt, solution:seen.solution, times:seen.times+1}
-                                 : {prompt:w.prompt, solution:w.solution, times:1});
+  // Kluczem jest para haslo+odpowiedz, nie samo haslo: "uprzejmy" to w zestawach
+  // zarowno `kind`, jak i `polite` (115 polskich i 120 angielskich promptow sie powtarza).
+  recordMiss(m){
+    if(!m.solution) return;
+    const key=m.prompt+'\u0000'+m.solution;
+    const seen=this.missed.get(key);
+    this.missed.set(key, seen ? {prompt:seen.prompt, solution:seen.solution, times:seen.times+1}
+                              : {prompt:m.prompt, solution:m.solution, times:1});
   }
   get missedWords(){ return [...this.missed.values()]; }
   spawn(){
@@ -343,7 +345,7 @@ class Engine {
     if(!w) return;
     const armorChance = this.level<3?0:Math.min(0.6,(this.level-2)*0.12);
     const fromLeft=Math.random()<0.5;
-    this.monsters.push({id:this.nextId++, prompt:w.prompt, answers:w.answers,
+    this.monsters.push({id:this.nextId++, prompt:w.prompt, answers:w.answers, solution:w.solution,
       x: fromLeft?-0.04:1.04, y: 0.12+Math.random()*0.76,
       speed:(BASE_SPEED+(this.level-1)*SPEED_PER_LEVEL)*this.speedFactor*(0.9+Math.random()*0.25),
       armored: Math.random()<armorChance, variant: Math.floor(Math.random()*4),

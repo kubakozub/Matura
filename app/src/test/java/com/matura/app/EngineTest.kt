@@ -512,6 +512,22 @@ class GameEngineTest {
     }
 
     @Test
+    fun `two entries sharing a prompt stay apart on the review list`() {
+        // "uprzejmy" jest w zestawach tlumaczeniem i `kind`, i `polite`. Klucz po samym
+        // hasle zlalby je w jeden wpis i pokazal cudza odpowiedz — 115 polskich i 120
+        // angielskich promptow powtarza sie w BuiltInSets, wiec to nie jest przypadek brzegowy.
+        val e = engine(lives = 5)
+        e.debugAddMonster("uprzejmy", "kind", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
+        e.tick(0.016f)
+        e.debugAddMonster("uprzejmy", "polite", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
+        e.tick(0.016f)
+
+        assertEquals("dwa osobne wpisy, nie jeden z licznikiem", 2, e.missedWords.size)
+        assertEquals(listOf("kind", "polite"), e.missedWords.map { it.solution })
+        assertTrue(e.missedWords.all { it.prompt == "uprzejmy" && it.times == 1 })
+    }
+
+    @Test
     fun `a clean run leaves the review list empty`() {
         val e = engine()
         e.debugAddMonster("agile", "zręczny", x = 0.9f, y = 0.5f)

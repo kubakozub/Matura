@@ -150,7 +150,7 @@ Minimalny Android: 7.0 (API 24). Aplikacja jest w orientacji pionowej.
 echo "sdk.dir=/sciezka/do/Android/Sdk" > local.properties
 ./gradlew :app:assembleDebug          # APK w app/build/outputs/apk/debug/
 ./gradlew :app:bundleRelease          # AAB do Google Play w app/build/outputs/bundle/release/
-./gradlew :app:testDebugUnitTest      # 53 testy jednostkowe
+./gradlew :app:testDebugUnitTest      # 54 testy jednostkowe
 ```
 
 Bez `keystore.properties` paczka release wychodzi niepodpisana — podpis zakłada się
@@ -176,13 +176,13 @@ app/src/main/java/com/matura/app/
   ui/Sprites.kt              rejestr sprite'ów, klatki animacji, kafelkowanie
   ui/PixelFont.kt            renderer fontu bitmapowego font_8x8
 app/src/test/java/com/matura/app/
-  EngineTest.kt              GameEngineTest (27) + MatchingTest (9)
+  EngineTest.kt              GameEngineTest (28) + MatchingTest (9)
   BuiltInSetsTest.kt         10 testów pilnujących reguł słownictwa
   PersistenceTest.kt         7 testów zapisu i odczytu
 ```
 
 `GameEngine` celowo nie zna Androida ani Compose — dzięki temu cała mechanika jest testowana
-zwykłym JUnitem, bez emulatora. Razem 53 testy.
+zwykłym JUnitem, bez emulatora. Razem 54 testy.
 
 ## Publikacja
 

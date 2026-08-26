@@ -21,6 +21,15 @@ data class Monster(
     val id: Long,
     val prompt: String,
     val answers: List<String>,
+    /**
+     * The counterpart of this monster's own entry, spelled as the set spells it.
+     *
+     * Carried per monster rather than looked up by [prompt]: 115 Polish and 120 English
+     * prompts repeat across the built-in sets ("uprzejmy" is both `kind` and `polite`),
+     * so a prompt does not identify an entry and a lookup would show the wrong answer
+     * on the review list.
+     */
+    val solution: String = "",
     var x: Float,
     var y: Float,
     val speed: Float,
@@ -212,7 +221,6 @@ class GameEngine(
     )
 
     private val playable: List<PlayableWord> = buildPlayable()
-    private val byPrompt: Map<String, PlayableWord> = playable.associateBy { it.prompt }
 
     private fun buildPlayable(): List<PlayableWord> {
         val out = mutableListOf<PlayableWord>()
@@ -273,18 +281,20 @@ class GameEngine(
         return pick
     }
 
-    // Kolejnosc wstawiania = kolejnosc, w jakiej gracz je przegral. To samo haslo
-    // przegrane dwa razy zostaje jednym wpisem z licznikiem.
+    // Kolejnosc wstawiania = kolejnosc, w jakiej gracz je przegral. Kluczem jest para
+    // haslo+odpowiedz, a nie samo haslo: "uprzejmy" to w zestawach zarowno `kind`, jak
+    // i `polite`, wiec klucz po samym tekscie zlalby dwa rozne wpisy w jeden licznik.
     private val missed = LinkedHashMap<String, MissedWord>()
 
     /** Words that reached the cannon, in the order they got through. */
     val missedWords: List<MissedWord> get() = missed.values.toList()
 
-    private fun recordMiss(prompt: String) {
-        val word = byPrompt[prompt] ?: return
-        val seen = missed[prompt]
-        missed[prompt] =
-            if (seen == null) MissedWord(word.prompt, word.solution, 1)
+    private fun recordMiss(monster: Monster) {
+        if (monster.solution.isBlank()) return
+        val key = monster.prompt + "\u0000" + monster.solution
+        val seen = missed[key]
+        missed[key] =
+            if (seen == null) MissedWord(monster.prompt, monster.solution, 1)
             else seen.copy(times = seen.times + 1)
     }
 
@@ -479,7 +489,7 @@ class GameEngine(
             for (m in reached) {
                 monsters.remove(m)
                 projectiles.removeAll { it.targetId == m.id }
-                recordMiss(m.prompt)
+                recordMiss(m)
             }
             lives -= reached.size
             streak = 0
@@ -523,6 +533,7 @@ class GameEngine(
                 id = nextId++,
                 prompt = word.prompt,
                 answers = word.answers,
+                solution = word.solution,
                 x = if (fromLeft) -0.04f else 1.04f,
                 y = 0.12f + random.nextFloat() * 0.76f,
                 speed = monsterSpeed() * (0.9f + random.nextFloat() * 0.25f),
@@ -567,6 +578,7 @@ class GameEngine(
             id = nextId++,
             prompt = prompt,
             answers = Matching.acceptedAnswers(definition),
+            solution = definition,
             x = x, y = y,
             speed = monsterSpeed(),
             armored = armored,
