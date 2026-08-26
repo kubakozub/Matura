@@ -3,11 +3,28 @@
 Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
 *Verbume — Verbum + Game*. Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 
-**Wersja 0.8.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
+**Wersja 0.9.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
 
 > Aplikacja nazywała się wcześniej **Verbume**. Zmieniła się nazwa i identyfikator
 > pakietu (`com.verbume.app` → `com.matura.app`); mechanika, słownictwo i grafika
 > zostały bez zmian.
+
+## Co nowego w 0.9.0
+
+- **Uklad na duze ekrany.** Android 16 ignoruje `android:screenOrientation="portrait"` na
+  ekranach od 600 dp, wiec gra i tak trafi na tablety i skladane w poziomie. Wpis zniknal
+  z manifestu, a `PlayScreen` przy oknie szerszym niz wyzszym przechodzi na uklad
+  **dwukolumnowy**: plansza po lewej, pasek odpowiedzi i klawiatura po prawej. Ulozone
+  jedno pod drugim, na telefonie 891×411 dp plansza schodzila do paska 13% wysokosci,
+  a sama klawiatura zjadala ponad polowe ekranu.
+- **Podsumowanie po grze na calym oknie.** Ekran KONIEC GRY rysuje sie na calym ekranie,
+  nie na samej planszy — w poziomie plansza to polowa szerokosci i lista DO POWTORKI
+  by sie w niej nie zmiescila.
+- **Podglady ekranow renderowane na JVM.** `./gradlew :app:updateDebugScreenshotTest`
+  rysuje szesc ukladow (telefon w pionie i poziomie, skladany, tablet, sama klawiatura)
+  przez Layoutlib — bez emulatora i bez urzadzenia. To one pokazaly, ze poziom byl zepsuty.
+  Obrazy laduja w `app/build/outputs/screenshotTest-results/` i **nie sa wersjonowane**:
+  waza 1,5 MB i zmieniaja sie przy kazdej poprawce ukladu, a APK juz raz rozdal `.git`.
 
 ## Co nowego w 0.8.0
 

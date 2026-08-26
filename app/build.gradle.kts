@@ -5,19 +5,23 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
+    id("com.android.compose.screenshot")
 }
 
 android {
     namespace = "com.matura.app"
     compileSdk = 36
 
+    // Renderowanie podgladow Compose na JVM (Layoutlib). Flaga musi byc i tutaj,
+    // i w gradle.properties - sama gradle.properties nie wystarcza.
+    experimentalProperties["android.experimental.enableScreenshotTest"] = true
+
     defaultConfig {
         applicationId = "com.matura.app"
         minSdk = 24
         targetSdk = 36
-        // Play zna juz versionCode 8 (0.7.0 w torze alpha od 10 sie), wiec 8 jest spalona.
-        versionCode = 9
-        versionName = "0.8.0"
+        versionCode = 10
+        versionName = "0.9.0"
     }
 
     // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego
@@ -87,4 +91,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     testImplementation("junit:junit:4.13.2")
+
+    // Ekrany renderowane na JVM, zeby dalo sie obejrzec uklad na tablecie i skladanym
+    // bez posiadania jednego i drugiego.
+    screenshotTestImplementation(composeBom)
+    screenshotTestImplementation("androidx.compose.ui:ui-tooling")
 }
