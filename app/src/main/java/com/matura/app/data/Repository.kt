@@ -75,7 +75,12 @@ class Repository(context: Context) {
                 bestScore = maxOf(p.bestScore, record.score),
                 bestStreak = maxOf(p.bestStreak, record.bestStreak),
             ),
-            scores = (d.scores + record).sortedByDescending { it.score }.take(50),
+            // Leaderboard lokalny: top 25 osobno dla kazdego trybu, zeby wyniki
+            // z jednego trybu nie wypychaly pozostalych.
+            scores = (d.scores + record)
+                .groupBy { it.mode }
+                .flatMap { (_, list) -> list.sortedByDescending { it.score }.take(25) }
+                .sortedByDescending { it.score },
             sets = d.sets.map { if (it.id == setId) it.copy(timesPlayed = it.timesPlayed + 1) else it },
         )
     }

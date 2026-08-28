@@ -3,6 +3,9 @@ package com.matura.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -37,6 +40,7 @@ import com.matura.app.R
 import com.matura.app.model.Achievement
 import com.matura.app.model.Tempo
 import com.matura.app.model.Direction
+import com.matura.app.model.GameMode
 import com.matura.app.model.Entry
 import com.matura.app.model.Options
 import com.matura.app.model.Profile
@@ -104,8 +108,6 @@ fun StartScreen(str: Str, profile: Profile, onPlayAnonymously: (String) -> Unit)
         PrimaryButton(str.playAnonymously, modifier = Modifier.fillMaxWidth()) {
             onPlayAnonymously(name.ifBlank { "Gracz" })
         }
-        Spacer(Modifier.height(10.dp))
-        MenuButton(str.signIn, enabled = false, trailingIcon = pixel(R.drawable.lock), trailing = str.soon) {}
         Spacer(Modifier.height(16.dp))
         InfoCard(str.offlineNote)
     }
@@ -182,26 +184,38 @@ fun ModePickScreen(
     str: Str,
     set: WordSet?,
     onBack: () -> Unit,
-    onClassic: () -> Unit,
+    onPickMode: (GameMode) -> Unit,
 ) {
     ScreenScaffold(str.chooseMode, onBack, str.back) {
-        val lock = pixel(R.drawable.lock)
         Column(Modifier.fillMaxSize()) {
             if (set != null) {
                 PixelText(set.title, color = Palette.Bone, glyphHeight = 11.dp, maxWidthDp = 300.dp)
                 Spacer(Modifier.height(12.dp))
             }
             MenuButton(
-                str.classic,
+                str.modeClassic,
                 subtitle = str.classicDesc,
                 icon = pixel(R.drawable.mode_classic),
-                onClick = onClassic,
+                onClick = { onPickMode(GameMode.CLASSIC) },
             )
-            MenuButton("TRUE / FALSE", enabled = false, icon = pixel(R.drawable.mode_truefalse), trailingIcon = lock) {}
-            MenuButton("MULTIPLE CHOICE", enabled = false, icon = pixel(R.drawable.mode_multiple), trailingIcon = lock) {}
-            MenuButton("TIME ATTACK", enabled = false, icon = pixel(R.drawable.mode_timeattack), trailingIcon = lock) {}
-            Spacer(Modifier.height(12.dp))
-            InfoCard(str.modeLockedNote)
+            MenuButton(
+                str.modeTrueFalse,
+                subtitle = str.modeTrueFalseDesc,
+                icon = pixel(R.drawable.mode_truefalse),
+                onClick = { onPickMode(GameMode.TRUE_FALSE) },
+            )
+            MenuButton(
+                str.modeMultiple,
+                subtitle = str.modeMultipleDesc,
+                icon = pixel(R.drawable.mode_multiple),
+                onClick = { onPickMode(GameMode.MULTIPLE_CHOICE) },
+            )
+            MenuButton(
+                str.modeTimeAttack,
+                subtitle = str.modeTimeAttackDesc,
+                icon = pixel(R.drawable.mode_timeattack),
+                onClick = { onPickMode(GameMode.TIME_ATTACK) },
+            )
         }
     }
 }
@@ -682,6 +696,8 @@ fun AchievementsScreen(str: Str, profile: Profile, onBack: () -> Unit) {
 
 @Composable
 fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
+    // Leaderboard lokalny — bez kont i logowania. Filtr po trybie gry.
+    var filter by remember { mutableStateOf<GameMode?>(null) }
     ScreenScaffold(str.scores, onBack, str.back) {
         val topSet = data.sets.maxByOrNull { it.timesPlayed }
         val medals = listOf(
@@ -689,6 +705,17 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
             pixel(R.drawable.medal_silver),
             pixel(R.drawable.medal_bronze),
         )
+        fun modeLabel(m: GameMode) = when (m) {
+            GameMode.CLASSIC -> str.modeClassic
+            GameMode.TRUE_FALSE -> str.modeTrueFalse
+            GameMode.MULTIPLE_CHOICE -> str.modeMultiple
+            GameMode.TIME_ATTACK -> str.modeTimeAttack
+        }
+        val visible = data.scores
+            .filter { filter == null || it.mode == filter }
+            .sortedByDescending { it.score }
+            .take(25)
+
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 Box(
@@ -709,14 +736,29 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                         )
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
+                // Filtr trybu — poziomo przewijalny, zeby zmiescil sie na waskich ekranach.
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ChoiceChip(str.filterAll, filter == null) { filter = null }
+                    Spacer(Modifier.width(5.dp))
+                    GameMode.entries.forEach { m ->
+                        ChoiceChip(modeLabel(m), filter == m) { filter = m }
+                        Spacer(Modifier.width(5.dp))
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
                 PixelText(str.bestRuns, color = Palette.Accent, glyphHeight = 10.dp)
                 Spacer(Modifier.height(7.dp))
             }
-            if (data.scores.isEmpty()) {
+            if (visible.isEmpty()) {
                 item { InfoCard(str.noScores) }
             }
-            itemsIndexed(data.scores.sortedByDescending { it.score }) { i, s ->
+            itemsIndexed(visible) { i, s ->
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -733,13 +775,22 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(s.setTitle, color = Palette.Bone, fontSize = 13.sp)
                         Text(
-                            "LVL ${s.level} · ${str.killsLabel} ${s.kills} · x${s.bestStreak}",
+                            s.setTitle,
+                            color = Palette.Bone,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "${modeLabel(s.mode)} · LVL ${s.level} · ${str.killsLabel} ${s.kills} · x${s.bestStreak}",
                             color = Palette.Muted,
                             fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    Spacer(Modifier.width(8.dp))
                     PixelText("${s.score}", color = Palette.Gold, glyphHeight = 13.dp)
                 }
             }

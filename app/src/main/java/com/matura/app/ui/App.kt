@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.matura.app.data.Repository
+import com.matura.app.model.GameMode
 import com.matura.app.model.Options
 import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
@@ -21,7 +22,7 @@ sealed interface Screen {
     data object Menu : Screen
     data object SetPick : Screen
     data class ModePick(val setId: String) : Screen
-    data class Play(val setId: String) : Screen
+    data class Play(val setId: String, val mode: GameMode) : Screen
     data object Sets : Screen
     data class Editor(val setId: String?) : Screen
     data object Options : Screen
@@ -82,7 +83,7 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 str = str,
                 set = data.sets.firstOrNull { it.id == s.setId },
                 onBack = { pop() },
-                onClassic = { replaceTop(Screen.Play(s.setId)) },
+                onPickMode = { mode -> replaceTop(Screen.Play(s.setId, mode)) },
             )
 
             is Screen.Play -> {
@@ -90,17 +91,32 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 if (set == null) {
                     pop()
                 } else {
-                    PlayScreen(
-                        set = set,
-                        options = data.options,
-                        str = str,
-                        playerName = data.profile.name,
-                        onExit = { stack = listOf(Screen.Start, Screen.Menu) },
-                        onFinished = { record ->
-                            repo.recordGame(record, set.id)
-                            refresh()
-                        },
-                    )
+                    // Wspolny kontrakt wszystkich trybow: ta sama sygnatura ekranu.
+                    // Tryb doklejamy do rekordu tutaj, dzieki czemu ekrany trybow
+                    // nie musza go znac.
+                    val exit: () -> Unit = { stack = listOf(Screen.Start, Screen.Menu) }
+                    val finish: (com.matura.app.model.ScoreRecord) -> Unit = { record ->
+                        repo.recordGame(record.copy(mode = s.mode), set.id)
+                        refresh()
+                    }
+                    when (s.mode) {
+                        GameMode.CLASSIC -> PlayScreen(
+                            set = set, options = data.options, str = str,
+                            playerName = data.profile.name, onExit = exit, onFinished = finish,
+                        )
+                        GameMode.TRUE_FALSE -> TrueFalseScreen(
+                            set = set, options = data.options, str = str,
+                            playerName = data.profile.name, onExit = exit, onFinished = finish,
+                        )
+                        GameMode.MULTIPLE_CHOICE -> MultipleChoiceScreen(
+                            set = set, options = data.options, str = str,
+                            playerName = data.profile.name, onExit = exit, onFinished = finish,
+                        )
+                        GameMode.TIME_ATTACK -> TimeAttackScreen(
+                            set = set, options = data.options, str = str,
+                            playerName = data.profile.name, onExit = exit, onFinished = finish,
+                        )
+                    }
                 }
             }
 

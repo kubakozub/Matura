@@ -1,0 +1,66 @@
+[
+ {
+  "name": "turret_barrel_00",
+  "deg": 0
+ },
+ {
+  "name": "turret_barrel_01",
+  "deg": 22.5
+ },
+ {
+  "name": "turret_barrel_02",
+  "deg": 45
+ },
+ {
+  "name": "turret_barrel_03",
+  "deg": 67.5
+ },
+ {
+  "name": "turret_barrel_04",
+  "deg": 90
+ },
+ {
+  "name": "turret_barrel_05",
+  "deg": 112.5
+ },
+ {
+  "name": "turret_barrel_06",
+  "deg": 135
+ },
+ {
+  "name": "turret_barrel_07",
+  "deg": 157.5
+ },
+ {
+  "name": "turret_barrel_08",
+  "deg": 180
+ },
+ {
+  "name": "turret_barrel_09",
+  "deg": 202.5
+ },
+ {
+  "name": "turret_barrel_10",
+  "deg": 225
+ },
+ {
+  "name": "turret_barrel_11",
+  "deg": 247.5
+ },
+ {
+  "name": "turret_barrel_12",
+  "deg": 270
+ },
+ {
+  "name": "turret_barrel_13",
+  "deg": 292.5
+ },
+ {
+  "name": "turret_barrel_14",
+  "deg": 315
+ },
+ {
+  "name": "turret_barrel_15",
+  "deg": 337.5
+ }
+]

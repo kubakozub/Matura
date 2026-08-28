@@ -11,12 +11,19 @@ class Str(private val lang: UiLanguage) {
 
     val appTagline get() = pick("Verbum + Game", "Verbum + Game")
     val playAnonymously get() = pick("GRAJ ANONIMOWO", "PLAY ANONYMOUSLY")
-    val signIn get() = pick("ZALOGUJ / ZAREJESTRUJ", "LOG IN / REGISTER")
     val offlineNote
         get() = pick(
-            "Logowanie wymaga serwera, którego ta wersja nie ma. Wszystko zapisuje się lokalnie na telefonie.",
-            "Accounts need a server this build does not have. Everything is stored locally on the device."
+            "Bez kont i bez logowania — wpisz nazwę i graj. Wyniki zapisują się lokalnie na telefonie.",
+            "No accounts, no sign-in — pick a name and play. Scores are stored locally on your device."
         )
+    val modeClassic get() = pick("KLASYCZNY", "CLASSIC")
+    val modeTrueFalse get() = pick("PRAWDA / FAŁSZ", "TRUE / FALSE")
+    val modeMultiple get() = pick("WIELOKROTNY WYBÓR", "MULTIPLE CHOICE")
+    val modeTimeAttack get() = pick("NA CZAS", "TIME ATTACK")
+    val modeTrueFalseDesc get() = pick("Oceń, czy tłumaczenie pasuje", "Decide if the translation fits")
+    val modeMultipleDesc get() = pick("Wybierz poprawne z czterech", "Pick the right one of four")
+    val modeTimeAttackDesc get() = pick("Ile zdążysz, zanim czas minie", "How many before the clock runs out")
+    val filterAll get() = pick("WSZYSTKIE", "ALL")
     val yourName get() = pick("Twoja nazwa", "Your name")
 
     val play get() = pick("GRAJ", "PLAY")
@@ -29,19 +36,11 @@ class Str(private val lang: UiLanguage) {
 
     val chooseSet get() = pick("Wybierz zestaw", "Choose a set")
     val chooseMode get() = pick("Wybierz tryb", "Choose a mode")
-    val classic get() = pick("CLASSIC", "CLASSIC")
     val classicDesc
         get() = pick(
             "Wpisuj tłumaczenia, zanim potworki dojdą do działka.",
             "Type translations before the monsters reach the cannon."
         )
-    val soon get() = pick("wkrótce", "soon")
-    val modeLockedNote
-        get() = pick(
-            "TRUE/FALSE, MULTIPLE CHOICE i TIME ATTACK są zaprojektowane w dokumencie, ale nie ma ich w tej wersji.",
-            "TRUE/FALSE, MULTIPLE CHOICE and TIME ATTACK are specified in the document but not built in this version."
-        )
-
     val createSet get() = pick("Utwórz zestaw", "Create a set")
     val editSet get() = pick("Edytuj zestaw", "Edit set")
     val setTitle get() = pick("Tytuł zestawu", "Set title")

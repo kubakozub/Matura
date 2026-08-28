@@ -59,7 +59,13 @@ data class ScoreRecord(
     val bestStreak: Int,
     val kills: Int,
     val playedAt: Long,
+    /** Tryb rozgrywki. Domyslna wartosc trzyma zgodnosc ze starymi zapisami JSON. */
+    val mode: GameMode = GameMode.CLASSIC,
 )
+
+/** Tryby gry dostepne w aplikacji. */
+@Serializable
+enum class GameMode { CLASSIC, TRUE_FALSE, MULTIPLE_CHOICE, TIME_ATTACK }
 
 @Serializable
 data class Profile(
