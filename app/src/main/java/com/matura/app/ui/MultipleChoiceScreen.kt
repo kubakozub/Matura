@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -126,31 +125,45 @@ private data class McQuestion(
  */
 private fun buildRound(entries: List<Entry>, direction: Direction, rng: Random): List<McQuestion> {
     val order = entries.shuffled(rng)
-    return order.map { entry ->
+    // mapNotNull: hasło bez kompletu trzech dobrych dystraktorów wypada z rundy (patrz niżej).
+    return order.mapNotNull { entry ->
         val termToDef = when (direction) {
             Direction.TERM_TO_DEF -> true
             Direction.DEF_TO_TERM -> false
             Direction.RANDOM -> rng.nextBoolean()
         }
-        val prompt = if (termToDef) entry.term else entry.definition
-        val correct = if (termToDef) entry.definition else entry.term
-        val correctKey = Matching.normalize(correct)
+        val prompt = (if (termToDef) entry.term else entry.definition).trim()
+        val correct = (if (termToDef) entry.definition else entry.term).trim()
+        val promptKey = Matching.normalize(prompt)
 
-        // Dystraktory bierzemy z tej samej strony co odpowiedź i odrzucamy wszystko,
-        // co po normalizacji jest równoważne poprawnej odpowiedzi (albo innemu kaflowi) —
-        // inaczej dałoby się wskazać "złą" odpowiedź, która w istocie jest dobra.
-        val used = HashSet<String>()
-        used.add(correctKey)
+        // Wszystkie poprawne warianty dla TEGO pytania — łącznie z odpowiedziami innych wierszy
+        // o tak samo normalizującym się pytaniu (hasła wieloznaczne: "ręka" -> arm/hand). Żaden
+        // dystraktor nie może wpaść w ten zbiór, inaczej "zła" odpowiedź byłaby faktycznie dobra.
+        val correctAnswers = Matching.answersForPrompt(entries, prompt, termToDef)
+
+        // Zbiory acceptedAnswers już użytych kafli (poprawna + dobrane dystraktory). Równoważność
+        // kandydat-vs-poprawna i kandydat-vs-kandydat liczymy PRZECIĘCIEM tych zbiorów, a nie
+        // normalizacją całego tekstu — dzięki temu synonimy i warianty bez nawiasu też się łapią.
+        val usedAnswerSets = ArrayList<Set<String>>()
+        usedAnswerSets.add(correctAnswers)
         val distractors = ArrayList<String>(CHOICE_COUNT - 1)
         for (other in entries.shuffled(rng)) {
             if (distractors.size == CHOICE_COUNT - 1) break
             if (other === entry) continue
-            val candidate = if (termToDef) other.definition else other.term
-            if (candidate.isBlank()) continue
-            val key = Matching.normalize(candidate)
-            if (key.isEmpty() || !used.add(key)) continue
+            // Odrzuć kandydata, którego STRONA PYTANIA normalizuje się jak prompt — inaczej przy
+            // "ręka" dystraktorem stałby się wiersz "ręka/hand", a "hand" to poprawna odpowiedź.
+            val candidatePromptSide = if (termToDef) other.term else other.definition
+            if (Matching.normalize(candidatePromptSide) == promptKey) continue
+            val candidate = (if (termToDef) other.definition else other.term).trim()
+            val candidateAnswers = Matching.acceptedAnswers(candidate).toSet()
+            if (candidateAnswers.isEmpty()) continue
+            if (usedAnswerSets.any { (it intersect candidateAnswers).isNotEmpty() }) continue
+            usedAnswerSets.add(candidateAnswers)
             distractors.add(candidate)
         }
+
+        // Bez trzech różnych dystraktorów pytanie miałoby < 4 kafle — usuwamy hasło z rundy.
+        if (distractors.size != CHOICE_COUNT - 1) return@mapNotNull null
 
         McQuestion(
             prompt = prompt,
@@ -170,12 +183,22 @@ fun MultipleChoiceScreen(
     onExit: () -> Unit,
     onFinished: (ScoreRecord) -> Unit,
 ) {
-    // Puste wiersze z edytora zestawów nie nadają się ani na pytanie, ani na dystraktor.
+    // Wiersze bez treści (także złożone z samych znaków, które normalizacja wycina) nie nadają
+    // się ani na pytanie, ani na dystraktor — filtrujemy tak samo jak pozostałe tryby.
     val playable = remember(set.id, set.entries) {
-        set.entries.filter { it.term.isNotBlank() && it.definition.isNotBlank() }
+        set.entries.filter {
+            Matching.normalize(it.term).isNotEmpty() && Matching.normalize(it.definition).isNotEmpty()
+        }
     }
 
-    if (playable.size < MIN_ENTRIES) {
+    // Strażnik liczy, ile HASEŁ realnie przeżywa budowę rundy (ma komplet 3 dystraktorów), a nie
+    // same wiersze: zestaw z samymi synonimami może mieć > 4 wiersze i zero sensownych pytań.
+    // Sonda ze stałym ziarnem jest deterministyczna, więc ekran nie miga między rekompozycjami.
+    val probeRound = remember(set.id, playable, options.direction) {
+        buildRound(playable, options.direction, Random(0))
+    }
+
+    if (probeRound.isEmpty()) {
         NotEnoughEntries(
             lang = options.uiLanguage,
             have = playable.size,
@@ -598,8 +621,8 @@ private fun McPrompt(
     val fromLang = if (question.termToDef) set.termLanguage else set.definitionLanguage
     val toLang = if (question.termToDef) set.definitionLanguage else set.termLanguage
     Box(
+        // Bez sztywnego heightIn: przy weight(1f) na niskich ekranach panel oddaje miejsce kaflom.
         modifier
-            .heightIn(min = 96.dp)
             .background(Palette.Surface)
             .border(3.dp, Palette.Ink)
             .padding(horizontal = 13.dp, vertical = 12.dp),

@@ -1,5 +1,7 @@
 package com.matura.app.game
 
+import com.matura.app.model.Entry
+
 /**
  * Answer normalisation and prefix matching.
  *
@@ -71,6 +73,26 @@ object Matching {
             if (variant.contains(' ')) out.add(variant.replace(" ", ""))
         }
         return out.toList()
+    }
+
+    /**
+     * Wszystkie akceptowane odpowiedzi dla PYTANIA o tresci [prompt]: suma
+     * [acceptedAnswers] po stronie odpowiedzi KAZDEGO wiersza, ktorego strona
+     * pytania normalizuje sie tak samo jak [prompt]. Przy haslach wieloznacznych
+     * ("reka" -> arm/hand) zaden poprawny wariant nie zostanie wtedy uznany za
+     * falsz ani uzyty jako dystraktor.
+     */
+    fun answersForPrompt(entries: List<Entry>, prompt: String, termToDef: Boolean): Set<String> {
+        val key = normalize(prompt)
+        if (key.isEmpty()) return emptySet()
+        val out = LinkedHashSet<String>()
+        for (e in entries) {
+            val promptSide = if (termToDef) e.term else e.definition
+            if (normalize(promptSide) == key) {
+                out += acceptedAnswers(if (termToDef) e.definition else e.term)
+            }
+        }
+        return out
     }
 
     /** True when [typed] is a prefix of any accepted answer. Empty input matches nothing. */

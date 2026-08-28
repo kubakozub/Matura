@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -118,13 +120,22 @@ private fun buildQuestion(
 ): TfQuestion? {
     if (entries.size < 2) return null
 
+    // Kierunek rozstrzygamy PRZED wyborem indeksu — przy RANDOM strona pytania musi być
+    // znana już teraz, żeby anty-powtórka porównywała avoidPrompt z właściwą stroną wiersza.
+    val termToDef = when (direction) {
+        Direction.TERM_TO_DEF -> true
+        Direction.DEF_TO_TERM -> false
+        Direction.RANDOM -> rnd.nextBoolean()
+    }
+
     // Wybór hasła: kilka podejść, żeby nie trafić od razu w to samo co poprzednio.
     var idx = rnd.nextInt(entries.size)
     if (avoidPrompt != null) {
         var tries = 0
         while (tries < 6) {
             val e = entries[idx]
-            val p = if (direction == Direction.DEF_TO_TERM) e.definition.trim() else e.term.trim()
+            // Porównujemy stronę PYTANIA (term gdy termToDef, inaczej definition).
+            val p = (if (termToDef) e.term else e.definition).trim()
             if (p != avoidPrompt) break
             idx = rnd.nextInt(entries.size)
             tries++
@@ -132,12 +143,6 @@ private fun buildQuestion(
     }
     val entry = entries[idx]
 
-    // Kierunek: przy RANDOM rozstrzygamy osobno dla każdego pytania.
-    val termToDef = when (direction) {
-        Direction.TERM_TO_DEF -> true
-        Direction.DEF_TO_TERM -> false
-        Direction.RANDOM -> rnd.nextBoolean()
-    }
     val prompt = (if (termToDef) entry.term else entry.definition).trim()
     val correct = (if (termToDef) entry.definition else entry.term).trim()
     if (prompt.isEmpty() || correct.isEmpty()) return null
@@ -147,9 +152,17 @@ private fun buildQuestion(
 
     // Podmianka: dowolne inne hasło, ale odrzucamy takie, które po normalizacji
     // dzieli choć jedną akceptowaną odpowiedź z poprawną — inaczej "fałsz" byłby prawdą.
-    val correctAnswers = Matching.acceptedAnswers(correct).toSet()
+    // Bierzemy sumę odpowiedzi WSZYSTKICH wierszy o tym samym pytaniu (hasła wieloznaczne
+    // typu "ręka" -> arm/hand), a nie tylko odpowiedź z wylosowanego wiersza.
+    val correctAnswers = Matching.answersForPrompt(entries, prompt, termToDef)
+    val promptKey = Matching.normalize(prompt)
     for (j in entries.indices.shuffled(rnd)) {
         if (j == idx) continue
+        // Wiersz, którego strona PYTANIA normalizuje się jak prompt, to inny wariant tego
+        // samego hasła — jego odpowiedź jest de facto poprawna, więc nie może być fałszem
+        // (inaczej "ręka"(arm) dostałaby "hand" jako rzekomy fałsz).
+        val candPrompt = (if (termToDef) entries[j].term else entries[j].definition).trim()
+        if (Matching.normalize(candPrompt) == promptKey) continue
         val cand = (if (termToDef) entries[j].definition else entries[j].term).trim()
         if (cand.isEmpty()) continue
         val candAnswers = Matching.acceptedAnswers(cand)
@@ -160,6 +173,32 @@ private fun buildQuestion(
 
     // Cały zbiór okazał się synonimami jednego pojęcia — nie da się ułożyć fałszu.
     return TfQuestion(prompt, correct, correct, isTrue = true)
+}
+
+/**
+ * Czy dla [entry] w kierunku [termToDef] da się w ogóle ułożyć fałszywą podmiankę.
+ * Ta sama logika odsiewu co w [buildQuestion] (suma odpowiedzi po prompcie + pomijanie
+ * wierszy o tym samym pytaniu) — służy do wcześniejszego odfiltrowania niegrywalnych
+ * wierszy, żeby cichy fallback `isTrue = true` nie był osiągalny w normalnej rozgrywce.
+ */
+private fun hasFalseCandidate(entries: List<Entry>, entry: Entry, termToDef: Boolean): Boolean {
+    val prompt = (if (termToDef) entry.term else entry.definition).trim()
+    val correct = (if (termToDef) entry.definition else entry.term).trim()
+    if (prompt.isEmpty() || correct.isEmpty()) return false
+    val correctAnswers = Matching.answersForPrompt(entries, prompt, termToDef)
+    val promptKey = Matching.normalize(prompt)
+    for (other in entries) {
+        if (other === entry) continue
+        val candPrompt = (if (termToDef) other.term else other.definition).trim()
+        if (Matching.normalize(candPrompt) == promptKey) continue
+        val cand = (if (termToDef) other.definition else other.term).trim()
+        if (cand.isEmpty()) continue
+        val candAnswers = Matching.acceptedAnswers(cand)
+        if (candAnswers.isEmpty()) continue
+        // Grywalny fałsz = kandydat, który NIE dzieli żadnej poprawnej odpowiedzi.
+        if (candAnswers.none { it in correctAnswers }) return true
+    }
+    return false
 }
 
 // ---- ekran -----------------------------------------------------------------
@@ -175,12 +214,24 @@ fun TrueFalseScreen(
 ) {
     val lang = options.uiLanguage
 
-    // Tylko wiersze wypełnione po obu stronach nadają się do gry.
-    val usable = remember(set.id, set.entries) {
-        set.entries.filter { it.term.isNotBlank() && it.definition.isNotBlank() }
+    // Grywalne są tylko wiersze wypełnione po obu stronach, dla których w danym kierunku
+    // da się w ogóle ułożyć fałszywą podmiankę. Zestaw samych synonimów zostaje odsiany tu,
+    // dzięki czemu cichy fallback isTrue=true w buildQuestion nie jest osiągalny.
+    val usable = remember(set.id, set.entries, options.direction) {
+        val complete = set.entries.filter { it.term.isNotBlank() && it.definition.isNotBlank() }
+        complete.filter { entry ->
+            when (options.direction) {
+                Direction.TERM_TO_DEF -> hasFalseCandidate(complete, entry, termToDef = true)
+                Direction.DEF_TO_TERM -> hasFalseCandidate(complete, entry, termToDef = false)
+                // RANDOM losuje kierunek per pytanie, więc wiersz musi mieć fałsz w OBU stronach.
+                Direction.RANDOM ->
+                    hasFalseCandidate(complete, entry, termToDef = true) &&
+                        hasFalseCandidate(complete, entry, termToDef = false)
+            }
+        }
     }
 
-    // Do zbudowania fałszywej pary trzeba minimum dwóch haseł — inaczej elegancki komunikat.
+    // Do zbudowania fałszywej pary trzeba minimum dwóch grywalnych haseł — inaczej komunikat.
     if (usable.size < 2) {
         NotEnoughEntries(str, lang, onExit)
         return
@@ -635,7 +686,10 @@ private fun TfGameOver(
     onMenu: () -> Unit,
 ) {
     Column(
-        Modifier.fillMaxSize(),
+        Modifier
+            .fillMaxSize()
+            // Przewijanie, żeby na niskich ekranach statystyki i przyciski się mieściły (jak w McGameOver).
+            .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

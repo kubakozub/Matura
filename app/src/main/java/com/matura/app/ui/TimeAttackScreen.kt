@@ -39,6 +39,7 @@ import com.matura.app.R
 import com.matura.app.game.FlashKind
 import com.matura.app.game.Matching
 import com.matura.app.model.Direction
+import com.matura.app.model.GameMode
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
 import com.matura.app.model.Speed
@@ -73,10 +74,14 @@ fun TimeAttackScreen(
     // kluczowane przez remember(round), restart czyści planszę bez ręcznego zerowania pól.
     var round by remember { mutableIntStateOf(0) }
 
+    // Świeże ziarno na każdą rundę — deterministyczny set.id.hashCode()+round dawał
+    // dokładnie te same pytania w każdej rozgrywce. System.nanoTime() losuje pulę od nowa.
+    val seed = remember(round) { System.nanoTime().toInt() }
+
     // Pula pytań jest tasowana raz na rundę; kierunek TERM_TO_DEF / DEF_TO_TERM / RANDOM
     // rozstrzygamy w momencie budowania puli, tak samo jak robi to silnik trybu klasycznego.
-    val questions = remember(set.id, options.direction, round) {
-        buildQuestions(set, options.direction, seed = set.id.hashCode() + round)
+    val questions = remember(set.id, options.direction, round, seed) {
+        buildQuestions(set, options.direction, seed = seed)
     }
 
     // --- zestaw bez użytecznych haseł: elegancki komunikat zamiast wywrotki ---------------
@@ -108,6 +113,8 @@ fun TimeAttackScreen(
     var deltaTtl by remember(round) { mutableFloatStateOf(0f) }
     var hint by remember(round) { mutableStateOf("") }
     var hintTtl by remember(round) { mutableFloatStateOf(0f) }
+    // Licznik pomyłek na BIEŻĄCYM haśle — pełną odpowiedź pokazujemy dopiero po 2. błędzie.
+    var wrongCount by remember(round) { mutableIntStateOf(0) }
 
     val sfx = remember { Sfx() }
     DisposableEffect(Unit) { onDispose { sfx.release() } }
@@ -150,20 +157,27 @@ fun TimeAttackScreen(
                     bestStreak = bestStreak,
                     kills = correct,
                     playedAt = System.currentTimeMillis(),
+                    // Jawny tryb — spójnie z pozostałymi trybami zapisującymi wynik.
+                    mode = GameMode.TIME_ATTACK,
                 )
             )
         }
     }
 
-    /** Przechodzi do kolejnego hasła i czyści pole wpisywania. */
+    /** Przechodzi do kolejnego hasła i czyści pole wpisywania oraz podpowiedź. */
     fun nextQuestion() {
         qIndex = (qIndex + 1) % questions.size
         typed = ""
         cursor = 0
+        // Podpowiedź i licznik pomyłek dotyczą poprzedniego hasła — zerujemy je przy zmianie.
+        hint = ""
+        hintTtl = 0f
+        wrongCount = 0
     }
 
     fun adjustTime(seconds: Float, label: String, color: Color) {
-        timeLeft = (timeLeft + seconds).coerceAtLeast(0f)
+        // Sufit czasu = totalTime: bonusy nie mogą nabić zegara ponad budżet rundy.
+        timeLeft = (timeLeft + seconds).coerceIn(0f, totalTime)
         delta = label
         deltaColor = color
         deltaTtl = 1.1f
@@ -179,7 +193,11 @@ fun TimeAttackScreen(
             flashColor = Palette.Accent
             flashTtl = 0.22f
             sfx.play(FlashKind.HIT, options.soundEnabled)
-            adjustTime(BONUS_HIT, "+${BONUS_HIT.toInt()}s", Palette.Accent)
+            // Jednoelementowy zestaw dostawałby bonus w kółko za to samo hasło (perpetuum mobile) —
+            // przy jednym pytaniu nie doładowujemy czasu.
+            if (questions.size > 1) {
+                adjustTime(BONUS_HIT, "+${BONUS_HIT.toInt()}s", Palette.Accent)
+            }
             nextQuestion()
         } else {
             streak = 0
@@ -188,8 +206,13 @@ fun TimeAttackScreen(
             sfx.play(FlashKind.MISS, options.soundEnabled)
             adjustTime(PENALTY_MISS, "${PENALTY_MISS.toInt()}s", Palette.Danger)
             // Pomyłka nie zabiera hasła — gracz może poprawić literówkę, kosztem tykającego zegara.
-            hint = question.reveal
-            hintTtl = 2.0f
+            // Pełną odpowiedź odsłaniamy dopiero po 2. błędzie na tym samym haśle, żeby tryb
+            // nie zmienił się w przepisywanie; po 1. błędzie zostaje sam czerwony błysk.
+            wrongCount += 1
+            if (wrongCount >= 2) {
+                hint = question.reveal
+                hintTtl = 2.0f
+            }
         }
     }
 
@@ -384,13 +407,14 @@ private fun TimeAttackHud(
     }
     val multiplier = multiplierFor(streak)
 
+    // Ciaśniejszy pionowy padding (6.dp zamiast 8.dp) — na 360x640 dp HUD brakowało wysokości.
     Column(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
             .background(Palette.Surface)
             .border(3.dp, Palette.Ink)
-            .padding(horizontal = 10.dp, vertical = 8.dp)
+            .padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         Row(
             Modifier.fillMaxWidth(),
@@ -411,7 +435,7 @@ private fun TimeAttackHud(
 
             PixelImage(pixel(R.drawable.icon_clock), Modifier.size(20.dp))
             Spacer(Modifier.width(6.dp))
-            PixelText("$seconds", color = clockColor, glyphHeight = 24.dp)
+            PixelText("$seconds", color = clockColor, glyphHeight = 18.dp)
             Spacer(Modifier.width(3.dp))
             PixelText(t("S", "S", lang), color = Palette.Dim, glyphHeight = 9.dp)
 

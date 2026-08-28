@@ -115,7 +115,7 @@ private fun RowScope.LetterKey(
         PixelImage(if (pressed) capPressed else cap, Modifier.fillMaxSize())
         // Litera siedzi na korpusie klawisza (górne 14/16 sprite'a), nie na cieniu.
         Box(
-            Modifier.fillMaxSize().padding(bottom = if (pressed) 0.dp else 5.dp),
+            Modifier.fillMaxSize().padding(top = if (pressed) 5.dp else 0.dp, bottom = if (pressed) 0.dp else 5.dp),
             contentAlignment = Alignment.Center,
         ) {
             PixelText(c.toString(), color = Palette.Ink, outline = null, glyphHeight = 13.dp)

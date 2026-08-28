@@ -79,7 +79,7 @@ class Repository(context: Context) {
             // z jednego trybu nie wypychaly pozostalych.
             scores = (d.scores + record)
                 .groupBy { it.mode }
-                .flatMap { (_, list) -> list.sortedByDescending { it.score }.take(25) }
+                .flatMap { (_, list) -> list.sortedByDescending { it.score }.take(50) }
                 .sortedByDescending { it.score },
             sets = d.sets.map { if (it.id == setId) it.copy(timesPlayed = it.timesPlayed + 1) else it },
         )

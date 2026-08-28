@@ -52,7 +52,7 @@ class PixelFont(private val sheet: ImageBitmap) {
             "ghijklmnopqrstuv" +
             "wxyz0123456789ĄĆ" +
             "ĘŁŃÓŚŹŻąćęłńóśźż" +
-            ".,!?:/-_×∞ "
+            ".,!?:/-_×∞ +'"
 
         private val INDEX: Map<Char, Int> =
             ORDER.withIndex().associate { (i, c) -> c to i }
@@ -67,7 +67,7 @@ class PixelFont(private val sheet: ImageBitmap) {
             '„' to ',', '”' to '\'', '“' to '\'', '"' to '\'', '\'' to '\'',
             '‚' to ',', '’' to '\'', '‘' to '\'',
             '(' to '/', ')' to '/', '[' to '/', ']' to '/',
-            ';' to ',', '>' to '/', '<' to '/', '+' to '-', '=' to '-',
+            ';' to ',', '>' to '/', '<' to '/', '=' to '-',
             '&' to '-', '%' to '/', '#' to '-', '@' to '-', '*' to 'x',
             '∙' to '-', '…' to '.', '\t' to ' ',
         )

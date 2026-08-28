@@ -108,7 +108,7 @@ enum class Achievement(
         VETERAN -> p.gamesPlayed >= 25
         SHARPSHOOTER -> p.totalKills >= 100
         COMBO_X3 -> p.bestStreak >= 6
-        COMBO_X5 -> p.bestStreak >= 12
+        COMBO_X5 -> p.bestStreak >= 9
         SCORE_500 -> p.bestScore >= 500
         SCORE_2000 -> p.bestScore >= 2000
     }
