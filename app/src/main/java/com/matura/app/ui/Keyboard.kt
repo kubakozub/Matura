@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -36,16 +37,17 @@ fun GameKeyboard(
     onSpace: () -> Unit,
     onLeft: () -> Unit,
     onRight: () -> Unit,
+    spaceLabel: String = "SPACJA",
     modifier: Modifier = Modifier,
 ) {
     val keyBackspace = pixel(com.matura.app.R.drawable.key_backspace)
     val keyEnter = pixel(com.matura.app.R.drawable.key_enter)
-    val keySpace = pixel(com.matura.app.R.drawable.key_space)
     val keyArrows = pixel(com.matura.app.R.drawable.key_arrows)
 
     Column(
         modifier
             .fillMaxWidth()
+            .navigationBarsPadding()
             .background(Palette.Surface)
             .border(3.dp, Palette.Ink)
             .padding(horizontal = 3.dp, vertical = 5.dp)
@@ -63,11 +65,11 @@ fun GameKeyboard(
             "ZXCVBNM".forEach { LetterKey(it, onChar) }
             SpriteKey(keyEnter, weight = 1.6f, onClick = onEnter)
         }
-        Row(Modifier.fillMaxWidth().height(48.dp)) {
-            Box(Modifier.weight(0.7f))
-            SpriteKey(keySpace, weight = 5.5f, onClick = onSpace)
-            ArrowKey(keyArrows, weight = 2.2f, onLeft = onLeft, onRight = onRight)
-            Box(Modifier.weight(0.7f))
+        // Dolny pasek: SPACJA na całą szerokość (poza strzałkami) — najczęściej używany
+        // klawisz w hasłach dwuwyrazowych, więc dostaje maksymalny cel dotyku.
+        Row(Modifier.fillMaxWidth().height(52.dp)) {
+            SpaceKey(weight = 1f, label = spaceLabel, onClick = onSpace)
+            ArrowKey(keyArrows, weight = 0.30f, onLeft = onLeft, onRight = onRight)
         }
     }
 }
@@ -87,6 +89,24 @@ private fun RowScope.LetterKey(c: Char, onChar: (Char) -> Unit) {
         contentAlignment = Alignment.Center,
     ) {
         PixelText(c.toString(), color = Palette.Ink, outline = null, glyphHeight = 13.dp)
+    }
+}
+
+@Composable
+private fun RowScope.SpaceKey(weight: Float, label: String, onClick: () -> Unit) {
+    Box(
+        Modifier
+            .weight(weight)
+            .fillMaxHeight()
+            .padding(2.dp)
+            .background(Palette.Muted)
+            .padding(bottom = 4.dp)
+            .background(Palette.Bone)
+            .border(2.dp, Palette.Ink)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        PixelText(label, color = Palette.Ink, outline = null, glyphHeight = 9.dp)
     }
 }
 

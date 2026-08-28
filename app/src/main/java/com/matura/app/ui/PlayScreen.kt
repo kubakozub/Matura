@@ -60,10 +60,10 @@ fun PlayScreen(
     onFinished: (ScoreRecord) -> Unit,
 ) {
     var restarts by remember { mutableIntStateOf(0) }
-    val engine = remember(set.id, restarts, options.lives, options.direction) {
+    val engine = remember(set.id, restarts, options.lives, options.direction, options.tempo) {
         GameEngine(
             set = set,
-            config = GameConfig(lives = options.lives, direction = options.direction),
+            config = GameConfig(lives = options.lives, direction = options.direction, tempo = options.tempo),
         )
     }
     var snap by remember(engine) { mutableStateOf(engine.snapshot()) }
@@ -199,6 +199,7 @@ fun PlayScreen(
             onSpace = { if (!paused) engine.type(' ') },
             onLeft = { engine.cursorLeft() },
             onRight = { engine.cursorRight() },
+            spaceLabel = str.spaceKey,
         )
     }
 }
@@ -399,10 +400,14 @@ private fun DrawScope.drawCentredLabel(
     outline: Color? = Palette.Ink,
 ) {
     val width = font.widthPx(text, scale)
+    // Etykieta zawsze w całości na ekranie — także gdy potwór dopiero wchodzi zza krawędzi.
+    val pad = 4f
+    val clampedCx = if (width + pad * 2f >= size.width) size.width / 2f
+        else cx.coerceIn(width / 2f + pad, size.width - width / 2f - pad)
     drawPixelText(
         font = font,
         text = text,
-        x = cx - width / 2f,
+        x = clampedCx - width / 2f,
         y = bottomY - PixelFont.GLYPH_H * scale,
         scale = scale,
         color = color,

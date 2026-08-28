@@ -37,11 +37,15 @@ data class Options(
     val soundEnabled: Boolean = true,
     val texture: Texture = Texture.CLASSIC,
     val direction: Direction = Direction.TERM_TO_DEF,
+    val tempo: Tempo = Tempo.NORMAL,
     val uiLanguage: UiLanguage = UiLanguage.PL,
 )
 
 @Serializable
 enum class Texture { CLASSIC, NIGHT, DESERT }
+
+/** Tempo gry: co ile pojawiają się potwory i jak szybko idą. */
+enum class Tempo { CALM, NORMAL, FAST }
 
 @Serializable
 enum class UiLanguage { PL, EN }

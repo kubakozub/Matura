@@ -1,6 +1,7 @@
 package com.matura.app.game
 
 import com.matura.app.model.Direction
+import com.matura.app.model.Tempo
 import com.matura.app.model.WordSet
 import kotlin.math.hypot
 import kotlin.math.max
@@ -103,6 +104,7 @@ data class GameConfig(
     val direction: Direction = Direction.TERM_TO_DEF,
     /** Test seam: with automatic waves off, a test controls exactly what is on the field. */
     val autoSpawn: Boolean = true,
+    val tempo: Tempo = Tempo.NORMAL,
 )
 
 class GameEngine(
@@ -114,6 +116,10 @@ class GameEngine(
         const val CANNON_X = 0.5f
         const val CANNON_Y = 0.5f
         const val CANNON_RADIUS = 0.06f
+
+        /** Mnożniki tempa: (odstęp spawnu, prędkość potworów). */
+        private fun spawnScale(t: Tempo) = when (t) { Tempo.CALM -> 1.45f; Tempo.NORMAL -> 1f; Tempo.FAST -> 0.68f }
+        private fun speedScale(t: Tempo) = when (t) { Tempo.CALM -> 0.72f; Tempo.NORMAL -> 1f; Tempo.FAST -> 1.45f }
 
         private const val BASE_SPEED = 0.030f
         private const val SPEED_PER_LEVEL = 0.0055f
@@ -405,9 +411,9 @@ class GameEngine(
     }
 
     private fun spawnInterval(): Float =
-        max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - (level - 1) * 0.22f)
+        max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - (level - 1) * 0.22f) * spawnScale(config.tempo)
 
-    private fun monsterSpeed(): Float = BASE_SPEED + (level - 1) * SPEED_PER_LEVEL
+    private fun monsterSpeed(): Float = (BASE_SPEED + (level - 1) * SPEED_PER_LEVEL) * speedScale(config.tempo)
 
     private fun armorChance(): Float =
         if (level < 3) 0f else min(0.6f, (level - 2) * 0.12f)

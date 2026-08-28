@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.matura.app.R
 import com.matura.app.model.Achievement
+import com.matura.app.model.Tempo
 import com.matura.app.model.Direction
 import com.matura.app.model.Entry
 import com.matura.app.model.Options
@@ -481,6 +482,21 @@ fun OptionsScreen(
                         }
                     }
                 }
+                OptionRow(str.tempo, icon = R.drawable.icon_pause) {
+                    Row {
+                        Tempo.entries.forEach { t ->
+                            ChoiceChip(
+                                label = when (t) {
+                                    Tempo.CALM -> str.tempoCalm
+                                    Tempo.NORMAL -> str.tempoNormal
+                                    Tempo.FAST -> str.tempoFast
+                                },
+                                selected = options.tempo == t,
+                            ) { onChange(options.copy(tempo = t)) }
+                            Spacer(Modifier.width(5.dp))
+                        }
+                    }
+                }
                 OptionRow(str.language, icon = R.drawable.icon_globe) {
                     Row {
                         UiLanguage.entries.forEach { l ->
@@ -689,6 +705,7 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                             str.topSet,
                             if (topSet != null && topSet.timesPlayed > 0) topSet.title else "-",
                             pixel(R.drawable.icon_trophy),
+                            stacked = true,
                         )
                     }
                 }
