@@ -64,6 +64,12 @@ object Matching {
             val withoutGloss = part.replace(Regex("\\([^)]*\\)"), " ")
             add(withoutGloss)
         }
+        // Hasła z łącznikiem i wielowyrazowe: "open-minded" zalicza się także jako
+        // "open minded" i "openminded" — normalizacja zamienia łącznik na spację,
+        // a tu dokładamy wariant zupełnie bez odstępów.
+        for (variant in out.toList()) {
+            if (variant.contains(' ')) out.add(variant.replace(" ", ""))
+        }
         return out.toList()
     }
 
