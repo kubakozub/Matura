@@ -36,6 +36,7 @@ class Str(private val lang: UiLanguage) {
 
     val chooseSet get() = pick("Wybierz zestaw", "Choose a set")
     val chooseMode get() = pick("Wybierz tryb", "Choose a mode")
+    val classic get() = pick("CLASSIC", "CLASSIC")
     val classicDesc
         get() = pick(
             "Wpisuj tłumaczenia, zanim potworki dojdą do działka.",
@@ -73,11 +74,17 @@ class Str(private val lang: UiLanguage) {
     val sound get() = pick("Dźwięk", "Sound")
     val lives get() = pick("Życia", "Lives")
     val texture get() = pick("Tekstury", "Textures")
-    val tempo get() = pick("Prędkość", "Speed")
-    val tempoCalm get() = pick("SPOKOJNA", "CALM")
-    val tempoNormal get() = pick("NORMALNA", "NORMAL")
-    val tempoFast get() = pick("SZYBKA", "FAST")
-    val spaceKey get() = pick("SPACJA", "SPACE")
+    val speed get() = pick("Tempo", "Speed")
+    val speedSlow get() = pick("WOLNO", "SLOW")
+    val speedNormal get() = pick("NORMALNIE", "NORMAL")
+    val speedFast get() = pick("SZYBKO", "FAST")
+    val speedNote
+        get() = pick(
+            "Tempo ustawia szybkość potworków. Na WOLNO masz więcej czasu na wpisanie " +
+                "dłuższych haseł — punkty liczą się tak samo.",
+            "Speed sets how fast monsters walk. On SLOW you get more time for longer " +
+                "answers — scoring is unchanged."
+        )
     val language get() = pick("Język", "Language")
     val direction get() = pick("Kierunek tłumaczenia", "Translation direction")
     val dirTermToDef get() = pick("hasło → tłumaczenie", "term → definition")
@@ -90,7 +97,7 @@ class Str(private val lang: UiLanguage) {
         )
 
     val score get() = pick("Punkty", "Score")
-    val level get() = pick("Poziom", "Poziom")
+    val level get() = pick("Poziom", "Level")
     val gameOver get() = pick("KONIEC GRY", "GAME OVER")
     val playAgain get() = pick("Jeszcze raz", "Play again")
     val toMenu get() = pick("Do menu", "To menu")

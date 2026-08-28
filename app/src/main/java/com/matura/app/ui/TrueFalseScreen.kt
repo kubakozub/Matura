@@ -44,7 +44,7 @@ import com.matura.app.model.Entry
 import com.matura.app.model.GameMode
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
-import com.matura.app.model.Tempo
+import com.matura.app.model.Speed
 import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordSet
 import kotlin.random.Random
@@ -87,10 +87,10 @@ private enum class TfOutcome { RIGHT, WRONG, TIMEOUT }
 // ---- reguły ----------------------------------------------------------------
 
 /** Limit czasu na odpowiedź; SPOKOJNA 8 s, NORMALNA 6 s, SZYBKA 4 s. */
-private fun answerTime(tempo: Tempo): Float = when (tempo) {
-    Tempo.CALM -> 8f
-    Tempo.NORMAL -> 6f
-    Tempo.FAST -> 4f
+private fun answerTime(tempo: Speed): Float = when (tempo) {
+    Speed.SLOW -> 8f
+    Speed.NORMAL -> 6f
+    Speed.FAST -> 4f
 }
 
 /** Mnożnik serii: 3+ => x2, 6+ => x3, 9+ => x5. Kolejność warunków od najwyższego. */
@@ -189,7 +189,7 @@ fun TrueFalseScreen(
     var restarts by remember { mutableIntStateOf(0) }
 
     val maxLives = options.lives.coerceIn(1, 9)
-    val limit = answerTime(options.tempo)
+    val limit = answerTime(options.speed)
 
     val rnd = remember(restarts) { Random(System.nanoTime()) }
     var score by remember(restarts) { mutableIntStateOf(0) }

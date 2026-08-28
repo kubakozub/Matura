@@ -38,13 +38,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.matura.app.R
 import com.matura.app.model.Achievement
-import com.matura.app.model.Tempo
 import com.matura.app.model.Direction
-import com.matura.app.model.GameMode
 import com.matura.app.model.Entry
 import com.matura.app.model.Options
 import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
+import com.matura.app.model.GameMode
+import com.matura.app.model.Speed
 import com.matura.app.model.Texture
 import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordSet
@@ -192,30 +192,14 @@ fun ModePickScreen(
                 PixelText(set.title, color = Palette.Bone, glyphHeight = 11.dp, maxWidthDp = 300.dp)
                 Spacer(Modifier.height(12.dp))
             }
-            MenuButton(
-                str.modeClassic,
-                subtitle = str.classicDesc,
-                icon = pixel(R.drawable.mode_classic),
-                onClick = { onPickMode(GameMode.CLASSIC) },
-            )
-            MenuButton(
-                str.modeTrueFalse,
-                subtitle = str.modeTrueFalseDesc,
-                icon = pixel(R.drawable.mode_truefalse),
-                onClick = { onPickMode(GameMode.TRUE_FALSE) },
-            )
-            MenuButton(
-                str.modeMultiple,
-                subtitle = str.modeMultipleDesc,
-                icon = pixel(R.drawable.mode_multiple),
-                onClick = { onPickMode(GameMode.MULTIPLE_CHOICE) },
-            )
-            MenuButton(
-                str.modeTimeAttack,
-                subtitle = str.modeTimeAttackDesc,
-                icon = pixel(R.drawable.mode_timeattack),
-                onClick = { onPickMode(GameMode.TIME_ATTACK) },
-            )
+            MenuButton(str.modeClassic, subtitle = str.classicDesc,
+                icon = pixel(R.drawable.mode_classic)) { onPickMode(GameMode.CLASSIC) }
+            MenuButton(str.modeTrueFalse, subtitle = str.modeTrueFalseDesc,
+                icon = pixel(R.drawable.mode_truefalse)) { onPickMode(GameMode.TRUE_FALSE) }
+            MenuButton(str.modeMultiple, subtitle = str.modeMultipleDesc,
+                icon = pixel(R.drawable.mode_multiple)) { onPickMode(GameMode.MULTIPLE_CHOICE) }
+            MenuButton(str.modeTimeAttack, subtitle = str.modeTimeAttackDesc,
+                icon = pixel(R.drawable.mode_timeattack)) { onPickMode(GameMode.TIME_ATTACK) }
         }
     }
 }
@@ -496,17 +480,17 @@ fun OptionsScreen(
                         }
                     }
                 }
-                OptionRow(str.tempo, icon = R.drawable.icon_speed) {
+                OptionRow(str.speed, icon = R.drawable.icon_speed) {
                     Row {
-                        Tempo.entries.forEach { t ->
+                        Speed.entries.forEach { s ->
                             ChoiceChip(
-                                label = when (t) {
-                                    Tempo.CALM -> str.tempoCalm
-                                    Tempo.NORMAL -> str.tempoNormal
-                                    Tempo.FAST -> str.tempoFast
+                                label = when (s) {
+                                    Speed.SLOW -> str.speedSlow
+                                    Speed.NORMAL -> str.speedNormal
+                                    Speed.FAST -> str.speedFast
                                 },
-                                selected = options.tempo == t,
-                            ) { onChange(options.copy(tempo = t)) }
+                                selected = options.speed == s,
+                            ) { onChange(options.copy(speed = s)) }
                             Spacer(Modifier.width(5.dp))
                         }
                     }
@@ -536,6 +520,8 @@ fun OptionsScreen(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                InfoCard(str.speedNote)
+                Spacer(Modifier.height(10.dp))
                 InfoCard(str.soundNote)
                 Spacer(Modifier.height(30.dp))
             }
@@ -737,7 +723,6 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.height(14.dp))
-                // Filtr trybu — poziomo przewijalny, zeby zmiescil sie na waskich ekranach.
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -775,19 +760,12 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(
-                            s.setTitle,
-                            color = Palette.Bone,
-                            fontSize = 13.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
+                        Text(s.setTitle, color = Palette.Bone, fontSize = 13.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             "${modeLabel(s.mode)} · LVL ${s.level} · ${str.killsLabel} ${s.kills} · x${s.bestStreak}",
-                            color = Palette.Muted,
-                            fontSize = 10.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
+                            color = Palette.Muted, fontSize = 10.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
                         )
                     }
                     Spacer(Modifier.width(8.dp))

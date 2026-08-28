@@ -4,6 +4,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,6 +50,16 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
         Modifier
             .fillMaxSize()
             .background(Palette.Background)
+            // Jedyne miejsce, ktore odsuwa tresc od chromu systemu - stad w dol
+            // insety sa juz skonsumowane i ekrany moga liczyc wysokosc normalnie.
+            // Pasek stanu: bez tego zegarek systemowy lezal na sercach i amunicji.
+            // Pasek nawigacji: bez tego dolny przycisk w MENU, OPCJACH, SETS i
+            // edytorze wpadal pod pasek gestow - klawiatura radzila sobie sama,
+            // reszta ekranow nie.
+            // IME: StartScreen i edytor maja prawdziwe pola tekstowe, wiec przy
+            // otwartej klawiaturze systemowej tresc musi sie podniesc.
+            // Wyciecie w ekranie: w poziomie sprite'y nie wchodza pod kamere.
+            .safeDrawingPadding()
     ) {
         when (val s = screen) {
             Screen.Start -> StartScreen(
@@ -91,9 +102,8 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 if (set == null) {
                     pop()
                 } else {
-                    // Wspolny kontrakt wszystkich trybow: ta sama sygnatura ekranu.
-                    // Tryb doklejamy do rekordu tutaj, dzieki czemu ekrany trybow
-                    // nie musza go znac.
+                    // Wszystkie tryby maja ta sama sygnature ekranu; tryb doklejamy
+                    // do rekordu tutaj, wiec same ekrany nie musza go znac.
                     val exit: () -> Unit = { stack = listOf(Screen.Start, Screen.Menu) }
                     val finish: (com.matura.app.model.ScoreRecord) -> Unit = { record ->
                         repo.recordGame(record.copy(mode = s.mode), set.id)

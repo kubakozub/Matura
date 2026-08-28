@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -57,10 +56,13 @@ fun GameKeyboard(
     Column(
         modifier
             .fillMaxWidth()
-            .navigationBarsPadding()
             .background(Palette.Surface)
             .border(3.dp, Palette.Ink)
-            .padding(horizontal = 3.dp, vertical = 5.dp)
+            // Odsuniecie od paska nawigacji robi safeDrawingPadding() w MaturaApp
+            // (wspolnie dla wszystkich ekranow) — tutaj zostaje tylko luz pod
+            // dolnym wierszem, ktory i tak jest wyzszy niz reszta klawiatury.
+            .padding(horizontal = 3.dp)
+            .padding(top = 5.dp, bottom = 9.dp)
     ) {
         Row(Modifier.fillMaxWidth().height(46.dp)) {
             "QWERTYUIOP".forEach { LetterKey(it, cap, capPressed, onChar) }
@@ -77,12 +79,18 @@ fun GameKeyboard(
         }
         // Dolny pasek: SPACJA na całą szerokość (poza strzałkami). Wagi 93:28 odpowiadają
         // proporcjom sprite'ów, więc piksele nie są rozciągane nierówno.
-        Row(Modifier.fillMaxWidth().height(50.dp)) {
+        Row(Modifier.fillMaxWidth().height(SPACE_ROW_HEIGHT)) {
             SpriteKey(space, spacePressed, weight = 93f, onClick = onSpace)
             ArrowKey(arrows, arrowsPressed, weight = 28f, onLeft = onLeft, onRight = onRight)
         }
     }
 }
+
+/**
+ * Dolny rzad jest celowo wyzszy niz rzedy liter: lezy najblizej krawedzi ekranu
+ * i to w niego testerzy najczesciej nie trafiali.
+ */
+private val SPACE_ROW_HEIGHT = 56.dp
 
 /** Klawisz litery: sprite klawisza + glif z czcionki pikselowej. */
 @Composable

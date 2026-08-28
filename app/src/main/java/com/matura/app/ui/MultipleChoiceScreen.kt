@@ -46,7 +46,7 @@ import com.matura.app.model.Entry
 import com.matura.app.model.GameMode
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
-import com.matura.app.model.Tempo
+import com.matura.app.model.Speed
 import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordSet
 import kotlin.random.Random
@@ -80,17 +80,17 @@ private const val TIMED_OUT = -1
 private fun t(pl: String, en: String, lang: UiLanguage) = if (lang == UiLanguage.PL) pl else en
 
 /** Limit czasu na pytanie, w sekundach — zależny od tempa z OPCJI. */
-private fun timeLimitFor(tempo: Tempo): Float = when (tempo) {
-    Tempo.CALM -> 12f
-    Tempo.NORMAL -> 9f
-    Tempo.FAST -> 6f
+private fun timeLimitFor(tempo: Speed): Float = when (tempo) {
+    Speed.SLOW -> 12f
+    Speed.NORMAL -> 9f
+    Speed.FAST -> 6f
 }
 
 /** Ile trwa podświetlenie odpowiedzi, zanim wskoczy kolejne pytanie. */
-private fun revealTimeFor(tempo: Tempo): Float = when (tempo) {
-    Tempo.CALM -> 1.7f
-    Tempo.NORMAL -> 1.35f
-    Tempo.FAST -> 1.05f
+private fun revealTimeFor(tempo: Speed): Float = when (tempo) {
+    Speed.SLOW -> 1.7f
+    Speed.NORMAL -> 1.35f
+    Speed.FAST -> 1.05f
 }
 
 /** Mnożnik serii: 3+ => x2, 6+ => x3, 9+ => x5. */
@@ -249,8 +249,8 @@ private fun McGame(
 ) {
     val lang = options.uiLanguage
     val maxLives = options.lives.coerceAtLeast(1)
-    val timeLimit = timeLimitFor(options.tempo)
-    val revealTime = revealTimeFor(options.tempo)
+    val timeLimit = timeLimitFor(options.speed)
+    val revealTime = revealTimeFor(options.speed)
 
     // Każdy restart ("JESZCZE RAZ") zwiększa runId, co resetuje wszystkie remembery poniżej.
     var runId by remember { mutableIntStateOf(0) }

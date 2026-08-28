@@ -37,15 +37,24 @@ data class Options(
     val soundEnabled: Boolean = true,
     val texture: Texture = Texture.CLASSIC,
     val direction: Direction = Direction.TERM_TO_DEF,
-    val tempo: Tempo = Tempo.NORMAL,
     val uiLanguage: UiLanguage = UiLanguage.PL,
+    val speed: Speed = Speed.NORMAL,
 )
+
+/**
+ * How fast monsters walk toward the cannon. Testers with slower typing asked for a
+ * gentler pace, so tempo is a setting rather than a fixed constant; the multiplier
+ * scales the whole speed curve, including the per-level increase.
+ */
+@Serializable
+enum class Speed(val factor: Float) {
+    SLOW(0.75f),
+    NORMAL(1.0f),
+    FAST(1.3f),
+}
 
 @Serializable
 enum class Texture { CLASSIC, NIGHT, DESERT }
-
-/** Tempo gry: co ile pojawiają się potwory i jak szybko idą. */
-enum class Tempo { CALM, NORMAL, FAST }
 
 @Serializable
 enum class UiLanguage { PL, EN }
@@ -59,7 +68,7 @@ data class ScoreRecord(
     val bestStreak: Int,
     val kills: Int,
     val playedAt: Long,
-    /** Tryb rozgrywki. Domyslna wartosc trzyma zgodnosc ze starymi zapisami JSON. */
+    /** Tryb rozgrywki. Wartosc domyslna trzyma zgodnosc ze starymi zapisami JSON. */
     val mode: GameMode = GameMode.CLASSIC,
 )
 

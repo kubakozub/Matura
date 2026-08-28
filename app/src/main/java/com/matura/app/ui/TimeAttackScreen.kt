@@ -41,7 +41,7 @@ import com.matura.app.game.Matching
 import com.matura.app.model.Direction
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
-import com.matura.app.model.Tempo
+import com.matura.app.model.Speed
 import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordSet
 import kotlin.math.ceil
@@ -85,7 +85,7 @@ fun TimeAttackScreen(
         return
     }
 
-    val totalTime = timeBudgetFor(options.tempo)
+    val totalTime = timeBudgetFor(options.speed)
 
     var qIndex by remember(round) { mutableIntStateOf(0) }
     var typed by remember(round) { mutableStateOf("") }
@@ -310,10 +310,10 @@ private const val PENALTY_SKIP = -5f
 private const val MAX_INPUT = 40
 
 /** Budżet czasu na całą grę zależy wyłącznie od ustawienia tempa. */
-private fun timeBudgetFor(tempo: Tempo): Float = when (tempo) {
-    Tempo.CALM -> 120f
-    Tempo.NORMAL -> 90f
-    Tempo.FAST -> 60f
+private fun timeBudgetFor(tempo: Speed): Float = when (tempo) {
+    Speed.SLOW -> 120f
+    Speed.NORMAL -> 90f
+    Speed.FAST -> 60f
 }
 
 /** Mnożnik serii — progi te same, co odznaki badge_x2 / x3 / x5. */
