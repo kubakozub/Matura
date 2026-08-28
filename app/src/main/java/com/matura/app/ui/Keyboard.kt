@@ -3,6 +3,8 @@ package com.matura.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,21 +15,23 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 
 /**
- * The restricted keyboard from the design document — A-Z, space, backspace and a
- * cursor block, nothing else. Letter caps are drawn to match the pack's key styling
- * (bone face, ink outline, a hard shadow underneath); the four function keys are
- * sprites from the pack, which already include their own key cap.
+ * Klawiatura gry — JEDNA rodzina sprite'ów dla wszystkich klawiszy.
+ *
+ * Każdy klawisz ma stan normalny i wciśnięty (sprite `*_pressed`), więc litery,
+ * spacja, enter, backspace i strzałki wyglądają i zachowują się identycznie.
+ * Litery rysowane są czcionką `font_8x8` na pustym klawiszu `key_cap`.
+ *
+ * Sprite'y mają 16 px wysokości: 14 px korpusu + 2 px twardego cienia u dołu,
+ * dlatego zawartość klawisza (litera) jest wyśrodkowana w górnych 14/16 wysokości.
  */
 @Composable
 fun GameKeyboard(
@@ -37,12 +41,18 @@ fun GameKeyboard(
     onSpace: () -> Unit,
     onLeft: () -> Unit,
     onRight: () -> Unit,
-    spaceLabel: String = "SPACJA",
     modifier: Modifier = Modifier,
 ) {
-    val keyBackspace = pixel(com.matura.app.R.drawable.key_backspace)
-    val keyEnter = pixel(com.matura.app.R.drawable.key_enter)
-    val keyArrows = pixel(com.matura.app.R.drawable.key_arrows)
+    val cap = pixel(com.matura.app.R.drawable.key_cap)
+    val capPressed = pixel(com.matura.app.R.drawable.key_cap_pressed)
+    val backspace = pixel(com.matura.app.R.drawable.key_backspace)
+    val backspacePressed = pixel(com.matura.app.R.drawable.key_backspace_pressed)
+    val enter = pixel(com.matura.app.R.drawable.key_enter)
+    val enterPressed = pixel(com.matura.app.R.drawable.key_enter_pressed)
+    val space = pixel(com.matura.app.R.drawable.key_space)
+    val spacePressed = pixel(com.matura.app.R.drawable.key_space_pressed)
+    val arrows = pixel(com.matura.app.R.drawable.key_arrows)
+    val arrowsPressed = pixel(com.matura.app.R.drawable.key_arrows_pressed)
 
     Column(
         modifier
@@ -52,100 +62,116 @@ fun GameKeyboard(
             .border(3.dp, Palette.Ink)
             .padding(horizontal = 3.dp, vertical = 5.dp)
     ) {
-        Row(Modifier.fillMaxWidth().height(48.dp)) {
-            "QWERTYUIOP".forEach { LetterKey(it, onChar) }
+        Row(Modifier.fillMaxWidth().height(46.dp)) {
+            "QWERTYUIOP".forEach { LetterKey(it, cap, capPressed, onChar) }
         }
-        Row(Modifier.fillMaxWidth().height(48.dp)) {
+        Row(Modifier.fillMaxWidth().height(46.dp)) {
             Box(Modifier.weight(0.5f))
-            "ASDFGHJKL".forEach { LetterKey(it, onChar) }
+            "ASDFGHJKL".forEach { LetterKey(it, cap, capPressed, onChar) }
             Box(Modifier.weight(0.5f))
         }
-        Row(Modifier.fillMaxWidth().height(48.dp)) {
-            SpriteKey(keyBackspace, weight = 1.6f, onClick = onBackspace)
-            "ZXCVBNM".forEach { LetterKey(it, onChar) }
-            SpriteKey(keyEnter, weight = 1.6f, onClick = onEnter)
+        Row(Modifier.fillMaxWidth().height(46.dp)) {
+            SpriteKey(backspace, backspacePressed, weight = 1.6f, onClick = onBackspace)
+            "ZXCVBNM".forEach { LetterKey(it, cap, capPressed, onChar) }
+            SpriteKey(enter, enterPressed, weight = 1.6f, onClick = onEnter)
         }
-        // Dolny pasek: SPACJA na całą szerokość (poza strzałkami) — najczęściej używany
-        // klawisz w hasłach dwuwyrazowych, więc dostaje maksymalny cel dotyku.
-        Row(Modifier.fillMaxWidth().height(52.dp)) {
-            SpaceKey(weight = 1f, label = spaceLabel, onClick = onSpace)
-            ArrowKey(keyArrows, weight = 0.30f, onLeft = onLeft, onRight = onRight)
+        // Dolny pasek: SPACJA na całą szerokość (poza strzałkami). Wagi 93:28 odpowiadają
+        // proporcjom sprite'ów, więc piksele nie są rozciągane nierówno.
+        Row(Modifier.fillMaxWidth().height(50.dp)) {
+            SpriteKey(space, spacePressed, weight = 93f, onClick = onSpace)
+            ArrowKey(arrows, arrowsPressed, weight = 28f, onLeft = onLeft, onRight = onRight)
         }
     }
 }
 
+/** Klawisz litery: sprite klawisza + glif z czcionki pikselowej. */
 @Composable
-private fun RowScope.LetterKey(c: Char, onChar: (Char) -> Unit) {
+private fun RowScope.LetterKey(
+    c: Char,
+    cap: ImageBitmap,
+    capPressed: ImageBitmap,
+    onChar: (Char) -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     Box(
         Modifier
             .weight(1f)
             .fillMaxHeight()
-            .padding(2.dp)
-            .background(Palette.Muted)          // hard shadow, like the pack's key caps
-            .padding(bottom = 4.dp)
-            .background(Palette.Bone)
-            .border(2.dp, Palette.Ink)
-            .clickable { onChar(c.lowercaseChar()) },
+            .padding(1.dp)
+            .clickable(interactionSource = interaction, indication = null) {
+                onChar(c.lowercaseChar())
+            },
         contentAlignment = Alignment.Center,
     ) {
-        PixelText(c.toString(), color = Palette.Ink, outline = null, glyphHeight = 13.dp)
+        PixelImage(if (pressed) capPressed else cap, Modifier.fillMaxSize())
+        // Litera siedzi na korpusie klawisza (górne 14/16 sprite'a), nie na cieniu.
+        Box(
+            Modifier.fillMaxSize().padding(bottom = if (pressed) 0.dp else 5.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            PixelText(c.toString(), color = Palette.Ink, outline = null, glyphHeight = 13.dp)
+        }
     }
 }
 
+/** Klawisz funkcyjny — glif jest już wypalony w sprite'cie. */
 @Composable
-private fun RowScope.SpaceKey(weight: Float, label: String, onClick: () -> Unit) {
+private fun RowScope.SpriteKey(
+    sprite: ImageBitmap,
+    spritePressed: ImageBitmap,
+    weight: Float,
+    onClick: () -> Unit,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     Box(
         Modifier
             .weight(weight)
             .fillMaxHeight()
-            .padding(2.dp)
-            .background(Palette.Muted)
-            .padding(bottom = 4.dp)
-            .background(Palette.Bone)
-            .border(2.dp, Palette.Ink)
-            .clickable { onClick() },
+            .padding(1.dp)
+            .clickable(interactionSource = interaction, indication = null) { onClick() },
         contentAlignment = Alignment.Center,
     ) {
-        PixelText(label, color = Palette.Ink, outline = null, glyphHeight = 9.dp)
-    }
-}
-
-@Composable
-private fun RowScope.SpriteKey(sprite: ImageBitmap, weight: Float, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .weight(weight)
-            .fillMaxHeight()
-            .padding(2.dp)
-            .clickable { onClick() },
-        contentAlignment = Alignment.Center,
-    ) {
-        PixelImage(sprite, Modifier.fillMaxSize().padding(1.dp))
+        PixelImage(if (pressed) spritePressed else sprite, Modifier.fillMaxSize())
     }
 }
 
 /**
- * The pack ships one sprite showing both arrows, so it stays one key visually while
- * each half is its own tap target.
+ * Sprite pokazuje obie strzałki, więc wizualnie to jeden klawisz, ale każda połowa
+ * jest osobnym celem dotyku.
  */
 @Composable
 private fun RowScope.ArrowKey(
     sprite: ImageBitmap,
+    spritePressed: ImageBitmap,
     weight: Float,
     onLeft: () -> Unit,
     onRight: () -> Unit,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     Box(
         Modifier
             .weight(weight)
             .fillMaxHeight()
-            .padding(2.dp),
+            .padding(1.dp),
         contentAlignment = Alignment.Center,
     ) {
-        PixelImage(sprite, Modifier.fillMaxSize().padding(1.dp))
+        PixelImage(if (pressed) spritePressed else sprite, Modifier.fillMaxSize())
         Row(Modifier.fillMaxSize()) {
-            Box(Modifier.weight(1f).fillMaxHeight().clickable { onLeft() })
-            Box(Modifier.weight(1f).fillMaxHeight().clickable { onRight() })
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(interactionSource = interaction, indication = null) { onLeft() }
+            )
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clickable(interactionSource = interaction, indication = null) { onRight() }
+            )
         }
     }
 }

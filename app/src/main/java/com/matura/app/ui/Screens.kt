@@ -482,7 +482,7 @@ fun OptionsScreen(
                         }
                     }
                 }
-                OptionRow(str.tempo, icon = R.drawable.icon_pause) {
+                OptionRow(str.tempo, icon = R.drawable.icon_speed) {
                     Row {
                         Tempo.entries.forEach { t ->
                             ChoiceChip(

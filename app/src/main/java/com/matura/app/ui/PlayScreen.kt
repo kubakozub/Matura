@@ -199,7 +199,6 @@ fun PlayScreen(
             onSpace = { if (!paused) engine.type(' ') },
             onLeft = { engine.cursorLeft() },
             onRight = { engine.cursorRight() },
-            spaceLabel = str.spaceKey,
         )
     }
 }
