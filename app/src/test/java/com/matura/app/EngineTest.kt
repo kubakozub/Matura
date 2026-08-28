@@ -164,7 +164,7 @@ class GameEngineTest {
     }
 
     @Test
-    fun `multiplier climbs x2 x3 x4 x5 with consecutive kills`() {
+    fun `multiplier climbs x2 x3 x5 with consecutive kills`() {
         val e = engine()
         val seen = mutableListOf<Int>()
         repeat(13) {
@@ -173,11 +173,12 @@ class GameEngineTest {
             e.resolveShots()
             seen.add(e.multiplier)
         }
-        // after 3 kills x2, after 6 x3, after 9 x4, after 12 x5
+        // Ujednolicona krzywa 3/6/9 -> x2/x3/x5 (spojna z 3 nowymi trybami i odznakami
+        // badge_x2/x3/x5). Po 3 zabiciach x2, po 6 x3, po 9 x5.
         assertEquals(1, seen[1])
         assertEquals(2, seen[2])
         assertEquals(3, seen[5])
-        assertEquals(4, seen[8])
+        assertEquals(5, seen[8])
         assertEquals(5, seen[11])
     }
 

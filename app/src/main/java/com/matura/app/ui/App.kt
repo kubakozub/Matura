@@ -104,7 +104,7 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 } else {
                     // Wszystkie tryby maja ta sama sygnature ekranu; tryb doklejamy
                     // do rekordu tutaj, wiec same ekrany nie musza go znac.
-                    val exit: () -> Unit = { stack = listOf(Screen.Start, Screen.Menu) }
+                    val exit: () -> Unit = { stack = listOf(Screen.Menu) }
                     val finish: (com.matura.app.model.ScoreRecord) -> Unit = { record ->
                         repo.recordGame(record.copy(mode = s.mode), set.id)
                         refresh()
@@ -171,4 +171,11 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
 internal fun SaveData.defaultProfile(): Profile = profile
 
 internal fun List<WordSet>.playable(): List<WordSet> =
-    filter { set -> set.entries.any { it.term.isNotBlank() && it.definition.isNotBlank() } }
+    // Wiersz jest grywalny tylko, gdy OBIE strony po normalizacji nie sa puste — inaczej
+    // silnik dostalby haslo bez akceptowanej odpowiedzi (samo interpunkcja) i utknal.
+    filter { set ->
+        set.entries.any {
+            com.matura.app.game.Matching.normalize(it.term).isNotEmpty() &&
+                com.matura.app.game.Matching.normalize(it.definition).isNotEmpty()
+        }
+    }

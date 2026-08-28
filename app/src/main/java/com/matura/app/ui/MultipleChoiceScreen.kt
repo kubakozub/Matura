@@ -1,5 +1,6 @@
 package com.matura.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -174,6 +175,27 @@ private fun buildRound(entries: List<Entry>, direction: Direction, rng: Random):
     }
 }
 
+/** Ile razy próbujemy z nowym ziarnem, zanim uznamy, że rundy nie da się zbudować. */
+private const val ROUND_BUILD_ATTEMPTS = 8
+
+/**
+ * Buduje rundę odporną na "pustą losówkę": [buildRound] z losowym ziarnem bywa niedeterministyczny
+ * (kierunek RANDOM, dobór dystraktorów) i potrafi zwrócić pustą listę nawet dla grywalnego zestawu.
+ * Ponawiamy z kolejnymi ziarnami do [ROUND_BUILD_ATTEMPTS] prób; jeśli dalej pusto, oddajemy
+ * emptyList — wołający ma wtedy przejść w stan końcowy zamiast zostawiać pusty ekran.
+ */
+private fun buildNonEmptyRound(
+    entries: List<Entry>,
+    direction: Direction,
+    rng: Random,
+): List<McQuestion> {
+    repeat(ROUND_BUILD_ATTEMPTS) {
+        val round = buildRound(entries, direction, Random(rng.nextLong()))
+        if (round.isNotEmpty()) return round
+    }
+    return emptyList()
+}
+
 @Composable
 fun MultipleChoiceScreen(
     set: WordSet,
@@ -279,7 +301,7 @@ private fun McGame(
     var runId by remember { mutableIntStateOf(0) }
 
     val rng = remember(runId) { Random(System.nanoTime()) }
-    var round by remember(runId) { mutableStateOf(buildRound(entries, options.direction, rng)) }
+    var round by remember(runId) { mutableStateOf(buildNonEmptyRound(entries, options.direction, rng)) }
     var index by remember(runId) { mutableIntStateOf(0) }
     var asked by remember(runId) { mutableIntStateOf(0) }
 
@@ -298,6 +320,15 @@ private fun McGame(
 
     val sfx = remember { Sfx() }
     DisposableEffect(Unit) { onDispose { sfx.release() } }
+
+    // Systemowy back = czyste wyjście do menu (nie gubi rundy i nie ląduje na ekranie wyboru zestawu).
+    BackHandler { onExit() }
+
+    // Gdyby losowa budowa startowej rundy mimo prób wyszła pusta (probe deterministyczny mógł przejść,
+    // realna losówka nie), zamykamy grę zamiast zostawiać question==null i pusty ekran.
+    LaunchedEffect(runId) {
+        if (round.isEmpty() && !gameOver) gameOver = true
+    }
 
     val question = round.getOrNull(index)
     val level = 1 + hits / HITS_PER_LEVEL
@@ -331,7 +362,13 @@ private fun McGame(
         }
         val next = index + 1
         if (next >= round.size) {
-            round = buildRound(entries, options.direction, rng)
+            val fresh = buildNonEmptyRound(entries, options.direction, rng)
+            if (fresh.isEmpty()) {
+                // Nie da się zbudować kolejnej rundy — kończymy grę zamiast pokazać pusty ekran.
+                gameOver = true
+                return
+            }
+            round = fresh
             index = 0
         } else {
             index = next
@@ -483,6 +520,27 @@ private fun McGame(
                         glyphHeight = 8.dp,
                     )
                 }
+            }
+        } else {
+            // Galąź bezpieczeństwa: question==null && !gameOver (np. pusta runda mimo prób). Efekt
+            // wyżej i tak przełączy w gameOver, ale zanim rekompozycja nadejdzie — nigdy nie zostawiamy
+            // gołego ekranu bez wyjścia. Panel z komunikatem i wyjściem do menu.
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 18.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center,
+            ) {
+                InfoCard(
+                    t(
+                        "Nie udało się ułożyć kolejnego pytania z tego zestawu. Wróć do menu.",
+                        "Could not build another question from this set. Return to the menu.",
+                        lang,
+                    )
+                )
+                Spacer(Modifier.height(20.dp))
+                MenuButton(str.toMenu, onClick = onExit)
             }
         }
     }

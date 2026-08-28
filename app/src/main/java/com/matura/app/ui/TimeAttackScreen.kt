@@ -1,8 +1,11 @@
 package com.matura.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -69,6 +72,9 @@ fun TimeAttackScreen(
     onFinished: (ScoreRecord) -> Unit,
 ) {
     val lang = options.uiLanguage
+
+    // Sprzętowy/gestowy „wstecz" wychodzi z trybu (bez zapisu wyniku) — spójnie z ikoną wyjścia.
+    BackHandler { onExit() }
 
     // Licznik rund: każde "JESZCZE RAZ" podbija go o 1, a że wszystkie stany gry są na nim
     // kluczowane przez remember(round), restart czyści planszę bez ręcznego zerowania pól.
@@ -224,9 +230,12 @@ fun TimeAttackScreen(
         flashTtl = 0.22f
         sfx.play(FlashKind.LIFE_LOST, options.soundEnabled)
         adjustTime(PENALTY_SKIP, "${PENALTY_SKIP.toInt()}s", Palette.Gold)
-        hint = question.reveal
-        hintTtl = 2.0f
+        // Zapamiętujemy poprawną odpowiedź PRZED zmianą hasła — nextQuestion() czyści hint,
+        // więc podpowiedź ustawiamy dopiero PO nim, inaczej nigdy by się nie pokazała.
+        val reveal = question.reveal
         nextQuestion()
+        hint = reveal
+        hintTtl = 2.0f
     }
 
     // --- ekran końcowy --------------------------------------------------------------------
@@ -630,6 +639,9 @@ private fun ResultScreen(
             .fillMaxSize()
             .background(Palette.Background)
             .statusBarsPadding()
+            // Przewijanie: na niskich ekranach medal + statystyki wypychały przyciski
+            // DO MENU / JESZCZE RAZ poza widok — teraz da się do nich doscrollować.
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,

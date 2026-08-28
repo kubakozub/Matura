@@ -1,5 +1,6 @@
 package com.matura.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -214,21 +215,39 @@ fun TrueFalseScreen(
 ) {
     val lang = options.uiLanguage
 
+    // Sprzętowy/gestowy "wstecz" wychodzi do menu tak samo jak przycisk w nagłówku.
+    BackHandler { onExit() }
+
     // Grywalne są tylko wiersze wypełnione po obu stronach, dla których w danym kierunku
     // da się w ogóle ułożyć fałszywą podmiankę. Zestaw samych synonimów zostaje odsiany tu,
     // dzięki czemu cichy fallback isTrue=true w buildQuestion nie jest osiągalny.
     val usable = remember(set.id, set.entries, options.direction) {
-        val complete = set.entries.filter { it.term.isNotBlank() && it.definition.isNotBlank() }
-        complete.filter { entry ->
-            when (options.direction) {
-                Direction.TERM_TO_DEF -> hasFalseCandidate(complete, entry, termToDef = true)
-                Direction.DEF_TO_TERM -> hasFalseCandidate(complete, entry, termToDef = false)
-                // RANDOM losuje kierunek per pytanie, więc wiersz musi mieć fałsz w OBU stronach.
-                Direction.RANDOM ->
-                    hasFalseCandidate(complete, entry, termToDef = true) &&
-                        hasFalseCandidate(complete, entry, termToDef = false)
-            }
+        // Wiersz grywalny = obie strony niepuste PO NORMALIZACJI (jak w MultipleChoice); wiersz
+        // z samej interpunkcji dawał pusty klucz i psuł odsiew fałszów.
+        val complete = set.entries.filter {
+            Matching.normalize(it.term).isNotEmpty() && Matching.normalize(it.definition).isNotEmpty()
         }
+
+        // hasFalseCandidate liczy kandydatów na fałsz po CAŁEJ liście, ale buildQuestion losuje
+        // z przefiltrowanej listy — wiersz mógł więc być "grywalny" dzięki kandydatowi, który sam
+        // wypadł z odsiewu, i cichy fallback isTrue=true stawał się osiągalny. Filtrujemy więc do
+        // PUNKTU STAŁEGO: powtarzamy odsiew na już zawężonej liście, aż przestanie się kurczyć.
+        fun playable(pool: List<Entry>, entry: Entry): Boolean = when (options.direction) {
+            Direction.TERM_TO_DEF -> hasFalseCandidate(pool, entry, termToDef = true)
+            Direction.DEF_TO_TERM -> hasFalseCandidate(pool, entry, termToDef = false)
+            // RANDOM losuje kierunek per pytanie, więc wiersz musi mieć fałsz w OBU stronach.
+            Direction.RANDOM ->
+                hasFalseCandidate(pool, entry, termToDef = true) &&
+                    hasFalseCandidate(pool, entry, termToDef = false)
+        }
+
+        var current = complete
+        while (true) {
+            val next = current.filter { playable(current, it) }
+            if (next.size == current.size) break
+            current = next
+        }
+        current
     }
 
     // Do zbudowania fałszywej pary trzeba minimum dwóch grywalnych haseł — inaczej komunikat.

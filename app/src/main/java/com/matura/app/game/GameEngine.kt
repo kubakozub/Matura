@@ -178,9 +178,10 @@ class GameEngine(
 
     /** Consecutive-kill bonus: x2 from 3 in a row, then x3, x4 and x5. */
     val multiplier: Int
+        // Krzywa mnoznika wspolna z 3 nowymi trybami i zestawem odznak (badge_x2/x3/x5,
+        // brak x4): 3/6/9 -> x2/x3/x5. Osiagniecie COMBO_X5 (bestStreak>=9) jest z nia zgodne.
         get() = when {
-            streak >= 12 -> 5
-            streak >= 9 -> 4
+            streak >= 9 -> 5
             streak >= 6 -> 3
             streak >= 3 -> 2
             else -> 1

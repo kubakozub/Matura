@@ -1,5 +1,6 @@
 package com.matura.app.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -60,6 +61,8 @@ fun PlayScreen(
     onFinished: (ScoreRecord) -> Unit,
 ) {
     var restarts by remember { mutableIntStateOf(0) }
+    // Systemowy back = czyste wyjscie do menu (bez cichego gubienia rundy na SetPick).
+    BackHandler { onExit() }
     val engine = remember(set.id, restarts, options.lives, options.direction, options.speed) {
         GameEngine(
             set = set,
@@ -157,13 +160,17 @@ fun PlayScreen(
                             .border(3.dp, Palette.SurfaceHigh)
                             .padding(14.dp)
                     ) {
-                        PixelText(
-                            str.emptySetWarning,
-                            color = Palette.Danger,
-                            glyphHeight = 9.dp,
-                            maxWidthDp = 240.dp,
-                            font = font,
-                        )
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            PixelText(
+                                str.emptySetWarning,
+                                color = Palette.Danger,
+                                glyphHeight = 9.dp,
+                                maxWidthDp = 240.dp,
+                                font = font,
+                            )
+                            Spacer(Modifier.height(14.dp))
+                            MenuButton(str.toMenu, onClick = onExit)
+                        }
                     }
                 }
             }
@@ -219,23 +226,26 @@ private fun AnswerBar(typed: String, cursor: Int, font: PixelFont) {
         contentAlignment = Alignment.Center,
     ) {
         val safe = cursor.coerceIn(0, typed.length)
+        // Dlugie hasla (>16 znakow) zmniejszaja glify, zeby caly wpis + kursor miescil sie
+        // w pasku na waskich ekranach (wczesniej tekst >~22 znakow wychodzil poza krawedzie).
+        val gh = (if (typed.length <= 16) 17f else (272f / (typed.length + 1)).coerceAtLeast(9f)).dp
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (safe > 0) {
                 PixelText(
                     typed.substring(0, safe),
                     color = Palette.Ink,
                     outline = null,
-                    glyphHeight = 17.dp,
+                    glyphHeight = gh,
                     font = font,
                 )
             }
-            PixelText("_", color = Palette.AccentDim, outline = null, glyphHeight = 17.dp, font = font)
+            PixelText("_", color = Palette.AccentDim, outline = null, glyphHeight = gh, font = font)
             if (safe < typed.length) {
                 PixelText(
                     typed.substring(safe),
                     color = Palette.Ink,
                     outline = null,
-                    glyphHeight = 17.dp,
+                    glyphHeight = gh,
                     font = font,
                 )
             }

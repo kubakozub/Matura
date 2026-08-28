@@ -25,7 +25,7 @@ import kotlin.math.roundToInt
  * Bitmap font from the asset pack (`font_8x8.png`, documented in `assets/font-layout.md`).
  *
  * Sheet geometry, taken verbatim from that document: 16x16 cells laid out 16 columns by
- * 6 rows, 91 glyphs, glyph field 5x7 at offset (5,4) inside its cell, glyph index
+ * 6 rows, 93 glyphs, glyph field 5x7 at offset (5,4) inside its cell, glyph index
  * `row * 16 + col`, advance 6 px proportional. Diacritics live at y 1..3 and ogonki at
  * y 11..13, both inside the cell, so 16 px is a safe line height.
  *

@@ -75,7 +75,7 @@ class Repository(context: Context) {
                 bestScore = maxOf(p.bestScore, record.score),
                 bestStreak = maxOf(p.bestStreak, record.bestStreak),
             ),
-            // Leaderboard lokalny: top 25 osobno dla kazdego trybu, zeby wyniki
+            // Leaderboard lokalny: top 50 osobno dla kazdego trybu, zeby wyniki
             // z jednego trybu nie wypychaly pozostalych.
             scores = (d.scores + record)
                 .groupBy { it.mode }
