@@ -742,8 +742,8 @@ private fun McFeedback(
                 Spacer(Modifier.width(7.dp))
                 PixelText(t("DOBRZE", "CORRECT", lang), color = Palette.Accent, glyphHeight = 10.dp)
                 Spacer(Modifier.width(9.dp))
-                // Czcionka bitmapowa nie ma glifu "+" (podmienia go na "-"), więc zysk punktów
-                // pokazujemy monetą zamiast znakiem plus.
+                // Zysk punktów pokazujemy ikoną monety (czytelniej i spójnie z HUD-em);
+                // font ma już glif "+", ale moneta gra lepiej z resztą UI.
                 PixelImage(pixel(R.drawable.coin), Modifier.size(14.dp))
                 Spacer(Modifier.width(5.dp))
                 PixelText("$gain", color = Palette.Gold, glyphHeight = 10.dp)
