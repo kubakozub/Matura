@@ -13,6 +13,35 @@ import com.matura.app.model.WordSet
  */
 object BuiltInSets {
 
+    /** Stale id zestawu losowego - dzieki niemu wszystkie losowe partie trafiaja
+     *  do jednego rankingu, mimo ze kazda ma inne slowa. */
+    const val MIX_ID = "mix-all"
+
+    /**
+     * Zestaw przekrojowy: slowa losowane ze WSZYSTKICH dzialow. Powstaje na nowo
+     * przy kazdym uruchomieniu, wiec dziala jak powtorka przed matura - nie da sie
+     * go "nauczyc na pamiec w kolejnosci", bo kolejnosci nie ma.
+     *
+     * Duplikaty lecą po znormalizowanym hasle, bo te same slowa powtarzaja sie
+     * miedzy dzialami (np. "healthy" w Zdrowiu i w Zywieniu).
+     */
+    fun randomMix(count: Int = 40, seed: Long = System.nanoTime()): WordSet {
+        val pool = LinkedHashMap<String, com.matura.app.model.Entry>()
+        for (set in all()) {
+            for (e in set.entries) {
+                val key = com.matura.app.game.Matching.normalize(e.term)
+                if (key.isNotEmpty()) pool.putIfAbsent(key, e)
+            }
+        }
+        val picked = pool.values.toList().shuffled(kotlin.random.Random(seed)).take(count)
+        return WordSet(
+            id = MIX_ID,
+            title = "Losowanie ze wszystkich działów",
+            builtIn = true,
+            entries = picked,
+        )
+    }
+
     private fun set000() = WordSet(
         id = "v000",
         title = "Człowiek · Charakter: dojrzałość",

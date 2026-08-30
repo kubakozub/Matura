@@ -35,6 +35,23 @@ class Str(private val lang: UiLanguage) {
     val back get() = pick("Wróć", "Back")
 
     val chooseSet get() = pick("Wybierz zestaw", "Choose a set")
+    val chooseTopic get() = pick("Wybierz temat", "Choose a topic")
+    val randomMix get() = pick("LOSOWANIE", "RANDOM MIX")
+    val randomMixDesc
+        get() = pick("40 słówek ze wszystkich działów · za każdym razem inne",
+            "40 words from every topic · a fresh draw each time")
+    val speakAnswer get() = pick("MÓW ODPOWIEDŹ", "SPEAK THE ANSWER")
+    val listeningNow get() = pick("SŁUCHAM…", "LISTENING…")
+    val micDenied get() = pick("Bez zgody na mikrofon tryb głosowy nie zadziała.",
+        "Voice mode needs microphone access.")
+    val voiceUnavailable get() = pick("To urządzenie nie ma rozpoznawania mowy.",
+        "This device has no speech recognition.")
+    val voiceOnDevice get() = pick("na urządzeniu", "on-device")
+    val voiceOnline get() = pick("online", "online")
+    val speakPl get() = pick("mów po polsku", "answer in Polish")
+    val speakEn get() = pick("mów po angielsku", "answer in English")
+    val ownSets get() = pick("Moje zestawy", "My own sets")
+    val setsShort get() = pick("zestawy", "sets")
     val chooseMode get() = pick("Wybierz tryb", "Choose a mode")
     val classic get() = pick("CLASSIC", "CLASSIC")
     val classicDesc

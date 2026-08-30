@@ -15,8 +15,8 @@ android {
         applicationId = "com.matura.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.8.3"
+        versionCode = 20
+        versionName = "0.9.3"
     }
 
     // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego
@@ -47,6 +47,13 @@ android {
             // brak keystore.properties -> paczka wychodzi niepodpisana,
             // do podpisania osobno (jarsigner) na maszynie, ktora ma klucz
             signingConfig = signingConfigs.findByName("release")
+        }
+        debug {
+            // Sufiks tylko dla debug: build testowy instaluje sie OBOK wersji ze sklepu
+            // (inny applicationId), wiec mozna sprawdzic poprawki bez odinstalowania i
+            // bez utraty lokalnych wynikow. Release pozostaje czyste com.matura.app.
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
     }
 

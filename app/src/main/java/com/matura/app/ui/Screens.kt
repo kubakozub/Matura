@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.activity.compose.BackHandler
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -47,6 +49,7 @@ import com.matura.app.model.GameMode
 import com.matura.app.model.Speed
 import com.matura.app.model.Texture
 import com.matura.app.model.UiLanguage
+import com.matura.app.data.BuiltInSets
 import com.matura.app.model.WordSet
 
 // ---- shared input ----------------------------------------------------------
@@ -151,6 +154,36 @@ fun MenuScreen(
 
 // ---- set picking -----------------------------------------------------------
 
+/**
+ * Ikona dzialu. Nazwy dzialow pochodza z tytulow zestawow (zakres tematyczny CKE),
+ * a ikony z projektu Claude Design - dlatego mapowanie jest jawne, a nie po slugu:
+ * "Miejsce zamieszkania" ma ikone domu, a nie "miejsca".
+ */
+@DrawableRes
+private fun topicIcon(category: String): Int = when (category) {
+    "Człowiek" -> R.drawable.topic_czlowiek
+    "Miejsce zamieszkania" -> R.drawable.topic_dom
+    "Edukacja" -> R.drawable.topic_edukacja
+    "Praca" -> R.drawable.topic_praca
+    "Życie prywatne" -> R.drawable.topic_zycie
+    "Żywienie" -> R.drawable.topic_zywienie
+    "Zakupy" -> R.drawable.topic_zakupy
+    "Podróże" -> R.drawable.topic_podroze
+    "Kultura" -> R.drawable.topic_kultura
+    "Sport" -> R.drawable.topic_sport
+    "Zdrowie" -> R.drawable.topic_zdrowie
+    "Nauka i technika" -> R.drawable.topic_nauka
+    "Przyroda" -> R.drawable.topic_przyroda
+    "Życie społeczne" -> R.drawable.topic_spoleczne
+    else -> R.drawable.icon_star          // zestawy wlasne
+}
+
+/**
+ * Wybor zestawu jest dwupoziomowy: najpierw temat (jak dzialy w repetytorium),
+ * dopiero w nim zestawy. Przy 102 zestawach plaska lista byla nie do przejrzenia.
+ * Poziom trzymamy w stanie ekranu, a nie na stosie nawigacji - dzieki temu
+ * systemowe "wstecz" zamyka najpierw folder, i dopiero potem caly ekran.
+ */
 @Composable
 fun SetPickScreen(
     str: Str,
@@ -158,21 +191,57 @@ fun SetPickScreen(
     onBack: () -> Unit,
     onPick: (WordSet) -> Unit,
 ) {
-    ScreenScaffold(str.chooseSet, onBack, str.back) {
-        val usable = sets.playable()
+    val usable = sets.playable()
+    var folder by remember { mutableStateOf<String?>(null) }
+    val groups = remember(usable, str.ownSets) {
+        usable.groupBy { it.category ?: str.ownSets }
+            .toList()
+            .sortedBy { (name, _) -> if (name == str.ownSets) 1 else 0 }   // wlasne na koncu
+    }
+    val open = folder?.let { name -> groups.firstOrNull { it.first == name }?.second }
+
+    BackHandler(enabled = folder != null) { folder = null }
+
+    ScreenScaffold(
+        title = folder ?: str.chooseTopic,
+        onBack = { if (folder != null) folder = null else onBack() },
+        backLabel = str.back,
+    ) {
         val star = pixel(R.drawable.icon_star)
         LazyColumn(Modifier.fillMaxSize()) {
-            items(usable, key = { it.id }) { set ->
-                MenuButton(
-                    label = set.title,
-                    subtitle = "${set.entries.size} ${str.entriesLabel} · ${set.termLanguage} > ${set.definitionLanguage}",
-                    icon = star,
-                    trailing = if (set.builtIn) str.builtIn else null,
-                    onClick = { onPick(set) },
-                )
-            }
             if (usable.isEmpty()) {
                 item { InfoCard(str.needTwoEntries) }
+            } else if (open == null) {
+                // Losowanie stoi PONAD folderami, bo nie nalezy do zadnego dzialu -
+                // to powtorka przekrojowa, najblizsza temu, co jest na maturze.
+                item {
+                    MenuButton(
+                        label = str.randomMix,
+                        subtitle = str.randomMixDesc,
+                        icon = star,
+                        onClick = { onPick(BuiltInSets.randomMix()) },
+                    )
+                }
+                // Numeracja jak w repetytorium: zakres tematyczny CKE ma ustalona
+                // kolejnosc, wiec numer niesie informacje. Wlasne zestawy go nie maja.
+                itemsIndexed(groups, key = { _, it -> it.first }) { i, (name, list) ->
+                    MenuButton(
+                        label = if (name == str.ownSets) name else "${i + 1}. $name",
+                        subtitle = "${list.size} ${str.setsShort} · ${list.sumOf { it.entries.size }} ${str.entriesLabel}",
+                        icon = pixel(topicIcon(name)),
+                        onClick = { folder = name },
+                    )
+                }
+            } else {
+                items(open, key = { it.id }) { set ->
+                    MenuButton(
+                        label = set.shortTitle,
+                        subtitle = "${set.entries.size} ${str.entriesLabel} · ${set.termLanguage} > ${set.definitionLanguage}",
+                        icon = star,
+                        trailing = if (set.builtIn) str.builtIn else null,
+                        onClick = { onPick(set) },
+                    )
+                }
             }
             item { Spacer(Modifier.height(20.dp)) }
         }

@@ -22,6 +22,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -49,6 +50,14 @@ import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.min
 import kotlin.math.roundToInt
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
+import com.matura.app.game.VoiceMatch
+import com.matura.app.model.Direction
 import kotlin.math.sin
 
 @Composable
@@ -136,6 +145,87 @@ fun PlayScreen(
         if (r is SubmitResult.Fired) muzzle = 0.11f
     }
 
+    // ---- tryb glosowy -------------------------------------------------------
+    // Celnosc siedzi w VoiceMatch: slownik na planszy jest zamkniety, wiec zamiast
+    // pytac "czy transkrypt rowna sie odpowiedzi" szukamy najblizszej z kilkunastu.
+    val context = LocalContext.current
+    val voice = rememberVoiceInput(context)
+    var voiceMsg by remember(engine) { mutableStateOf("") }
+    var lastSpoken by remember(engine) { mutableStateOf("") }
+    var lastSpokenAt by remember(engine) { mutableLongStateOf(0L) }
+
+    // Jezyk odpowiedzi, nie pytania. Przy kierunku losowym zgadujemy po tym, co
+    // akurat lezy na planszy - inaczej polowa rund mialaby zly model jezykowy.
+    fun answeringPolish(): Boolean = when (options.direction) {
+        Direction.DEF_TO_TERM -> false
+        Direction.TERM_TO_DEF -> true
+        Direction.RANDOM -> {
+            val onBoard = engine.snapshot().monsters.flatMap { it.answers }
+            onBoard.count { Regex("(cz|sz|rz|prz|trz|dz)").containsMatchIn(it) } * 2 >= onBoard.size
+        }
+    }
+
+    fun biasingWords(): List<String> = buildList {
+        for (e in set.entries) {
+            when (options.direction) {
+                Direction.DEF_TO_TERM -> add(e.term)
+                Direction.TERM_TO_DEF -> add(e.definition)
+                Direction.RANDOM -> { add(e.term); add(e.definition) }
+            }
+        }
+    }.map { it.trim() }.filter { it.length > 1 }.distinct()
+
+    fun onHeard(alternatives: List<String>, isFinal: Boolean) {
+        if (paused) return
+        val live = engine.snapshot()
+        if (live.gameOver) return
+        val board = (live.monsters.flatMap { it.answers } + live.crates.flatMap { it.answers }).distinct()
+        if (board.isEmpty()) return
+        val result = VoiceMatch.match(alternatives, board, answeringPolish())
+        // Wynik czesciowy przyjmujemy tylko, gdy jest naprawde pewny - inaczej
+        // czekamy na koncowy, zeby nie strzelac w polowie slowa.
+        if (!isFinal && result.best.score < 0.9) return
+        if (!result.accepted) {
+            if (isFinal) voiceMsg = "\u201E" + alternatives.first().trim() + "\u201D"
+            return
+        }
+        val answer = result.best.answer ?: return
+        val now = System.currentTimeMillis()
+        if (answer == lastSpoken && now - lastSpokenAt < 700) return   // nie dubluj wypowiedzi
+        lastSpoken = answer
+        lastSpokenAt = now
+        engine.clearTyped()
+        for (ch in answer) engine.type(ch)
+        submit()
+        voiceMsg = "\u2713 " + answer
+    }
+
+    fun startVoice() {
+        voiceMsg = ""
+        voice.start(
+            language = if (answeringPolish()) "pl-PL" else "en-US",
+            biasing = biasingWords(),
+            onHeard = ::onHeard,
+        )
+    }
+
+    val micPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted -> if (granted) startVoice() else voiceMsg = str.micDenied }
+
+    fun toggleVoice() {
+        if (voice.listening) { voice.stop(); voiceMsg = ""; return }
+        if (voice.mode == VoiceMode.UNAVAILABLE) { voiceMsg = str.voiceUnavailable; return }
+        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+        if (granted) startVoice() else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+    }
+
+    // Pauza i koniec rundy koncza nasluch - mikrofon nie ma chodzic w tle.
+    LaunchedEffect(paused, snap.gameOver) {
+        if ((paused || snap.gameOver) && voice.listening) { voice.stop(); voiceMsg = "" }
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -202,6 +292,14 @@ fun PlayScreen(
         }
 
         AnswerBar(snap.typed, snap.cursor, font)
+
+        VoiceBar(
+            listening = voice.listening,
+            mode = voice.mode,
+            message = if (voiceMsg.isNotEmpty()) voiceMsg else voice.status,
+            str = str,
+            onToggle = { toggleVoice() },
+        )
 
         GameKeyboard(
             onChar = { c -> if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
@@ -491,25 +589,20 @@ private fun DrawScope.drawHud(
         drawSprite(sprite, pad + iconH / 2f + i * (iconH + unit * 0.012f), pad + iconH / 2f, iconH)
     }
 
-    // ammo, top-right: heavy count over the mid bullet, then the endless basic round
+    // ammo, top-right. Basic rounds are endless, so an "∞" readout could never change
+    // and only taught a mechanic the player cannot see yet: heavy rounds come from
+    // crates, which spawn from level 2 and only matter against armour from level 3.
+    // Show the heavy count alone, and only once it exists — its appearance is the cue.
     val midY = pad + iconH / 2f
     val textTop = midY - PixelFont.GLYPH_H * fs / 2f
     var rx = w - pad
-    val inf = font.widthPx("∞", fs)
-    rx -= inf
-    drawPixelText(font, "∞", rx, textTop, fs, Palette.Bone)
-    rx -= unit * 0.016f + iconH * 0.8f
-    drawSprite(sprites.bulletBasic, rx + iconH * 0.4f, midY, iconH * 0.8f)
-    rx -= unit * 0.016f
-    val slash = font.widthPx("/", fs)
-    rx -= slash
-    drawPixelText(font, "/", rx, textTop, fs, Palette.Muted)
-    rx -= unit * 0.016f
-    val heavy = "${snap.heavyAmmo}"
-    rx -= font.widthPx(heavy, fs)
-    drawPixelText(font, heavy, rx, textTop, fs, Palette.Bone)
-    rx -= unit * 0.016f + iconH
-    drawSprite(sprites.bulletMid, rx + iconH / 2f, midY, iconH)
+    if (snap.heavyAmmo > 0) {
+        val heavy = "×${snap.heavyAmmo}"
+        rx -= font.widthPx(heavy, fs)
+        drawPixelText(font, heavy, rx, textTop, fs, Palette.Gold)
+        rx -= unit * 0.016f + iconH
+        drawSprite(sprites.bulletMid, rx + iconH / 2f, midY, iconH)
+    }
 
     // score, bottom-left
     val bottomMid = h - pad - iconH / 2f

@@ -1,6 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Mikrofon sluzy WYLACZNIE do trybu glosowego w grze: wypowiedz jest
+         zamieniana na tekst i porownywana ze slowami na planszy. Nagranie nie
+         jest nigdzie zapisywane ani wysylane przez aplikacje. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Bez tego Android 11+ nie pokazuje aplikacji zadnej uslugi rozpoznawania mowy. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

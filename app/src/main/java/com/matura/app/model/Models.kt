@@ -29,6 +29,21 @@ data class WordSet(
     val timesPlayed: Int = 0,
 ) {
     val size: Int get() = entries.size
+
+    /**
+     * Wbudowane zestawy nazywaja sie "Temat · Podtemat" (zakres tematyczny CKE),
+     * wiec folder da sie wyprowadzic z samego tytulu - bez migracji danych i bez
+     * dodatkowego pola do utrzymania. Zestawy wlasne nie maja separatora i trafiaja
+     * do wlasnego kosza, ktory nazywa juz warstwa UI (bo tam jest tlumaczenie).
+     */
+    val category: String?
+        get() = title.indexOf('\u00B7').let { if (it > 0) title.take(it).trim() else null }
+
+    /** Tytul bez przedrostka tematu - w srodku folderu nie powtarzamy nazwy folderu. */
+    val shortTitle: String
+        get() = title.indexOf('\u00B7').let {
+            if (it > 0 && it + 1 < title.length) title.substring(it + 1).trim() else title
+        }
 }
 
 @Serializable

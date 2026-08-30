@@ -1,6 +1,7 @@
 package com.matura.app.ui
 
 import androidx.activity.compose.BackHandler
+import com.matura.app.data.BuiltInSets
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +36,7 @@ sealed interface Screen {
 fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
     var data by remember { mutableStateOf(repo.load()) }
     var stack by remember { mutableStateOf(listOf<Screen>(Screen.Start)) }
+    var mixSet by remember { mutableStateOf<com.matura.app.model.WordSet?>(null) }
 
     val screen = stack.last()
     val str = remember(data.options.uiLanguage) { Str(data.options.uiLanguage) }
@@ -87,18 +89,23 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 str = str,
                 sets = data.sets,
                 onBack = { pop() },
-                onPick = { set -> push(Screen.ModePick(set.id)) },
+                onPick = { set ->
+                    // Zestaw losowy nie jest zapisany w danych - trzymamy wylosowana
+                    // partie tutaj, zeby ModePick i Play widzialy DOKLADNIE ta sama.
+                    if (set.id == BuiltInSets.MIX_ID) mixSet = set
+                    push(Screen.ModePick(set.id))
+                },
             )
 
             is Screen.ModePick -> ModePickScreen(
                 str = str,
-                set = data.sets.firstOrNull { it.id == s.setId },
+                set = if (s.setId == BuiltInSets.MIX_ID) mixSet else data.sets.firstOrNull { it.id == s.setId },
                 onBack = { pop() },
                 onPickMode = { mode -> replaceTop(Screen.Play(s.setId, mode)) },
             )
 
             is Screen.Play -> {
-                val set = data.sets.firstOrNull { it.id == s.setId }
+                val set = if (s.setId == BuiltInSets.MIX_ID) mixSet else data.sets.firstOrNull { it.id == s.setId }
                 if (set == null) {
                     pop()
                 } else {

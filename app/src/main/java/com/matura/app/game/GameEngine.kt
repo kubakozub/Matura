@@ -130,7 +130,14 @@ class GameEngine(
         private const val CRATE_INTERVAL = 19f
         private const val CRATE_TTL = 13f
         private const val CRATE_AMOUNT = 3
-        const val MAX_MONSTERS = 7
+        /**
+         * Potwory suna poziomo na stalej wysokosci, a dlugie etykiety sa dociagane do ekranu,
+         * wiec dwa potwory na zblizonym y = napisy zlepione w kase (widoczne na dziale "Charakter").
+         * Rozdzielamy je na stale TORY z gwarantowanym odstepem pionowym; MAX = liczba torow,
+         * wiec przy spawnie zawsze jest wolny tor i etykiety nigdy sie nie nakladaja.
+         */
+        val LANES = listOf(0.14f, 0.32f, 0.50f, 0.68f, 0.86f)
+        const val MAX_MONSTERS = 5
         const val DEATH_FRAME_TIME = 0.35f
         const val LEVEL_BANNER_TIME = 1.6f
         /** Walk cycle: the pack asks for the base frame and `_f2` to alternate ~every 200 ms. */
@@ -414,6 +421,18 @@ class GameEngine(
     private fun spawnInterval(): Float =
         max(MIN_SPAWN_INTERVAL, BASE_SPAWN_INTERVAL - (level - 1) * 0.22f)
 
+    /**
+     * Wybiera wolny TOR (patrz [LANES]) — taki, ktorego nie zajmuje zaden obecny potwor ani
+     * skrzynia. Dzieki temu etykiety nigdy nie laduja na tym samym pasie. Gdy (awaryjnie) nie
+     * ma wolnego, bierze tor najdalszy od zajetych, zeby i tak maksymalnie je rozsunac.
+     */
+    private fun freeLaneY(): Float {
+        val taken = monsters.map { it.y } + crates.map { it.y }
+        val free = LANES.filter { lane -> taken.none { kotlin.math.abs(it - lane) < 0.09f } }
+        if (free.isNotEmpty()) return free[random.nextInt(free.size)]
+        return LANES.maxByOrNull { lane -> taken.minOfOrNull { kotlin.math.abs(it - lane) } ?: 1f }!!
+    }
+
     private fun monsterSpeed(): Float =
         (BASE_SPEED + (level - 1) * SPEED_PER_LEVEL) * config.speed.factor
 
@@ -441,7 +460,7 @@ class GameEngine(
                 prompt = prompt,
                 answers = answers,
                 x = if (fromLeft) -0.04f else 1.04f,
-                y = 0.12f + random.nextFloat() * 0.76f,
+                y = freeLaneY(),
                 speed = monsterSpeed() * (0.9f + random.nextFloat() * 0.25f),
                 armored = random.nextFloat() < armorChance(),
                 variant = random.nextInt(4),
@@ -465,7 +484,7 @@ class GameEngine(
                 prompt = prompt,
                 answers = answers,
                 x = 0.12f + random.nextFloat() * 0.76f,
-                y = 0.12f + random.nextFloat() * 0.5f,
+                y = freeLaneY(),
                 ttl = CRATE_TTL,
                 amount = CRATE_AMOUNT,
             )
