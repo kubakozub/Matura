@@ -28,6 +28,10 @@ class Str(private val lang: UiLanguage) {
 
     val play get() = pick("GRAJ", "PLAY")
     val sets get() = pick("ZESTAWY", "SETS")
+    val privacy get() = pick("Prywatność", "Privacy")
+    val privacyOpen get() = pick("Otwórz pełną wersję na matura.uk", "Open the full version on matura.uk")
+    val privacyShow get() = pick("POKAŻ", "SHOW")
+    val privacyBody get() = pick(PRIVACY_PL, PRIVACY_EN)
     val options get() = pick("OPCJE", "OPTIONS")
     val achievements get() = pick("OSIĄGNIĘCIA", "ACHIEVEMENTS")
     val scores get() = pick("WYNIKI", "SCORES")
@@ -143,11 +147,11 @@ class Str(private val lang: UiLanguage) {
     val toMenu get() = pick("Do menu", "To menu")
     val pause get() = pick("Pauza", "Pause")
     val resume get() = pick("Wróć do gry", "Resume")
-    val killsLabel get() = pick("Zabicia", "Kills")
+    val killsLabel get() = pick("Pokonane", "Defeated")
     val bestStreakLabel get() = pick("Najdłuższa seria", "Best streak")
     val noScores get() = pick("Brak wyników — zagraj pierwszą grę.", "No scores yet — play your first game.")
     val gamesPlayed get() = pick("Rozegrane gry", "Games played")
-    val totalKills get() = pick("Łącznie zabić", "Total kills")
+    val totalKills get() = pick("Łącznie pokonanych", "Total defeated")
     val bestScore get() = pick("Najlepszy wynik", "Best score")
     val unlocked get() = pick("zdobyte", "unlocked")
     val locked get() = pick("zablokowane", "locked")
@@ -159,3 +163,77 @@ class Str(private val lang: UiLanguage) {
     val topSet get() = pick("Najpopularniejszy zestaw", "Most played set")
     val bestRuns get() = pick("Najlepsze przebiegi", "Best runs")
 }
+
+
+/**
+ * Polityka prywatnosci wbudowana w aplikacje. Google Play wymaga, zeby byla dostepna
+ * NIE tylko jako link w Konsoli, ale takze w samej aplikacji — a ze aplikacja nie ma
+ * uprawnienia do internetu, tekst musi byc lokalny. Pelna wersja (i data aktualizacji)
+ * zyje pod https://matura.uk/polityka-prywatnosci i otwiera ja przegladarka.
+ */
+private val PRIVACY_PL = """
+MATURA — słówka angielskie · polityka prywatności
+Ostatnia aktualizacja: 4 września 2026
+
+W SKRÓCIE
+Gra działa na Twoim urządzeniu. Nie ma kont, logowania, reklam ani śledzenia. Aplikacja
+nie ma uprawnienia dostępu do internetu, więc sama nie może niczego wysłać.
+
+CO ZAPISUJEMY (tylko na urządzeniu)
+• najlepsze wyniki i statystyki gry,
+• ustawienia (życia, tempo, kierunek tłumaczenia, język, dźwięk, klawiatura),
+• zestawy słówek, które sam(a) dodasz.
+Te dane leżą w pamięci aplikacji i znikają po jej odinstalowaniu. Nie mamy do nich dostępu.
+
+MIKROFON I TRYB MÓWIENIA
+Tryb mówienia jest opcjonalny — możesz grać, wpisując odpowiedzi z klawiatury. Jeśli go
+włączysz, aplikacja poprosi o zgodę na mikrofon (RECORD_AUDIO).
+• Nie nagrywamy dźwięku i nie zapisujemy plików audio.
+• Wypowiedź zamienia na tekst usługa rozpoznawania mowy zainstalowana w Twoim telefonie
+  (najczęściej Google, u niektórych producentów własna). Aplikacja dostaje sam tekst.
+• Najpierw prosimy o rozpoznawanie bez internetu. Gdy silnik telefonu tego odmówi,
+  rozpoznanie może zostać wykonane w usłudze sieciowej producenta — wtedy wypowiedź
+  trafia do niego i podlega JEGO polityce prywatności.
+• To samo dotyczy systemowego okna dyktowania i mikrofonu na klawiaturze telefonu.
+• Zgodę na mikrofon cofniesz w Ustawieniach systemu → Aplikacje → MATURA → Uprawnienia.
+
+CZEGO NIE ZBIERAMY
+Imienia, adresu e-mail, lokalizacji, kontaktów, zdjęć, identyfikatorów reklamowych.
+Brak reklam, analityki i bibliotek śledzących.
+
+KONTAKT
+kuba1k@gmail.com · https://matura.uk/polityka-prywatnosci
+""".trimIndent()
+
+private val PRIVACY_EN = """
+MATURA — English vocabulary · privacy policy
+Last updated: 4 September 2026
+
+IN SHORT
+The game runs on your device. No accounts, no sign-in, no ads, no tracking. The app has no
+internet permission, so it cannot send anything anywhere by itself.
+
+WHAT IS STORED (on the device only)
+• best scores and game statistics,
+• settings (lives, speed, translation direction, language, sound, keyboard),
+• word sets you add yourself.
+This data lives in the app storage and is removed when you uninstall the app.
+
+MICROPHONE AND SPEAKING MODE
+Speaking mode is optional — you can always type your answers. If you turn it on, the app
+asks for the microphone permission (RECORD_AUDIO).
+• We do not record or store any audio.
+• Your speech is turned into text by the speech recognition service installed on your phone
+  (usually Google, sometimes the manufacturer's own). The app only receives the text.
+• We first ask for on-device recognition. If the engine refuses, recognition may happen in
+  the provider's online service — your speech then goes to them under THEIR privacy policy.
+• The same applies to the system dictation dialog and to your keyboard's microphone key.
+• You can revoke the permission in System settings → Apps → MATURA → Permissions.
+
+WHAT WE DO NOT COLLECT
+Name, e-mail, location, contacts, photos, advertising identifiers. No ads, no analytics,
+no tracking libraries.
+
+CONTACT
+kuba1k@gmail.com · https://matura.uk/polityka-prywatnosci
+""".trimIndent()

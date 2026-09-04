@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.matura.app.R
@@ -517,6 +518,7 @@ fun SetEditorScreen(
 
 @Composable
 fun OptionsScreen(
+    onPrivacy: () -> Unit = {},
     str: Str,
     options: Options,
     onBack: () -> Unit,
@@ -590,6 +592,10 @@ fun OptionsScreen(
                     DirectionRow(str.dirRandom, options.direction == Direction.RANDOM) {
                         onChange(options.copy(direction = Direction.RANDOM))
                     }
+                }
+                Spacer(Modifier.height(16.dp))
+                OptionRow(str.privacy, icon = R.drawable.icon_settings) {
+                    GhostButton(str.privacyShow) { onPrivacy() }
                 }
                 Spacer(Modifier.height(16.dp))
                 InfoCard(str.speedNote)
@@ -845,6 +851,42 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                 }
             }
             item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+}
+
+/**
+ * Polityka prywatnosci w aplikacji. Google Play wymaga jej obecnosci takze POZA Konsola
+ * ("a privacy policy link or text within the app itself"), a bez uprawnienia INTERNET
+ * jedyna pewna droga jest tekst lokalny; przycisk otwiera pelna wersje w przegladarce
+ * (robi to system, wiec brak uprawnienia do sieci nie przeszkadza).
+ */
+@Composable
+fun PrivacyScreen(str: Str, onBack: () -> Unit) {
+    val context = LocalContext.current
+    ScreenScaffold(str.privacy, onBack, str.back) {
+        LazyColumn(Modifier.fillMaxSize()) {
+            item {
+                Text(
+                    str.privacyBody,
+                    color = Palette.Bone,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    modifier = Modifier.padding(vertical = 10.dp),
+                )
+                Spacer(Modifier.height(14.dp))
+                GhostButton(str.privacyOpen) {
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://matura.uk/polityka-prywatnosci"),
+                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(30.dp))
+            }
         }
     }
 }

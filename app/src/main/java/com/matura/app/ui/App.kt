@@ -30,6 +30,7 @@ sealed interface Screen {
     data object Options : Screen
     data object Achievements : Screen
     data object Scores : Screen
+    data object Privacy : Screen
 }
 
 @Composable
@@ -156,8 +157,11 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 onSave = { set -> repo.upsertSet(set); refresh(); pop() },
             )
 
+            Screen.Privacy -> PrivacyScreen(str = str, onBack = { pop() })
+
             Screen.Options -> OptionsScreen(
                 str = str,
+                onPrivacy = { push(Screen.Privacy) },
                 options = data.options,
                 onBack = { pop() },
                 onChange = { o: Options -> repo.setOptions(o); refresh() },

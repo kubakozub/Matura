@@ -28,8 +28,8 @@ android {
         applicationId = "com.matura.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 25
-        versionName = "0.9.8"
+        versionCode = 26
+        versionName = "0.9.9"
     }
 
     // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego
@@ -111,5 +111,9 @@ dependencies {
     testImplementation("androidx.test.ext:junit:1.2.1")
     testImplementation(composeBom)
     testImplementation("androidx.compose.ui:ui-test-junit4")
+    // Manifest testowy jest potrzebny OBU wariantom: Robolectric w testDebugUnitTest bierze go
+    // ze ścieżki debug, a testReleaseUnitTest z konfiguracji testowej. Sama zamiana debug->test
+    // wywraca 20 testów Compose, więc deklarujemy dwa razy.
     debugImplementation("androidx.compose.ui:ui-test-manifest")
+    testImplementation("androidx.compose.ui:ui-test-manifest")
 }
