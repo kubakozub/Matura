@@ -64,6 +64,7 @@ class Str(private val lang: UiLanguage) {
     // Naglowek nakladki z diagnostyka glosu (czcionka pikselowa — bez polskich znakow).
     val voiceDiagnostics get() = pick("DIAGNOSTYKA MIKROFONU", "MICROPHONE DIAGNOSTICS")
     val speakNow get() = pick("Powiedz odpowiedź", "Say the answer")
+    val voicePaused get() = pick("Gra wstrzymana — wznów, aby mówić", "Game paused — resume to speak")
     val voiceOnDevice get() = pick("na urządzeniu", "on-device")
     val voiceOnline get() = pick("online", "online")
     val speakPl get() = pick("mów po polsku", "answer in Polish")

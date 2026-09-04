@@ -100,12 +100,16 @@ class VoiceInput(private val context: Context) {
      * zanim ekran doszedlby do okna systemowego, a podpis dalej klamalby "online".
      */
     private var wyczerpany = false
+    /** Kod bledu, ktory zamknal drabinke, i chwila zamkniecia — do decyzji, czy blokada wygasa. */
+    private var wyczerpanyKod = 0
+    private var wyczerpanyOd = 0L
 
     /** Czy biezacy silnik dal znak zycia (gotowosc albo wynik). Decyduje o resecie drabinki. */
     private var dzialal = false
     /** Watchdog: czekamy na PIERWSZE zdarzenie od silnika po startListening. */
     private var czekamNaSilnik = false
     private var bledyAudio = 0
+    private var bledyBusy = 0
     private val cisza = SilenceDetector()
 
     private fun dostepneSilniki(): List<ComponentName> = try {
@@ -155,7 +159,22 @@ class VoiceInput(private val context: Context) {
         if (mode == VoiceMode.UNAVAILABLE) probe()
         // Wyczerpana drabinka wraca do gry tylko, gdy cos sie naprawde zmienilo: inna lista
         // uslug albo inny tryb z sondy. Samo dotkniecie nie jest zmiana.
-        if (wyczerpany && (nowe.toSet() != stare.toSet() || mode != trybPrzed)) wyczerpany = false
+        // Blokada znika, gdy: zmienila sie lista uslug albo tryb, przyczyna byla przejsciowa
+        // (siec, serwer, cichy silnik przy watchdogu) albo po prostu minelo dosc czasu. Trwale
+        // zostaja tylko awarie strukturalne (np. brak pakietu jezyka) i tylko do konca rozgrywki.
+        val przejsciowy = wyczerpanyKod in setOf(
+            SpeechRecognizer.ERROR_NETWORK,
+            SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
+            SpeechRecognizer.ERROR_SERVER,
+            KOD_WATCHDOG,
+        )
+        val ostyglo = android.os.SystemClock.elapsedRealtime() - wyczerpanyOd > BLOKADA_MS
+        if (wyczerpany && (nowe.toSet() != stare.toSet() || mode != trybPrzed || przejsciowy || ostyglo)) {
+            wyczerpany = false
+            silnikIdx = -1
+            preferOffline = true
+            attemptedOnline = false
+        }
     }
 
     /**
@@ -287,7 +306,7 @@ class VoiceInput(private val context: Context) {
             // albo pelny cykl nasluchu bez mowy).
             zyje(); dzialal = true
             // Podpowiedz o gluchym mikrofonie ma zostac, dopoki cos nie wejdzie — nasluch trwa dalej.
-            if (!cisza.active) status = ""
+            if (!cisza.active && bledyAudio == 0 && !mikrofonWyciszony()) status = ""
         }
         override fun onBeginningOfSpeech() { zyje() }
         override fun onRmsChanged(rmsdB: Float) { zyje(); cisza.onRms(rmsdB) }
@@ -296,17 +315,22 @@ class VoiceInput(private val context: Context) {
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onPartialResults(partialResults: Bundle?) {
+            if (!wantListening) return
             zyje(); dzialal = true
             deliver(partialResults, final = false)
         }
 
         override fun onResults(results: Bundle?) {
+            if (!wantListening) return
             zyje(); dzialal = true
             deliver(results, final = true)
             restartSoon()
         }
 
         override fun onError(error: Int) {
+            // Po stop() silnik potrafi jeszcze odbic bledem (klasycznie ERROR_CLIENT po cancel).
+            // Bez tego strazu spozniony kod schodzil drabinke i gasil glos na cala rozgrywke.
+            if (!wantListening) return
             zyje()
             when (error) {
                 // Cisza i brak dopasowania sa normalne przy ciaglym nasluchu. Ale dwa puste cykle
@@ -319,7 +343,18 @@ class VoiceInput(private val context: Context) {
                     restartSoon()
                 }
 
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> restartSoon()
+                // Zajety silnik: kilka ponowien ma sens (poprzednia sesja jeszcze sie sprzata),
+                // ale nie w nieskonczonosc z zapalonym "SŁUCHAM…" — po limicie traktujemy to jak
+                // kazda inna awarie i schodzimy drabinka nizej.
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
+                    ostatniBlad = error
+                    bledyBusy += 1
+                    if (bledyBusy < MAX_BUSY_RETRIES) restartSoon()
+                    else {
+                        zanotujProbe(silnikOpis + ":" + error)
+                        if (!escalate()) wyczerpane(friendlyError(error))
+                    }
+                }
 
                 // Brak zgody to sprawa ekranu (ustawienia aplikacji), nie drabinki silnikow —
                 // ale tylko gdy aplikacja NAPRAWDE nie ma RECORD_AUDIO. Silnik potrafi zglosic
@@ -440,6 +475,7 @@ class VoiceInput(private val context: Context) {
         if (list.isEmpty()) return
         cisza.onSpeech()
         bledyAudio = 0 // wynik = dzwiek plynie; dopiero to kasuje serie ERROR_AUDIO
+        bledyBusy = 0
         onHeard?.invoke(list.toList(), final)
     }
 
@@ -505,6 +541,7 @@ class VoiceInput(private val context: Context) {
         r.setRecognitionListener(listener)
         wantListening = true
         listening = true
+        bledyBusy = 0
         status = ""
         bledyAudio = 0
         cisza.reset()
@@ -538,7 +575,10 @@ class VoiceInput(private val context: Context) {
      * Od tej chwili [maSilnik] = false, az [refresh] zobaczy inna liste uslug albo inny tryb.
      */
     private fun wyczerpane(komunikat: String = "") {
+        if (wyczerpany) return
         wyczerpany = true
+        wyczerpanyKod = ostatniBlad
+        wyczerpanyOd = android.os.SystemClock.elapsedRealtime()
         status = komunikat
         stop()
         onExhausted?.invoke()
@@ -549,8 +589,10 @@ class VoiceInput(private val context: Context) {
         listening = false
         czekamNaSilnik = false
         handler.removeCallbacksAndMessages(null)
+        // Samo cancel(): stopListening() po cancel() trafia w usluge bez sesji, a ta odpowiada
+        // ERROR_CLIENT. Ten spozniony blad wracal do nas juz PO stop() i konczyl sie zamknieciem
+        // calej drabinki (wyczerpany=true) mimo ze uczen tylko wylaczyl nasluch.
         try { recognizer?.cancel() } catch (_: Throwable) {}
-        try { recognizer?.stopListening() } catch (_: Throwable) {}
     }
 
     fun release() {
@@ -560,6 +602,12 @@ class VoiceInput(private val context: Context) {
     }
 
     private companion object {
+        /** Ile razy z rzedu wolno uslyszec "silnik zajety", zanim uznamy to za awarie. */
+        const val MAX_BUSY_RETRIES = 5
+        /** Jak dlugo wyczerpana drabinka zostaje zamknieta (ms). */
+        const val BLOKADA_MS = 25_000L
+        /** Sztuczny kod bledu watchdoga (silnik milczy). */
+        const val KOD_WATCHDOG = 99
         const val MAX_ALTERNATIVES = 6
         const val MAX_BIASING_WORDS = 200
         const val MAX_PROBOWANE = 12

@@ -249,8 +249,15 @@ fun PlayScreen(
     // gry. To nie jest rozpoznawanie mowy w aplikacji, tylko zwykle wprowadzanie tekstu;
     // mikrofon pochodzi z klawiatury systemowej, wiec nie zawodzi tak, jak SpeechRecognizer.
     // [podpis] — co zostaje pod przyciskiem; domyslnie instrukcja, jak uzyc mikrofonu klawiatury.
-    fun klawiaturaAwaryjna(podpis: String = str.voiceKeyboardAuto) {
-        if (!options.systemKeyboard) onOptionsChange(options.copy(systemKeyboard = true))
+    /** Awaryjne przejscie na klawiature telefonu — tylko na te rozgrywke, bez zapisu w opcjach. */
+    var klawiaturaTymczasowa by remember { mutableStateOf(false) }
+    var nasluchPrzedDiagnostyka by remember { mutableStateOf(false) }
+    fun klawiaturaAwaryjna(podpis: String = str.voiceKeyboardAuto, zapisz: Boolean = false) {
+        // Awaria silnika przelacza klawiature TYLKO na te rozgrywke: trwala zmiana ustawien bez
+        // pytania zabralaby uczniowi klawiature z gry na zawsze, a jedna wpadka silnika nie jest
+        // decyzja. Zapisujemy dopiero, gdy uczen sam wybral te droge (dotkniecie paska).
+        if (zapisz && !options.systemKeyboard) onOptionsChange(options.copy(systemKeyboard = true))
+        else if (!options.systemKeyboard) klawiaturaTymczasowa = true
         voiceMsg = podpis
     }
 
@@ -310,6 +317,9 @@ fun PlayScreen(
     val activity = remember(context) { context.znajdzActivity() }
     var ustawieniaPrzyDotknieciu by remember { mutableStateOf(false) }
     var ustawieniaOtwarte by remember { mutableStateOf(false) }
+    /** Czy przed prosba system deklarowal, ze warto pokazac uzasadnienie (czyli byla juz odmowa). */
+    var uzasadnieniePrzed by remember { mutableStateOf(false) }
+    var prosbyOZgode by remember { mutableStateOf(0) }
 
     fun zgodaNaMikrofon(): Boolean = ContextCompat.checkSelfPermission(
         context, Manifest.permission.RECORD_AUDIO
@@ -321,8 +331,13 @@ fun PlayScreen(
         // uprawnienia zwraca false i wygladaloby to jak odmowa trwala — ustawienia z juz
         // wlaczonym mikrofonem nic by nie naprawily. Idziemy droga awaryjna (okno/klawiatura).
         if (zgodaNaMikrofon()) { awaryjnie(); return }
-        val trwala = activity != null &&
-            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
+        // shouldShowRequestPermissionRationale zwraca false takze wtedy, gdy uczen nigdy jeszcze
+        // nie odmowil (zamkniete okno, cofniecie). Sama ta flaga braloby pierwsze "nie teraz" za
+        // odmowe trwala i na zawsze zabieraloby szczebel zgody. Trwala = brak uzasadnienia PO
+        // prosbie i (byla juz odmowa wczesniej albo prosilismy co najmniej dwa razy).
+        val uzasadnieniePo = activity != null &&
+            ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
+        val trwala = activity != null && !uzasadnieniePo && (uzasadnieniePrzed || prosbyOZgode >= 2)
         if (trwala) {
             ustawieniaPrzyDotknieciu = true
             ustawieniaOtwarte = false
@@ -355,6 +370,8 @@ fun PlayScreen(
     // i regula siedza w VoicePolicy (czysta logika, testowana bez Androida).
     fun toggleVoice() {
         if (voice.listening) { voice.stop(); voiceMsg = ""; return }
+        // Przy pauzie wyniki i tak sa odrzucane (onHeard), a pasek zapalilby sie na niby.
+        if (paused) { voiceMsg = str.voicePaused; return }
         voice.refresh()
         val zgoda = zgodaNaMikrofon()
         // Uczen sam wlaczyl mikrofon w ustawieniach — szczebel zgody zaczyna od nowa (a ze
@@ -362,13 +379,19 @@ fun PlayScreen(
         if (zgoda && ustawieniaPrzyDotknieciu) { ustawieniaPrzyDotknieciu = false; ustawieniaOtwarte = false }
         when (VoicePolicy.path(zgoda, ustawieniaPrzyDotknieciu, voice.maSilnik, voice.oknoDostepne, ustawieniaOtwarte)) {
             VoicePath.OPEN_SETTINGS -> otworzUstawienia()
-            VoicePath.REQUEST_PERMISSION -> micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            VoicePath.REQUEST_PERMISSION -> {
+                uzasadnieniePrzed = activity != null && ActivityCompat
+                    .shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
+                prosbyOZgode += 1
+                micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            }
             VoicePath.ENGINE -> startVoice()
             VoicePath.SYSTEM_DIALOG -> oknoSystemowe()
             // Po wyczerpanym szczeblu zgody podpis dalej wskazuje prawdziwa naprawe (ustawienia);
             // klawiatura z mikrofonem i tak jest juz na ekranie.
             VoicePath.KEYBOARD -> klawiaturaAwaryjna(
-                if (ustawieniaOtwarte) str.micDeniedSettings else str.voiceKeyboardAuto
+                if (ustawieniaOtwarte) str.micDeniedSettings else str.voiceKeyboardAuto,
+                zapisz = true, // ta droga wybral uczen dotknieciem paska
             )
         }
     }
@@ -399,11 +422,15 @@ fun PlayScreen(
     var pauzaOdDiagnostyki by remember { mutableStateOf(false) }
     fun pokazDiagnostyke() {
         diagnostyka = voice.diagnostyka()
+        nasluchPrzedDiagnostyka = voice.listening
         if (!paused) { paused = true; pauzaOdDiagnostyki = true }
     }
     fun zamknijDiagnostyke() {
         diagnostyka = null
         if (pauzaOdDiagnostyki) { paused = false; pauzaOdDiagnostyki = false }
+        // Pauza na czas podgladu zatrzymala nasluch (LaunchedEffect). Skoro badalismy wlasnie
+        // dzialajacy mikrofon, wracamy do sluchania — inaczej diagnostyka konczy sesje.
+        if (nasluchPrzedDiagnostyka) { nasluchPrzedDiagnostyka = false; startVoice() }
     }
 
     Column(
@@ -488,7 +515,7 @@ fun PlayScreen(
             hasEngine = voice.maSilnik,
         )
 
-        if (options.systemKeyboard) {
+        if (options.systemKeyboard || klawiaturaTymczasowa) {
             // POLE SYSTEMOWE. Wbudowana klawiatura pikselowa nie ma mikrofonu, a tryb glosowy
             // aplikacji na czesci telefonow nie dziala (silnik odmawia obslugi aplikacjom trzecim).
             // Zwykle pole tekstowe otwiera klawiature TELEFONU — a ta ma wlasne dyktowanie,
