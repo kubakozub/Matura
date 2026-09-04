@@ -31,6 +31,7 @@ sealed interface Screen {
     data object Achievements : Screen
     data object Scores : Screen
     data object Privacy : Screen
+    data object VoiceTest : Screen
 }
 
 @Composable
@@ -159,9 +160,14 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
 
             Screen.Privacy -> PrivacyScreen(str = str, onBack = { pop() })
 
+            // Ekran diagnostyczny: przechodzi cala matryce silnikow mowy i mowi, ktora
+            // konfiguracja dziala na TYM telefonie. Wchodzi sie z OPCJI.
+            Screen.VoiceTest -> VoiceTestScreen(str = str, onBack = { pop() })
+
             Screen.Options -> OptionsScreen(
                 str = str,
                 onPrivacy = { push(Screen.Privacy) },
+                onVoiceTest = { push(Screen.VoiceTest) },
                 options = data.options,
                 onBack = { pop() },
                 onChange = { o: Options -> repo.setOptions(o); refresh() },

@@ -14,6 +14,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognitionService
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,9 +35,36 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.matura.app.BuildConfig
 
 /** Ktory silnik faktycznie obsluguje nasluch. */
 enum class VoiceMode { UNAVAILABLE, ON_DEVICE, ONLINE }
+
+/**
+ * Ile podpowiedzi slownikowych gra wysyla do silnika (EXTRA_BIASING_STRINGS).
+ *
+ * Stala jest publiczna, bo ekran testu mowy musi wysylac liste DOKLADNIE tej dlugosci: hipoteza
+ * "dluga lista podpowiedzi dlawi silnik bez zadnego bledu" jest nierozstrzygalna, gdy test
+ * sprawdza szesc slow, a gra wysyla piecdziesiat.
+ */
+const val MAX_BIASING_WORDS = 50
+
+/**
+ * JEDEN tag logu na cala sprawe mowy — sciezke glosowa gry i ekran testu.
+ *
+ * Sesja z podpietym telefonem oglada oba przez `adb logcat -s MaturaVoice`. Tag jest publiczny
+ * wlasnie po to, zeby ekran testu nie mial wlasnego: dwa tagi znaczylyby, ze polowa sladu ginie
+ * temu, kto zna tylko jeden z nich.
+ */
+const val VOICE_TAG = "MaturaVoice"
+
+/**
+ * Najkrotszy odstep miedzy przestawieniami jezyka silnika w trakcie rundy ([VoiceInput.przelaczJezyk]).
+ *
+ * Kazde przestawienie to cancel() + startListening(): bez odstepu seria trafien w trybie losowym
+ * potrafi wywolac karuzele ERROR_RECOGNIZER_BUSY i migotanie paska miedzy "SŁUCHAM…" a podpisem.
+ */
+const val ODSTEP_JEZYKA_MS = 3_000L
 
 /**
  * Cienka warstwa nad [SpeechRecognizer]. Cala celnosc siedzi w [com.matura.app.game.VoiceMatch];
@@ -51,8 +79,9 @@ enum class VoiceMode { UNAVAILABLE, ON_DEVICE, ONLINE }
  *
  * Od 0.9.7 obowiazuje zasada "nigdy slepa uliczka": ta klasa nigdy nie konczy komunikatem
  * o porazce, tylko oddaje decyzje ekranowi przez [onExhausted] (okno systemowe / klawiatura
- * telefonu) albo [onBrakZgody] (ustawienia aplikacji). Do tego watchdog na milczacy silnik
- * i wykrywanie gluchego mikrofonu z poziomu RMS ([SilenceDetector]).
+ * telefonu) albo [onBrakZgody] (ustawienia aplikacji). Do tego DWA limity czasu — watchdog na
+ * silnik, ktory nie odpowiada wcale, i straznik cyklu na silnik, ktory zglosil gotowosc i zamilkl
+ * — oraz wykrywanie gluchego mikrofonu z poziomu RMS ([SilenceDetector]).
  */
 class VoiceInput(private val context: Context) {
 
@@ -110,6 +139,19 @@ class VoiceInput(private val context: Context) {
 
     /** Czy biezacy silnik dal znak zycia (gotowosc albo wynik). Decyduje o resecie drabinki. */
     private var dzialal = false
+    /**
+     * Czy biezacy silnik zamienil w tej sesji cokolwiek na TEKST (wynik czesciowy albo koncowy).
+     *
+     * To nie jest to samo co [dzialal], ktory zapala sie juz na samej gotowosci — a silnik bez
+     * modelu jezyka zglasza gotowosc i sypie poziomem mikrofonu dokladnie tak jak sprawny.
+     * Tylko oddany tekst jest dowodem pracy, wiec tylko on chroni silnik przed degradacja
+     * przez straznika cyklu (patrz [zejscPoMilczacymCyklu]).
+     */
+    private var oddalWynik = false
+    /** Kierunek gry (TERM_TO_DEF / DEF_TO_TERM / RANDOM) — tylko do logu i diagnostyki. */
+    private var kierunek = ""
+    /** Chwila ostatniego startu nasluchu — od niej liczy sie odstep miedzy zmianami jezyka. */
+    private var ostatniStart = 0L
     /** Watchdog: czekamy na PIERWSZE zdarzenie od silnika po startListening. */
     private var czekamNaSilnik = false
     private var bledyAudio = 0
@@ -124,6 +166,32 @@ class VoiceInput(private val context: Context) {
     private var bezBiasingu = false
     /** Czy w biezacej serii pustych cykli mikrofon w ogole cos slyszal. */
     private var slyszalMowe = false
+
+    /**
+     * Numer pokolenia silnika. Rosnie przy KAZDEJ zmianie silnika oraz przy stop()/release(),
+     * a kazdy sluchacz pamieta swoj numer — patrz [sluchacz]. Bez tego spozniony sygnal od
+     * silnika, ktory juz zniszczylismy (klasycznie ERROR_CLIENT tuz po destroy/cancel), liczyl
+     * sie NOWEMU silnikowi: jedna eskalacja zjadala dwa szczeble drabinki naraz i konczyla sie
+     * "wyczerpane" w ulamku sekundy, a spozniona gotowosc kasowala juz ustawiony komunikat.
+     * Z ekranu wygladalo to dokladnie tak, jak brzmi zgloszenie: wlacza sie, wylacza i nic.
+     */
+    private var pokolenie = 0
+    /** Znacznik zaplanowanego wznowienia nasluchu — patrz [Wznowienie]. */
+    private val wznowienie = Wznowienie()
+    /** Licznik probek RMS w biezacym cyklu (tylko do przerzedzania logu). */
+    private var probekRms = 0
+    /** Najglosniejsza probka, ktora trafila do logu — zeby nie logowac kazdego drgnienia. */
+    private var logMaxRms = Float.NEGATIVE_INFINITY
+
+    /**
+     * Log sciezki glosowej. Pelny slad (start, gotowosc, poziom mikrofonu, wyniki, kazde zejscie
+     * drabinka) leci TYLKO w buildzie debug: w wersji ze sklepu onRmsChanged sypalby linia
+     * kilka razy na sekunde przez caly nasluch. Ostrzezenia ([ostrzez]) zostaja w obu wersjach —
+     * jest ich kilka na rozgrywke, a bywaja jedynym sladem awarii z telefonu, ktorego nie mamy.
+     */
+    private fun log(m: String) { if (BuildConfig.DEBUG) Log.i(TAG, m) }
+
+    private fun ostrzez(m: String) { Log.w(TAG, m) }
 
     private fun dostepneSilniki(): List<ComponentName> = try {
         context.packageManager
@@ -179,7 +247,7 @@ class VoiceInput(private val context: Context) {
             SpeechRecognizer.ERROR_NETWORK,
             SpeechRecognizer.ERROR_NETWORK_TIMEOUT,
             SpeechRecognizer.ERROR_SERVER,
-            KOD_WATCHDOG,
+            ERROR_WATCHDOG,
         )
         val ostyglo = android.os.SystemClock.elapsedRealtime() - wyczerpanyOd > BLOKADA_MS
         if (wyczerpany && (nowe.toSet() != stare.toSet() || mode != trybPrzed || przejsciowy || ostyglo)) {
@@ -260,8 +328,13 @@ class VoiceInput(private val context: Context) {
             append(if (probowane.isEmpty()) "—" else probowane.joinToString(", "))
             append('\n').append("ostatni błąd: ").append(ostatniBlad)
             append(" · puste cykle: ").append(pusteCykle)
-            append(" · rozpoznał coś: ").append(if (dzialal) "tak" else "NIE")
+            append(" · znak życia: ").append(if (dzialal) "tak" else "NIE")
+            // "Znak zycia" to gotowosc albo poziom mikrofonu; "rozpoznal cos" to oddany TEKST.
+            // Rozroznienie jest sednem tego zgloszenia: silnik bez modelu jezyka daje pierwsze
+            // i nigdy drugiego, a do 0.9.11 diagnostyka pokazywala jedno pod nazwa drugiego.
+            append(" · rozpoznał coś: ").append(if (oddalWynik) "tak" else "NIE")
             append('\n').append("język: ").append(language)
+            append(" · kierunek: ").append(if (kierunek.isEmpty()) "—" else kierunek)
             append(" · podpowiedzi: ").append(if (bezBiasingu) "nie" else biasing.size.toString())
             append('\n').append("— przebieg —\n").append(dziennik.tekst())
             append(" · drabinka: ").append(if (wyczerpany) "wyczerpana" else "ok")
@@ -275,6 +348,13 @@ class VoiceInput(private val context: Context) {
     val silnikOpis: String
         get() = silniki.getOrNull(silnikIdx)?.packageName?.substringAfterLast('.') ?: "domyślny"
 
+    // EXTRA_LANGUAGE_PREFERENCE i EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE celowo NIE sa tu
+    // dodawane. Wbrew nazwom nie sa to dodatki do zlecenia rozpoznawania: dokumentacja
+    // RecognizerIntent opisuje pierwszy jako KLUCZ w Bundle ZWRACANYM przez rozgloszenie
+    // ACTION_GET_LANGUAGE_DETAILS ("current language preference this user has specified"),
+    // a drugi jako flage TEGO rozgloszenia ("only the current language preference is needed
+    // in the response"). W intencji ACTION_RECOGNIZE_SPEECH sa martwe — jezyk ustawia
+    // EXTRA_LANGUAGE (tag BCP 47) i on juz tu jest. Dokladanie ich udawaloby poprawke.
     private fun buildIntent(): Intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
@@ -301,6 +381,7 @@ class VoiceInput(private val context: Context) {
     private val watchdog = Runnable {
         if (!wantListening || !czekamNaSilnik) return@Runnable
         czekamNaSilnik = false
+        ostrzez("watchdog: silnik " + silnikOpis + " milczy " + WATCHDOG_MS + " ms — schodze drabinka")
         ostatniBlad = ERROR_WATCHDOG
         zanotujProbe(silnikOpis + ":" + ERROR_WATCHDOG)
         if (!escalate()) wyczerpane(friendlyError(ERROR_WATCHDOG))
@@ -310,7 +391,67 @@ class VoiceInput(private val context: Context) {
         czekamNaSilnik = true
         handler.removeCallbacks(watchdog)
         handler.postDelayed(watchdog, WATCHDOG_MS)
+        // Drugi straznik pilnuje CALEGO cyklu i nie schodzi z posterunku po gotowosci.
+        uzbrojStraznikaCyklu()
+        log("watchdog " + WATCHDOG_MS + " ms, straznik cyklu " + CYKL_MS +
+            " ms (silnik " + silnikOpis + ")")
     }
+
+    // STRAZNIK CYKLU. Watchdog wyzej pilnuje tylko PIERWSZEGO zdarzenia i schodzi z posterunku,
+    // gdy silnik da znak zycia ([zyje] wola onReadyForSpeech, onBeginningOfSpeech i onRmsChanged).
+    // Od tej chwili — do 0.9.11 — nie bylo juz ZADNEGO limitu czasu. Silnik, ktory przyjmuje
+    // startListening, zglasza gotowosc (albo tylko strumien RMS) i nigdy nie oddaje ani wyniku,
+    // ani bledu, wieszal nasluch na zawsze: pasek swiecil "SŁUCHAM…", drabinka stala, status byl
+    // pusty. To jest co do slowa zgloszenie z Motoroli ("wlacza sie, zadnego bledu, brak reakcji
+    // na slowa") — i jedyna awaria z tej listy, ktorej NIE widac ani w logu, ani w diagnostyce.
+    // Straznik daje kazdemu cyklowi twardy limit CYKL_MS i konczy go tak samo jak kod bledu:
+    // zejsciem drabinka, a na jej koncu oddaniem decyzji ekranowi.
+    private val straznikCyklu = Runnable {
+        if (!wantListening) return@Runnable
+        czekamNaSilnik = false
+        // Silnik, ktory w tej sesji cokolwiek juz oddal, jest sprawny — dlugi cykl bez wyniku
+        // znaczy wtedy tyle, ze uczen sie zastanawia. Degradacja takiego silnika zabralaby mu
+        // szczebel drabinki i (przez useEngine) slownik zestawu do konca sesji, a w logu
+        // wygladalaby identycznie jak awaria, ktora straznik ma lapac. Cykl po prostu wznawiamy.
+        if (!zejscPoMilczacymCyklu(oddalWynik)) {
+            log("straznik cyklu: " + silnikOpis + " milczy " + CYKL_MS +
+                " ms, ale w tej sesji juz rozpoznawal — wznawiam cykl zamiast schodzic")
+            dziennik.dodaj(System.currentTimeMillis(), "cisza cyklu (" + silnikOpis + ") — wznawiam")
+            restartSoon()
+            return@Runnable
+        }
+        ostrzez("straznik cyklu: silnik " + silnikOpis + " nie oddal ani wyniku, ani bledu przez " +
+            CYKL_MS + " ms i nic w tej sesji nie rozpoznal — schodze drabinka")
+        dziennik.dodaj(System.currentTimeMillis(), "cisza cyklu (" + silnikOpis + ") — schodzę")
+        ostatniBlad = ERROR_WATCHDOG
+        zanotujProbe(silnikOpis + ":cisza-cyklu")
+        // Uczen ma widziec, ze silnik sie zmienil — tak samo jak w galeziach PUSTY_CYKL
+        // i BRAK_JEZYKA. Bez tego pasek milczy przez cala zmiane silnika i wyglada jak zawis.
+        if (escalate()) status = tekstInnySilnik
+        else wyczerpane(friendlyError(ERROR_WATCHDOG))
+    }
+
+    /** Uzbrajane przy KAZDYM startListening (patrz [uzbrojWatchdog]) i przy wyniku czesciowym. */
+    private fun uzbrojStraznikaCyklu() {
+        handler.removeCallbacks(straznikCyklu)
+        handler.postDelayed(straznikCyklu, CYKL_MS)
+    }
+
+    /** Cykl skonczony (wynik albo blad) — nowy cykl uzbroi straznika z powrotem. */
+    private fun zdejmijStraznikaCyklu() {
+        handler.removeCallbacks(straznikCyklu)
+    }
+
+    /** Ile alternatyw przyszlo w wyniku. Do logu — TRESCI wypowiedzi nie logujemy nigdy. */
+    private fun ileAlternatyw(b: Bundle?): Int =
+        b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.size ?: -1
+
+    /**
+     * Dlugosc pierwszej alternatywy w znakach. Tyle wystarczy, zeby w logu odroznic
+     * "cos przyszlo" od "przyszla pusta lista" — a sama tresc zostaje w aplikacji.
+     */
+    private fun dlugoscPierwszej(b: Bundle?): Int =
+        b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.length ?: -1
 
     /** Silnik dal znak zycia — watchdog schodzi z posterunku do nastepnego startu. */
     private fun zyje() {
@@ -318,8 +459,25 @@ class VoiceInput(private val context: Context) {
         handler.removeCallbacks(watchdog)
     }
 
-    private val listener = object : RecognitionListener {
+    /**
+     * Sluchacz JEDNEGO silnika: pamieta [pokolenie], w ktorym powstal, i odrzuca wszystko,
+     * co przyjdzie po zmianie silnika albo po wylaczeniu nasluchu. Do 0.9.10 sluchacz byl
+     * jeden na cala klase, wiec spozniony sygnal od zniszczonego silnika trafial na konto
+     * nowego — patrz opis przy [pokolenie].
+     */
+    private fun sluchacz(pok: Int): RecognitionListener = object : RecognitionListener {
+
+        /** Sygnal od silnika, ktorego juz nie uzywamy, albo po wylaczeniu nasluchu. */
+        private fun obcy(): Boolean = pok != pokolenie || !wantListening
+
         override fun onReadyForSpeech(params: Bundle?) {
+            // Spozniona gotowosc od zniszczonego silnika kasowala status ustawiony przez
+            // wyczerpane() — na ekranie zostawala pustka zamiast komunikatu o awarii.
+            if (obcy()) {
+                log("onReadyForSpeech pominiety (pokolenie " + pok + "/" + pokolenie + ")")
+                return
+            }
+            log("onReadyForSpeech silnik=" + silnikOpis)
             dziennik.dodaj(System.currentTimeMillis(), "gotowy")
             // Gotowosc NIE zeruje licznika ERROR_AUDIO: silnik z mikrofonem zajetym przez inna
             // aplikacje potrafi zglaszac onReadyForSpeech i zaraz ERROR_AUDIO, w kolko — licznik
@@ -329,37 +487,81 @@ class VoiceInput(private val context: Context) {
             // Podpowiedz o gluchym mikrofonie ma zostac, dopoki cos nie wejdzie — nasluch trwa dalej.
             if (!cisza.active && bledyAudio == 0 && !mikrofonWyciszony()) status = ""
         }
-        override fun onBeginningOfSpeech() { zyje() }
-        override fun onRmsChanged(rmsdB: Float) { zyje(); cisza.onRms(rmsdB) }
+        override fun onBeginningOfSpeech() {
+            if (obcy()) return
+            zyje()
+            log("onBeginningOfSpeech")
+        }
+
+        override fun onRmsChanged(rmsdB: Float) {
+            if (obcy()) return
+            zyje(); cisza.onRms(rmsdB)
+            // Silnik raportuje poziom kilkadziesiat razy na sekunde — do logcata idzie co
+            // RMS_CO probka albo wyrazne nowe maksimum. Poziom jest KLUCZOWY dla tego
+            // zgloszenia: rozstrzyga, czy do silnika w ogole cokolwiek wchodzi.
+            probekRms += 1
+            val noweMaksimum = rmsdB > logMaxRms + 1f
+            if (noweMaksimum) logMaxRms = rmsdB
+            if (noweMaksimum || probekRms % RMS_CO == 0) {
+                log("onRmsChanged #" + probekRms + " " + "%.1f".format(rmsdB) +
+                    " dB (max " + "%.1f".format(cisza.maxRms) + ")")
+            }
+        }
+
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() {}
+
+        override fun onEndOfSpeech() {
+            if (obcy()) return
+            log("onEndOfSpeech (probek RMS " + probekRms + ", max " + "%.1f".format(cisza.maxRms) + ")")
+        }
+
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onPartialResults(partialResults: Bundle?) {
-            if (!wantListening) return
+            if (obcy()) return
             zyje(); dzialal = true; pusteCykle = 0
+            // Do logu tylko LICZBA alternatyw. Tresci wypowiedzi nie logujemy nigdy.
+            log("onPartialResults alternatyw=" + ileAlternatyw(partialResults))
+            // Silnik, ktory sypie wynikami czesciowymi, PRACUJE: straznik cyklu dostaje nowy
+            // limit, zeby dluga wypowiedz nie wygladala jak zawis i nie zjadala szczebla.
+            if (ileAlternatyw(partialResults) > 0) uzbrojStraznikaCyklu()
             deliver(partialResults, final = false)
         }
 
         override fun onResults(results: Bundle?) {
-            if (!wantListening) return
+            if (obcy()) {
+                log("onResults pominiety (pokolenie " + pok + "/" + pokolenie + ")")
+                return
+            }
             dziennik.dodaj(System.currentTimeMillis(), "wynik")
-            zyje(); dzialal = true; pusteCykle = 0; slyszalMowe = false
+            zyje(); zdejmijStraznikaCyklu(); dzialal = true; pusteCykle = 0; slyszalMowe = false
+            log("onResults alternatyw=" + ileAlternatyw(results) +
+                " dlugosc pierwszej=" + dlugoscPierwszej(results))
             deliver(results, final = true)
             restartSoon()
         }
 
         override fun onError(error: Int) {
-            // Po stop() silnik potrafi jeszcze odbic bledem (klasycznie ERROR_CLIENT po cancel).
-            // Bez tego strazu spozniony kod schodzil drabinke i gasil glos na cala rozgrywke.
-            if (!wantListening) return
+            // Po stop() ORAZ po zmianie silnika usluga potrafi jeszcze odbic bledem (klasycznie
+            // ERROR_CLIENT po cancel/destroy). Bez tego strazu spozniony kod schodzil drabinke
+            // za NOWY silnik — dwa szczeble na jedna awarie — i gasil glos na cala rozgrywke.
+            if (obcy()) {
+                log("onError " + nazwaBledu(error) + " spozniony (pokolenie " +
+                    pok + "/" + pokolenie + ") — pomijam")
+                return
+            }
             zyje()
-            when (error) {
+            // Blad konczy cykl tak samo jak wynik. Straznika zdejmujemy TU, a nie w zyje():
+            // gotowosc i strumien RMS nie sa dowodem, ze silnik cokolwiek odda.
+            zdejmijStraznikaCyklu()
+            val reakcja = reakcjaNaBlad(error)
+            ostrzez("onError " + nazwaBledu(error) + " -> " + reakcja + " silnik=" + silnikOpis +
+                " offline=" + preferOffline + " dzialal=" + dzialal + " puste=" + pusteCykle)
+            when (reakcja) {
                 // Cisza i brak dopasowania sa normalne przy ciaglym nasluchu. Ale dwa puste cykle
                 // z rzedu przy RMS na dnie to mikrofon, ktory nic nie slyszy — podpowiadamy
                 // (przelacznik w ustawieniach szybkich, inna aplikacja), nasluch trwa dalej.
-                SpeechRecognizer.ERROR_NO_MATCH,
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                ReakcjaNaBlad.PUSTY_CYKL -> {
                     bledyAudio = 0
                     pusteCykle += 1
                     if (cisza.maxRms > SilenceDetector.SILENCE_DB) slyszalMowe = true
@@ -374,6 +576,7 @@ class VoiceInput(private val context: Context) {
                         pusteCykle = 0
                         ostatniBlad = error
                         zanotujProbe(silnikOpis + ":nic")
+                        ostrzez("puste cykle bez rozpoznania — schodze drabinka")
                         if (escalate()) status = tekstInnySilnik
                         else wyczerpane(tekstBrakMowy)
                         return
@@ -384,7 +587,7 @@ class VoiceInput(private val context: Context) {
                 // Zajety silnik: kilka ponowien ma sens (poprzednia sesja jeszcze sie sprzata),
                 // ale nie w nieskonczonosc z zapalonym "SŁUCHAM…" — po limicie traktujemy to jak
                 // kazda inna awarie i schodzimy drabinka nizej.
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> {
+                ReakcjaNaBlad.ZAJETY -> {
                     ostatniBlad = error
                     bledyBusy += 1
                     if (bledyBusy < MAX_BUSY_RETRIES) restartSoon()
@@ -399,7 +602,7 @@ class VoiceInput(private val context: Context) {
                 // kod 9 z wlasnej winy (usluga producenta bez wlasnej zgody, kaprys AppOps);
                 // wtedy ustawienia nic nie dadza (mikrofon juz jest dozwolony), a nastepny silnik
                 // z drabinki (Google) zwykle dziala — traktujemy to jak kazdy inny blad.
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
+                ReakcjaNaBlad.ZGODA -> {
                     ostatniBlad = error
                     if (maZgode()) {
                         zanotujProbe(silnikOpis + ":" + error)
@@ -414,7 +617,7 @@ class VoiceInput(private val context: Context) {
                 // Blad nagrywania (3): mikrofon zajety przez inna aplikacje albo chwilowo niedostepny.
                 // Jedna szybka ponowka; potem podpowiedz i rzadsze proby, az mikrofon sie zwolni
                 // albo uczen sam wylaczy nasluch. Limit, zeby nie mielic w nieskonczonosc.
-                SpeechRecognizer.ERROR_AUDIO -> {
+                ReakcjaNaBlad.NAGRYWANIE -> {
                     ostatniBlad = error
                     bledyAudio += 1
                     when {
@@ -424,10 +627,25 @@ class VoiceInput(private val context: Context) {
                     }
                 }
 
-                // Kazdy inny blad (ERROR_CLIENT=5, ERROR_SERVER, brak pakietu jezyka…)
-                // najpierw probujemy obejsc, schodzac na nastepny silnik. Dopiero gdy
-                // drabinka sie skonczy — pokazujemy komunikat i oddajemy decyzje ekranowi.
-                else -> {
+                // BRAK PAKIETU JEZYKA (12 LANGUAGE_NOT_SUPPORTED / 13 LANGUAGE_UNAVAILABLE).
+                // Na Androidzie 13+ tak wyglada telefon, na ktorym nie ma POBRANEGO polskiego:
+                // silnik jest, tylko nie ma czym rozpoznawac. Do 0.9.10 kody te wpadaly do worka
+                // "kazdy inny blad" — drabinka schodzila, ale niosla ze soba to, co wlasnie
+                // zostalo odrzucone: wymuszony tryb offline i pelna liste podpowiedzi. Najpierw
+                // wiec zdejmujemy podpowiedzi (offline zdejmie sam szczebel 2 w escalate),
+                // a dopiero potem schodzimy. Komunikat pokazujemy DOPIERO na koncu drabinki.
+                ReakcjaNaBlad.BRAK_JEZYKA -> {
+                    ostatniBlad = error
+                    zanotujProbe(silnikOpis + ":" + error)
+                    bezBiasingu = true
+                    if (escalate()) status = tekstInnySilnik
+                    else wyczerpane(friendlyError(error))
+                }
+
+                // Kazdy inny blad (ERROR_CLIENT=5, ERROR_SERVER, siec…) najpierw probujemy
+                // obejsc, schodzac na nastepny silnik. Dopiero gdy drabinka sie skonczy —
+                // pokazujemy komunikat i oddajemy decyzje ekranowi.
+                ReakcjaNaBlad.INNY -> {
                     ostatniBlad = error
                     zanotujProbe(silnikOpis + ":" + error)
                     if (!escalate()) wyczerpane(friendlyError(error))
@@ -438,19 +656,32 @@ class VoiceInput(private val context: Context) {
 
     /** Kolejny szczebel fallbacku. Zwraca true, jesli ponowiono nasluch innym silnikiem. */
     private fun escalate(): Boolean {
-        if (!wantListening) return false
+        // Eskalacja po wylaczonym nasluchu nie ma sensu, ale MUSI byc widoczna w logu: to jest
+        // miejsce, w ktorym drabinka cicho staje, gdy kolejnosc wywolan jest zla (patrz start()).
+        if (!wantListening) {
+            ostrzez("escalate: nasluch juz wylaczony — nie schodze")
+            return false
+        }
         // 1) on-device odmawia -> sprobuj silnika sieciowego (zwykle Google), bez offline.
         if (mode == VoiceMode.ON_DEVICE && !attemptedOnline &&
             SpeechRecognizer.isRecognitionAvailable(context)
         ) {
             attemptedOnline = true
+            log("escalate 1/3: on-device -> sieciowy (bez offline)")
             useEngine(VoiceMode.ONLINE, offline = false)
             scheduleRestart(60L)
             return true
         }
         // 2) silnik sieciowy z wymuszonym offline -> ponow bez offline (pozwol na siec).
+        //    Do 0.9.10 ten szczebel TYLKO przestawial flage: nie tworzyl nowego rozpoznawacza
+        //    (a czesc silnikow czyta EXTRA_PREFER_OFFLINE raz, przy pierwszym startListening),
+        //    nie kasowal podpowiedzi slownikowych i nie zerowal licznikow. Na telefonie, ktory
+        //    startuje w trybie ONLINE — czyli na wiekszosci — obiecane "wylaczamy podpowiedzi
+        //    po pierwszej eskalacji" nie dzialo sie wiec nigdy. Teraz idzie ta sama droga
+        //    co reszta drabinki, przez useEngine().
         if (mode == VoiceMode.ONLINE && preferOffline) {
-            preferOffline = false
+            log("escalate 2/3: sieciowy offline -> sieciowy przez siec")
+            useEngine(VoiceMode.ONLINE, offline = false)
             scheduleRestart(60L)
             return true
         }
@@ -461,23 +692,37 @@ class VoiceInput(private val context: Context) {
         if (silniki.isEmpty()) silniki = dostepneSilniki()
         if (silnikIdx + 1 < silniki.size) {
             silnikIdx += 1
+            log("escalate 3/3: usluga " + (silnikIdx + 1) + "/" + silniki.size +
+                " = " + silniki[silnikIdx].packageName)
             useEngine(VoiceMode.ONLINE, offline = false)
             scheduleRestart(80L)
             return true
         }
+        ostrzez("escalate: drabinka wyczerpana (uslug: " + silniki.size + ")")
         return false
     }
 
     /** Przelaczenie silnika: niszczy obecny recognizer i tworzy nowy pod nowy tryb. */
     private fun useEngine(newMode: VoiceMode, offline: Boolean) {
         bezBiasingu = true   // od drugiego podejscia liczy sie to, zeby w ogole dzialalo
+        // Nowe pokolenie PRZED destroy(): od tej chwili sygnaly starego silnika (ERROR_CLIENT
+        // po zniszczeniu przychodzi z opoznieniem) trafiaja do kosza, a nie na konto nowego.
+        pokolenie += 1
         dziennik.dodaj(System.currentTimeMillis(), "silnik -> " + (if (newMode == VoiceMode.ON_DEVICE) "on-device" else "sieciowy") + (if (offline) " (offline)" else ""))
         try { recognizer?.destroy() } catch (_: Throwable) {}
         mode = newMode
         preferOffline = offline
         dzialal = false
+        oddalWynik = false
         pusteCykle = 0
-        recognizer = create()?.also { it.setRecognitionListener(listener) }
+        // Nowy silnik nie dziedziczy obserwacji o mikrofonie z poprzedniego cyklu.
+        slyszalMowe = false
+        recognizer = create()?.also { it.setRecognitionListener(sluchacz(pokolenie)) }
+        log("useEngine tryb=" + mode + " offline=" + preferOffline + " silnik=" + silnikOpis +
+            " pokolenie=" + pokolenie + " rozpoznawacz=" + (if (recognizer == null) "NULL" else "ok"))
+        // create() = null nie konczy tu niczym: zaplanowany restart zobaczy brak rozpoznawacza
+        // i zejdzie o kolejny szczebel (patrz scheduleRestart) — nigdy nie zostaje cisza.
+        if (recognizer == null) ostrzez("useEngine: brak rozpoznawacza — restart zejdzie nizej")
     }
 
     /**
@@ -514,6 +759,9 @@ class VoiceInput(private val context: Context) {
     private fun deliver(bundle: Bundle?, final: Boolean) {
         val list = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
         if (list.isEmpty()) return
+        // TU, a nie przy gotowosci: silnik wlasnie zamienil mowe na tekst. Jedyny twardy dowod,
+        // ze pracuje — i jedyne, co chroni go przed zejsciem drabinka po milczacym cyklu.
+        oddalWynik = true
         cisza.onSpeech()
         bledyAudio = 0 // wynik = dzwiek plynie; dopiero to kasuje serie ERROR_AUDIO
         bledyBusy = 0
@@ -531,29 +779,56 @@ class VoiceInput(private val context: Context) {
     private fun scheduleRestart(delayMs: Long) {
         if (!wantListening) return
         handler.removeCallbacksAndMessages(null)
+        // Znacznik wznowienia. removeCallbacksAndMessages nie dosiega akcji, ktora zdazyla juz
+        // wyjsc z kolejki, a poleganie na tym, ze KAZDA odroczona akcja sama sprawdzi
+        // wantListening, jest milczaca umowa — wystarczy jedna nowa sciezka, ktora o tym
+        // zapomni, i nasluch wskrzesza sie po wyjsciu z ekranu. Znacznik robi z tego warunek,
+        // ktory uniewaznia stop()/release() i ktory da sie sprawdzic testem bez urzadzenia.
+        val znacznik = wznowienie.zaplanuj()
         handler.postDelayed({
-            if (!wantListening) return@postDelayed
+            if (!wznowienie.aktualne(znacznik) || !wantListening) {
+                log("restart pominiety — nasluch wylaczony albo zamowienie uniewaznione")
+                return@postDelayed
+            }
+            wznowienie.wykonano(znacznik)
             val r = recognizer
             if (r == null) {
                 // Szczebel bez recognizera (np. on-device ponizej Androida 12) — dalej po drabince.
+                ostrzez("restart: brak rozpoznawacza — schodze drabinka")
                 if (!escalate()) wyczerpane(friendlyError(ostatniBlad))
                 return@postDelayed
             }
             cisza.onCycleStart()
+            probekRms = 0
+            logMaxRms = Float.NEGATIVE_INFINITY
+            log("startListening silnik=" + silnikOpis + " jezyk=" + language +
+                " offline=" + preferOffline + " podpowiedzi=" + ilePodpowiedzi())
             try {
                 r.cancel()
                 r.startListening(buildIntent())
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
                 // Wyjatek przy starcie nie daje zadnego zdarzenia zwrotnego — watchdog ponizej
                 // potraktuje to jak martwy silnik i zejdzie na nastepny szczebel.
+                ostrzez("startListening rzucil " + t.javaClass.simpleName + " — czeka watchdog")
             }
             uzbrojWatchdog()
         }, delayMs)
     }
 
+    /** Ile podpowiedzi slownikowych faktycznie poleci do silnika — do logu i diagnostyki. */
+    private fun ilePodpowiedzi(): Int =
+        if (bezBiasingu || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 0
+        else minOf(biasing.size, MAX_BIASING_WORDS)
+
+    /**
+     * @param kierunek kierunek gry z OPCJI — nie wplywa na nic, ale bez niego z raportu telefonu
+     *        nie da sie odczytac, ktory przypadek zaszedl: przy Direction.RANDOM jezyk wybiera
+     *        heurystyka planszy, przy pozostalych bierze sie wprost z kierunku.
+     */
     fun start(
         language: String,
         biasing: List<String>,
+        kierunek: String = "",
         onHeard: (List<String>, Boolean) -> Unit,
     ) {
         if (silniki.isEmpty()) silniki = dostepneSilniki()
@@ -574,24 +849,59 @@ class VoiceInput(private val context: Context) {
         // pod nim wraca do dyspozycji.
         if (dzialal) resetujDrabinke()
         dzialal = false
+        oddalWynik = false
+        // Nowa sesja zaczyna od PELNEGO zlecenia. bezBiasingu ustawia useEngine() przy pierwszej
+        // eskalacji i do 0.9.11 nie wracalo juz nigdy: po jednej wpadce w dowolnej rundzie slownik
+        // zestawu znikal do konca zycia ekranu gry, mimo ze drabinka i tryb wracaly do punktu
+        // wyjscia. Po przerobieniu szczebla 2 na useEngine() dotyczylo to takze telefonow
+        // startujacych w trybie ONLINE, czyli wiekszosci. Nie da sie odroznic "podpowiedzi
+        // zdlawily silnik" od "ten silnik byl zepsuty", wiec kazde wlaczenie sprawdza to od nowa
+        // — kosztem najwyzej jednej eskalacji.
+        bezBiasingu = false
         // Nowe wlaczenie nasluchu to nowy przebieg: licznik pustych cykli, sygnal o mowie
         // i dziennik zaczynaja od zera, zeby diagnostyka pokazywala TE probe, a nie poprzednia.
         pusteCykle = 0
         slyszalMowe = false
         dziennik.reset(System.currentTimeMillis())
-        dziennik.dodaj(System.currentTimeMillis(), "start (" + language + ", " + (if (mode == VoiceMode.ON_DEVICE) "on-device" else "sieciowy") + (if (preferOffline) ", offline" else "") + ")")
+        // Kierunek i tag jezyka w PIERWSZEJ linii dziennika: raport z telefonu ma sam rozstrzygac,
+        // czy zaszedl przypadek "zly jezyk w trybie losowym", czy zupelnie inna awaria.
+        dziennik.dodaj(
+            System.currentTimeMillis(),
+            "start (" + language + (if (kierunek.isEmpty()) "" else ", " + kierunek) + ", " +
+                (if (mode == VoiceMode.ON_DEVICE) "on-device" else "sieciowy") +
+                (if (preferOffline) ", offline" else "") + ")",
+        )
         this.language = language
         this.biasing = biasing
+        this.kierunek = kierunek
         this.onHeard = onHeard
-        if (recognizer == null) recognizer = create()
-        val r = recognizer ?: run { wyczerpane(); return }
-        r.setRecognitionListener(listener)
+        ostatniStart = android.os.SystemClock.elapsedRealtime()
+        log("start jezyk=" + language + " kierunek=" + kierunek + " tryb=" + mode + " offline=" + preferOffline +
+            " podpowiedzi=" + ilePodpowiedzi() + " silnik=" + silnikOpis +
+            " uslug=" + silniki.size + " sdk=" + Build.VERSION.SDK_INT)
+        // wantListening MUSI byc ustawione, ZANIM sprobujemy stworzyc rozpoznawacz: escalate()
+        // nie schodzi drabinka przy wylaczonym nasluchu, wiec w starej kolejnosci null z create()
+        // szedl prosto w wyczerpane() — caly glos gasl na pierwszym silniku, z ktorym akurat nie
+        // dalo sie zwiazac, bez proby nastepnego i bez slowa w logu.
         wantListening = true
         listening = true
         bledyBusy = 0
         status = ""
         bledyAudio = 0
         cisza.reset()
+        probekRms = 0
+        logMaxRms = Float.NEGATIVE_INFINITY
+        // Zaden restart zamowiony przez poprzednia sesje nie ma wchodzic w te.
+        wznowienie.anuluj()
+        pokolenie += 1
+        if (recognizer == null) recognizer = create()
+        val r = recognizer
+        if (r == null) {
+            ostrzez("start: create() = null przy trybie " + mode + " — schodze drabinka")
+            if (!escalate()) wyczerpane(friendlyError(ostatniBlad))
+            return
+        }
+        r.setRecognitionListener(sluchacz(pokolenie))
         // Wyciszenie programowe (AudioManager.isMicrophoneMute) widac od razu — nie trzeba czekac
         // na dwa puste cykle. Przelacznika prywatnosci mikrofonu (Android 12+) publiczne API NIE
         // zdradza: SensorPrivacyManager ma jawnie tylko supportsSensorToggle(), stan jest @SystemApi
@@ -600,10 +910,58 @@ class VoiceInput(private val context: Context) {
         try {
             r.startListening(buildIntent())
         } catch (t: Throwable) {
-            if (!escalate()) wyczerpane()
+            ostrzez("start: startListening rzucil " + t.javaClass.simpleName + " — schodze drabinka")
+            if (!escalate()) wyczerpane(friendlyError(ostatniBlad))
             return
         }
         uzbrojWatchdog()
+    }
+
+    /**
+     * Zmiana tagu jezyka W TRAKCIE nasluchu — wznowienie tej samej sesji, a nie nowa.
+     *
+     * W trybie losowym plansza zmienia sklad po kazdym zabitym potworze, wiec przewaga jezykowa
+     * potrafi sie odwrocic i ekran musi przestawic silnik. Do 0.9.11 robil to przez stop() +
+     * start(), a [start] zaczyna wszystko od zera: kasuje dziennik zdarzen, status i licznik
+     * pustych cykli. Dziennik jest JEDYNYM zrodlem nakladki diagnostycznej (dlugie przytrzymanie
+     * paska), wiec przelaczenie potrafilo skasowac dokladnie to, po co uczen ja otwieral —
+     * a przy okazji cofalo drabinke i mrugalo paskiem.
+     *
+     * Tu zmienia sie WYLACZNIE tag jezyka: dziennik dostaje wpis, a nie reset; drabinka, status
+     * i licznik pustych cykli zostaja. [ODSTEP_JEZYKA_MS] od ostatniego startu chroni przed seria
+     * cancel()+startListening() (ERROR_RECOGNIZER_BUSY), gdy przewaga chwieje sie przy kolejnych
+     * trafieniach.
+     *
+     * @return true, jesli jezyk faktycznie sie zmienil (false = ten sam jezyk, nasluch wylaczony
+     *         albo za wczesnie po poprzednim starcie — wtedy wolajacy ma sprobowac pozniej)
+     */
+    fun przelaczJezyk(nowy: String): Boolean {
+        if (!wantListening || nowy == language) return false
+        val teraz = android.os.SystemClock.elapsedRealtime()
+        if (teraz - ostatniStart < ODSTEP_JEZYKA_MS) {
+            log("przelaczJezyk " + nowy + " odlozony — od ostatniego startu " + (teraz - ostatniStart) + " ms")
+            return false
+        }
+        language = nowy
+        ostatniStart = teraz
+        // Zmiana jezyka to dla OCENY silnika nowa sesja: silnik, ktory rozpoznawal po angielsku,
+        // po przestawieniu na pl-PL moze nie miec modelu i zamilknac. Gdyby wskazniki zostaly z
+        // poprzedniego jezyka (dzialal/oddalWynik = true), zaden straznik nie zszedlby drabinka
+        // nizej i nasluch krecilby sie w kolko — dokladnie objaw, ktory naprawiamy.
+        // Dziennik, drabinka i status zostaja nietkniete: to nadal ten sam przebieg.
+        dzialal = false
+        oddalWynik = false
+        pusteCykle = 0
+        slyszalMowe = false
+        cisza.reset()
+        dziennik.dodaj(System.currentTimeMillis(), "język -> " + nowy)
+        log("przelaczJezyk -> " + nowy + " (silnik " + silnikOpis + ", ten sam przebieg)")
+        // Nowe pokolenie odcina zdarzenia cyklu w starym jezyku; sluchacz musi je znac, inaczej
+        // wszystko, co odda biezacy rozpoznawacz, trafiloby do kosza jako "obce".
+        pokolenie += 1
+        recognizer?.setRecognitionListener(sluchacz(pokolenie))
+        scheduleRestart(ZMIANA_JEZYKA_MS)
+        return true
     }
 
     private fun mikrofonWyciszony(): Boolean = try {
@@ -626,16 +984,25 @@ class VoiceInput(private val context: Context) {
         wyczerpany = true
         wyczerpanyKod = ostatniBlad
         wyczerpanyOd = android.os.SystemClock.elapsedRealtime()
-        status = komunikat
+        ostrzez("wyczerpane: koniec drabinki, ostatni blad " + nazwaBledu(ostatniBlad) +
+            " — oddaje decyzje ekranowi")
         stop()
+        // Status USTAWIAMY PO stop(): stop() zwieksza pokolenie, wiec spozniona gotowosc od
+        // gasnacego silnika nie ma juz jak wyczyscic komunikatu (robila to przez onReadyForSpeech).
+        status = komunikat
         onExhausted?.invoke()
     }
 
     fun stop() {
+        log("stop (nasluch byl " + listening + ")")
         dziennik.dodaj(System.currentTimeMillis(), "stop")
         wantListening = false
         listening = false
         czekamNaSilnik = false
+        // Zaplanowany restart traci waznosc, a nowe pokolenie odcina spoznione sygnaly silnika
+        // — inaczej nasluch potrafil odzyc juz po wyjsciu z ekranu.
+        wznowienie.anuluj()
+        pokolenie += 1
         handler.removeCallbacksAndMessages(null)
         // Samo cancel(): stopListening() po cancel() trafia w usluge bez sesji, a ta odpowiada
         // ERROR_CLIENT. Ten spozniony blad wracal do nas juz PO stop() i konczyl sie zamknieciem
@@ -644,25 +1011,41 @@ class VoiceInput(private val context: Context) {
     }
 
     fun release() {
+        log("release")
         stop()
         zwolnijRecognizer()
         onHeard = null
     }
 
     private companion object {
+        /**
+         * JEDEN tag na cala sciezke glosowa. Sesja z podpietym telefonem oglada ja przez
+         * `adb logcat -s MaturaVoice` i widzi po kolei: start, gotowosc, poziom mikrofonu,
+         * wyniki, kody bledow z nazwami, kazde zejscie drabinka, watchdog i stop.
+         * Tresci wypowiedzi w logu nie ma i byc nie moze — tylko liczby i kody.
+         *
+         * Pelny slad leci TYLKO z buildu debug (patrz [log]); w wersji ze sklepu zostaja same
+         * ostrzezenia — kilka linii na rozgrywke zamiast dwoch na sekunde z onRmsChanged.
+         */
+        const val TAG = VOICE_TAG
         /** Ile razy z rzedu wolno uslyszec "silnik zajety", zanim uznamy to za awarie. */
         const val MAX_BUSY_RETRIES = 5
-        /** Trzy puste cykle wystarcza: przy krotkich hasłach jeden cykl to ok. 2-3 s. */
-        const val MAX_PUSTYCH_CYKLI = 3
         /** Jak dlugo wyczerpana drabinka zostaje zamknieta (ms). */
         const val BLOKADA_MS = 25_000L
-        /** Sztuczny kod bledu watchdoga (silnik milczy). */
-        const val KOD_WATCHDOG = 99
+        /** Co ktora probka RMS trafia do logu (silnik raportuje kilkadziesiat razy na sekunde). */
+        const val RMS_CO = 25
         const val MAX_ALTERNATIVES = 6
-        const val MAX_BIASING_WORDS = 50
         const val MAX_PROBOWANE = 12
         /** Ile czekamy na PIERWSZE zdarzenie od silnika po startListening. */
         const val WATCHDOG_MS = 6_000L
+        /**
+         * Twardy limit JEDNEGO cyklu nasluchu: po tylu ms bez wyniku i bez bledu silnik uchodzi
+         * za zawieszony. Silnik Google konczy cykl samej ciszy po ok. 10 s, wiec 15 s nie przerywa
+         * niczego, co jeszcze pracuje — a kazdy wynik czesciowy liczy limit od nowa.
+         */
+        const val CYKL_MS = 15_000L
+        /** Zwloka przed wznowieniem nasluchu po zmianie tagu jezyka. */
+        const val ZMIANA_JEZYKA_MS = 150L
         const val AUDIO_RETRY_MS = 400L
         const val AUDIO_RETRY_SLOW_MS = 1_500L
         const val MAX_AUDIO_RETRIES = 6

@@ -69,6 +69,73 @@ class Str(private val lang: UiLanguage) {
     val voiceDialogNoResult get() = pick("Okno zamknięte bez odpowiedzi", "Dialog closed without an answer")
     // Naglowek nakladki z diagnostyka glosu (czcionka pikselowa — bez polskich znakow).
     val voiceDiagnostics get() = pick("DIAGNOSTYKA MIKROFONU", "MICROPHONE DIAGNOSTICS")
+    // Skad wziac pelny test silnikow — diagnostyka pokazuje JEDEN przebieg drabinki,
+    // ekran testu przechodzi cala matryce konfiguracji po kolei.
+    val voiceTestWhere get() = pick("Pełny test silników: OPCJE → Test mowy", "Full engine test: OPTIONS → Speech test")
+
+    // --- EKRAN TESTU MOWY ---
+    // Nazwy konfiguracji w wynikach sa techniczne i te same w obu jezykach (trafiaja do
+    // raportu dla programisty); tlumaczymy tylko to, co czyta uzytkownik.
+    val voiceTest get() = pick("Test mowy", "Speech test")
+    val voiceTestOpen get() = pick("URUCHOM", "OPEN")
+    val voiceTestIntro get() = pick(
+        "Powiedz wyraźnie: KOLANO — test sprawdzi po kolei wszystkie silniki mowy w tym telefonie.",
+        "Say clearly: KOLANO — the test checks every speech engine in this phone, one by one.")
+    val voiceTestRepeat get() = pick(
+        "Powtarzaj to słowo, aż test się skończy. Każda próba trwa najwyżej 8 sekund, więc całość to około minuty.",
+        "Keep repeating the word until the test ends. Each attempt takes at most 8 seconds, so the whole run is about a minute.")
+    val voiceTestStart get() = pick("START", "START")
+    val voiceTestStop get() = pick("PRZERWIJ", "STOP")
+    val voiceTestAgain get() = pick("JESZCZE RAZ", "RUN AGAIN")
+    val voiceTestProgress get() = pick("Próba", "Attempt")
+    val voiceTestCopy get() = pick("KOPIUJ RAPORT", "COPY REPORT")
+    val voiceTestCopied get() = pick(
+        "Raport skopiowany — wklej go w rozmowie.",
+        "Report copied — paste it in the chat.")
+    val voiceTestNoMic get() = pick(
+        "Bez zgody na mikrofon test nie ma czego sprawdzić. Włącz mikrofon w ustawieniach aplikacji i uruchom go jeszcze raz.",
+        "Without microphone access there is nothing to test. Allow the microphone in app settings and run it again.")
+    val voiceTestSettings get() = pick("USTAWIENIA APLIKACJI", "APP SETTINGS")
+    val voiceTestNothing get() = pick(
+        "Ten telefon nie ma ani jednego silnika mowy do sprawdzenia — zostaje klawiatura telefonu z mikrofonem.",
+        "This phone has no speech engine to test — the phone keyboard microphone is the way to go.")
+    val voiceTestWorksWith get() = pick("Działa konfiguracja: ", "Working configuration: ")
+    /**
+     * Przebieg, ktory nie objal calej matrycy. Zdanie MUSI byc inne niz [voiceTestNone]: raport
+     * z trzech prob nie ma prawa orzekac o telefonie, a przerwanie (zgaszony ekran, PRZERWIJ,
+     * przejscie do innej aplikacji) nie jest przypadkiem brzegowym przy minutowym tescie.
+     */
+    fun voiceTestInterrupted(wykonane: Int, ile: Int) = pick(
+        "PRZEBIEG PRZERWANY po " + wykonane + " z " + ile +
+            " prób — wynik jest niepełny i nic nie mówi o tym telefonie. Uruchom test jeszcze raz.",
+        "RUN INTERRUPTED after " + wykonane + " of " + ile +
+            " attempts — the result is incomplete and says nothing about this phone. Run the test again.")
+    val voiceTestTextNote get() = pick(
+        "Raport zawiera to, co usłyszał silnik — jeśli trafiło tam coś prywatnego, usuń to przed wklejeniem.",
+        "The report contains what the engine heard — if anything private landed there, delete it before pasting.")
+    val voiceTestNone get() = pick(
+        "Żadna konfiguracja nie rozpoznała słowa — na tym telefonie rozpoznawanie mowy w aplikacji nie działa.",
+        "No configuration recognised the word — in-app speech recognition does not work on this phone.")
+    val voiceTestMicHeard get() = pick(
+        "Mikrofon działa (silniki słyszały dźwięk), więc brakuje modelu polskiego — sprawdź pakiety języka w aplikacji Google.",
+        "The microphone works (engines heard sound), so the Polish model is missing — check the language packs in the Google app.")
+    val voiceTestMicSilent get() = pick(
+        "Mikrofon nie dał żadnego sygnału — sprawdź przełącznik prywatności mikrofonu i czy nie zajmuje go inna aplikacja.",
+        "The microphone gave no signal at all — check the mic privacy toggle and whether another app is holding it.")
+    // TRZECI stan, bez ktorego dwa poprzednie klamia: wywolanie onRmsChanged nie jest obowiazkowe
+    // i czesc uslug wiazanych po ComponentName go nie implementuje. Wtedy KAZDA proba ma "brak
+    // pomiaru" — a to nie jest to samo co "mikrofon milczal" i prowadzi do zupelnie innej naprawy.
+    val voiceTestMicUnknown get() = pick(
+        "Żaden silnik nie podał poziomu mikrofonu — z tego przebiegu nie wynika, czy mikrofon słyszał.",
+        "No engine reported a microphone level — this run does not say whether the mic heard anything.")
+    // Etykiety pojedynczej proby (VoiceTestTeksty).
+    val voiceTestWorks get() = pick("DZIAŁA", "WORKS")
+    val voiceTestSilence get() = pick("cisza (silnik nic nie zwrócił)", "silence (engine returned nothing)")
+    val voiceTestError get() = pick("błąd", "error")
+    val voiceTestNoEngine get() = pick("nie udało się utworzyć rozpoznawacza", "could not create the recognizer")
+    val voiceTestReady get() = pick("gotowość", "ready")
+    val voiceTestNoReady get() = pick("bez gotowości", "no ready signal")
+    val voiceTestPartial get() = pick("wyniki częściowe", "partial results")
     val speakNow get() = pick("Powiedz odpowiedź", "Say the answer")
     val voicePaused get() = pick("Gra wstrzymana — wznów, aby mówić", "Game paused — resume to speak")
     val voiceOnDevice get() = pick("na urządzeniu", "on-device")

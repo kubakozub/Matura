@@ -66,6 +66,7 @@ import com.matura.app.game.FlashKind
 import com.matura.app.game.GameConfig
 import com.matura.app.game.GameEngine
 import com.matura.app.game.GameSnapshot
+import com.matura.app.game.Matching
 import com.matura.app.game.SubmitResult
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
@@ -84,6 +85,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.matura.app.game.VoiceMatch
 import com.matura.app.model.Direction
+import kotlinx.coroutines.delay
 import kotlin.math.sin
 
 @Composable
@@ -183,15 +185,44 @@ fun PlayScreen(
     var voiceMsg by remember(engine) { mutableStateOf("") }
     var lastSpoken by remember(engine) { mutableStateOf("") }
     var lastSpokenAt by remember(engine) { mutableLongStateOf(0L) }
+    /**
+     * Jezyk, w ktorym silnik NAPRAWDE transkrybuje biezacy nasluch — ustalany w chwili startu
+     * i podawany dalej do dopasowania. Liczenie go na nowo przy kazdej wypowiedzi rozjezdzalo sie
+     * z silnikiem w trybie losowym: plansza zmienia sklad w trakcie rundy, wiec silnik moglby
+     * transkrybowac en-US, a dopasowanie punktowac juz po polsku.
+     */
+    var jezykNasluchuPolski by remember(engine) { mutableStateOf(true) }
 
-    // Jezyk odpowiedzi, nie pytania. Przy kierunku losowym zgadujemy po tym, co
-    // akurat lezy na planszy - inaczej polowa rund mialaby zly model jezykowy.
+    // Odpowiedzi zestawu po obu stronach, znormalizowane dokladnie tak samo jak te, ktore
+    // GameEngine kladzie na plansze. Sluza WYLACZNIE wyborowi jezyka dla silnika mowy.
+    val polskieOdpowiedzi = remember(set) {
+        set.entries.flatMap { Matching.acceptedAnswers(it.definition) }.toSet()
+    }
+    val angielskieOdpowiedzi = remember(set) {
+        set.entries.flatMap { Matching.acceptedAnswers(it.term) }.toSet()
+    }
+
+    // Jezyk ODPOWIEDZI, nie pytania — to on idzie do silnika mowy jako EXTRA_LANGUAGE.
+    //
+    // Przy kierunku LOSOWYM GameEngine losuje kierunek dla kazdego wiersza osobno, wiec na planszy
+    // leza jednoczesnie odpowiedzi polskie i angielskie, a silnik przyjmuje tylko jeden jezyk.
+    // Do 0.9.10 rozstrzygal to ksztalt slowa i dla zestawu bez dwuznakow ("plecy", "kolano",
+    // "glowa") wychodzil ANGIELSKI. Teraz liczymy, ktora strona zestawu przewaza na planszy;
+    // zgadywanka zostaje na remis.
+    //
+    // UWAGA, zeby nie zamknac sprawy przedwczesnie: ta galaz dotyczy WYLACZNIE Direction.RANDOM.
+    // Kierunek domyslny to TERM_TO_DEF (angielski -> polski), gdzie jezyk bierze sie wprost
+    // z kierunku i pl-PL szlo do silnika juz w 0.9.10. Zgloszenia z Motoroli ta poprawka wiec
+    // NIE tlumaczy, dopoki nie wiemy, ze uzytkownik gral w trybie losowym — rozstrzyga to
+    // kierunek zapisany w dzienniku (nakladka diagnostyczna / logcat -s MaturaVoice) albo
+    // raport z ekranu OPCJE -> Test mowy.
     fun answeringPolish(): Boolean = when (options.direction) {
         Direction.DEF_TO_TERM -> false
         Direction.TERM_TO_DEF -> true
         Direction.RANDOM -> {
             val onBoard = engine.snapshot().monsters.flatMap { it.answers }
-            onBoard.count { Regex("(cz|sz|rz|prz|trz|dz)").containsMatchIn(it) } * 2 >= onBoard.size
+            odpowiedziPoPolsku(onBoard, polskieOdpowiedzi, angielskieOdpowiedzi)
+                ?: wygladaPoPolsku(onBoard)
         }
     }
 
@@ -211,7 +242,7 @@ fun PlayScreen(
         if (live.gameOver) return
         val board = (live.monsters.flatMap { it.answers } + live.crates.flatMap { it.answers }).distinct()
         if (board.isEmpty()) return
-        val result = VoiceMatch.match(alternatives, board, answeringPolish())
+        val result = VoiceMatch.match(alternatives, board, jezykNasluchuPolski)
         // Wynik czesciowy przyjmujemy tylko, gdy jest naprawde pewny - inaczej
         // czekamy na koncowy, zeby nie strzelac w polowie slowa.
         if (!isFinal && result.best.score < 0.9) return
@@ -232,9 +263,15 @@ fun PlayScreen(
 
     fun startVoice() {
         voiceMsg = ""
+        // Jezyk zapada TU i od tej chwili obowiazuje takze dopasowanie (onHeard) — obie strony
+        // musza mowic o tym samym, inaczej wracamy do bledu, ktory wlasnie naprawilismy.
+        jezykNasluchuPolski = answeringPolish()
         voice.start(
-            language = if (answeringPolish()) "pl-PL" else "en-US",
+            language = if (jezykNasluchuPolski) "pl-PL" else "en-US",
             biasing = biasingWords(),
+            // Kierunek trafia do dziennika i logu: bez niego z raportu telefonu nie da sie
+            // odczytac, czy jezyk wybieral kierunek, czy heurystyka planszy.
+            kierunek = options.direction.name,
             onHeard = ::onHeard,
         )
     }
@@ -245,6 +282,35 @@ fun PlayScreen(
         voice.tekstCiszy = str.micSilentHint
         voice.tekstInnySilnik = str.voiceOtherEngine
         voice.tekstBrakMowy = str.voiceNoSpeech
+    }
+
+    // Jezyk silnika ustala sie RAZ, przy starcie nasluchu — a w trybie losowym plansza zmienia
+    // sklad w trakcie rundy i przewaga jezykowa potrafi sie odwrocic. Bez tego silnik dalej
+    // transkrybowalby en-US, gdy na planszy leza juz same polskie odpowiedzi (albo odwrotnie):
+    // ta sama awaria, ktora naprawia odpowiedziPoPolsku, tylko przesunieta w czas. Regula zmiany
+    // (histereza, zeby kazdy zabity potwor przy remisie nie restartowal nasluchu) siedzi
+    // w VoicePolicy i jest pokryta testem bez urzadzenia.
+    val glosyPlanszy = if (options.direction == Direction.RANDOM) {
+        policzStrony(snap.monsters.flatMap { it.answers }, polskieOdpowiedzi, angielskieOdpowiedzi)
+    } else null
+    LaunchedEffect(glosyPlanszy, voice.listening, paused) {
+        val glosy = glosyPlanszy ?: return@LaunchedEffect
+        if (!voice.listening || paused) return@LaunchedEffect
+        if (!zmienicJezykNasluchu(jezykNasluchuPolski, glosy)) return@LaunchedEffect
+        val polski = !jezykNasluchuPolski
+        val tag = if (polski) "pl-PL" else "en-US"
+        // WZNOWIENIE tej samej sesji, nie nowy start. stop() + start() kasowalo dziennik zdarzen
+        // (jedyne zrodlo nakladki diagnostycznej pod dlugim przytrzymaniem paska), zerowalo
+        // drabinke i mrugalo paskiem — a w trybie losowym plansza zmienia sklad po kazdym zabitym
+        // potworze, wiec trafialo czasem dokladnie w chwile, gdy uczen sprawdzal, czemu mikrofon
+        // milczy. Odstepu miedzy przelaczeniami pilnuje VoiceInput; gdy odmowi, czekamy tyle,
+        // ile trzeba, i probujemy raz jeszcze — inaczej ostatnia zmiana planszy w rundzie
+        // zostawilaby silnik w zlym jezyku do konca.
+        if (!voice.przelaczJezyk(tag)) {
+            delay(ODSTEP_JEZYKA_MS)
+            if (!voice.listening || paused || !voice.przelaczJezyk(tag)) return@LaunchedEffect
+        }
+        jezykNasluchuPolski = polski
     }
 
     // NAPRAWDE OSTATNIA DESKA: klawiatura telefonu z wlasnym dyktowaniem. Gdy nie ma ani uslugi
@@ -289,9 +355,12 @@ fun PlayScreen(
     }
 
     fun oknoSystemowe() {
+        // Okno tez jest nasluchem: jezyk zapada przy jego otwarciu i ten sam ma obowiazywac,
+        // gdy wynik wroci (onHeard) — nawet jesli plansza zmieni sie w miedzyczasie.
+        jezykNasluchuPolski = answeringPolish()
         val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (answeringPolish()) "pl-PL" else "en-US")
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (jezykNasluchuPolski) "pl-PL" else "en-US")
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 6)
             putExtra(RecognizerIntent.EXTRA_PROMPT, str.speakNow)
         }
@@ -698,6 +767,14 @@ private fun DiagnosticsOverlay(text: String, str: Str, font: PixelFont, onClose:
                         .verticalScroll(rememberScrollState()),
                 )
             }
+            Spacer(Modifier.height(10.dp))
+            // Nakladka pokazuje JEDEN przebieg drabinki. Pelna matryca silnikow siedzi na
+            // osobnym ekranie; stad tylko droga do niego — otwarcie go z gry skasowaloby runde.
+            Text(
+                str.voiceTestWhere,
+                color = Palette.Muted,
+                fontSize = 11.sp,
+            )
             Spacer(Modifier.height(12.dp))
             GhostButton(str.back, onClick = onClose)
         }

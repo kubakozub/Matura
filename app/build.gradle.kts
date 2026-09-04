@@ -28,8 +28,8 @@ android {
         applicationId = "com.matura.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 27
-        versionName = "0.9.10"
+        versionCode = 28
+        versionName = "0.9.11"
     }
 
     // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego
@@ -81,6 +81,9 @@ android {
 
     buildFeatures {
         compose = true
+        // BuildConfig.DEBUG bramkuje log sciezki glosowej: w buildzie debug chcemy pelny slad
+        // (adb logcat -s MaturaVoice), w wersji ze sklepu nie ma lecec linia RMS co pol sekundy.
+        buildConfig = true
     }
 
     packaging {

@@ -519,6 +519,7 @@ fun SetEditorScreen(
 @Composable
 fun OptionsScreen(
     onPrivacy: () -> Unit = {},
+    onVoiceTest: () -> Unit = {},
     str: Str,
     options: Options,
     onBack: () -> Unit,
@@ -596,6 +597,11 @@ fun OptionsScreen(
                 Spacer(Modifier.height(16.dp))
                 OptionRow(str.privacy, icon = R.drawable.icon_settings) {
                     GhostButton(str.privacyShow) { onPrivacy() }
+                }
+                // Test mowy stoi obok prywatnosci, a nie przy dzwieku: to nie jest ustawienie
+                // gry, tylko narzedzie do jednego pytania — czemu mikrofon milczy na tym telefonie.
+                OptionRow(str.voiceTest, icon = R.drawable.icon_target) {
+                    GhostButton(str.voiceTestOpen) { onVoiceTest() }
                 }
                 Spacer(Modifier.height(16.dp))
                 InfoCard(str.speedNote)
