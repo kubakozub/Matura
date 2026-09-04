@@ -44,8 +44,21 @@ class Str(private val lang: UiLanguage) {
     val listeningNow get() = pick("SŁUCHAM…", "LISTENING…")
     val micDenied get() = pick("Bez zgody na mikrofon tryb głosowy nie zadziała.",
         "Voice mode needs microphone access.")
-    val voiceUnavailable get() = pick("To urządzenie nie ma rozpoznawania mowy.",
-        "This device has no speech recognition.")
+    // Podpisy pod paskiem glosu, gdy nie ma silnika do zwiazania: ktora droga pojdzie glos.
+    // Krotkie — mieszcza sie w jednej linii 12 sp.
+    val voiceDialog get() = pick("okno systemowe", "system dialog")
+    val voiceKeyboardHint get() = pick("głos przez klawiaturę telefonu", "voice via phone keyboard")
+    // Dluzsze komunikaty w linii pod przyciskiem (do dwoch linii).
+    val voiceKeyboardAuto get() = pick(
+        "Głos przez klawiaturę telefonu — dotknij pola i użyj mikrofonu klawiatury",
+        "Voice via your phone keyboard — tap the field and use its mic key")
+    val micDeniedSettings get() = pick(
+        "Mikrofon zablokowany — otwórz ustawienia aplikacji i włącz go",
+        "Microphone blocked — open app settings and allow it")
+    val micSilentHint get() = pick(
+        "Mikrofon nic nie słyszy — sprawdź, czy nie jest wyłączony w ustawieniach szybkich albo zajęty przez inną aplikację",
+        "The mic hears nothing — check the quick-settings mic toggle or another app using it")
+    val speakNow get() = pick("Powiedz odpowiedź", "Say the answer")
     val voiceOnDevice get() = pick("na urządzeniu", "on-device")
     val voiceOnline get() = pick("online", "online")
     val speakPl get() = pick("mów po polsku", "answer in Polish")
@@ -91,6 +104,10 @@ class Str(private val lang: UiLanguage) {
     val sound get() = pick("Dźwięk", "Sound")
     val lives get() = pick("Życia", "Lives")
     val texture get() = pick("Tekstury", "Textures")
+    val systemKeyboard get() = pick("Klawiatura telefonu", "Phone keyboard")
+    val systemKeyboardHint get() = pick(
+        "Zamiast klawiatury z gry — z mikrofonem do dyktowania",
+        "Use your phone's keyboard — it has a microphone")
     val speed get() = pick("Tempo", "Speed")
     val speedSlow get() = pick("WOLNO", "SLOW")
     val speedNormal get() = pick("NORMALNIE", "NORMAL")

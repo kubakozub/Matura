@@ -839,7 +839,7 @@ object BuiltInSets {
         definitionLanguage = "Polski",
         builtIn = true,
         entries = listOf(
-            Entry("accomodation", "zakwaterowanie"),
+            Entry("accommodation", "zakwaterowanie"),
             Entry("amenities", "udogodnienia"),
             Entry("estate agent", "agent nieruchomości"),
             Entry("flatmate", "współlokator"),

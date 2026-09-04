@@ -8,6 +8,19 @@ plugins {
 }
 
 android {
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            isReturnDefaultValues = true
+        }
+    }
+
+    androidResources {
+        // Opus jest juz skompresowany - ponowna kompresja w APK nic nie daje,
+        // a kosztuje czas rozpakowania przy kazdym odtworzeniu slowka.
+        noCompress += listOf("ogg")
+    }
+
     namespace = "com.matura.app"
     compileSdk = 36
 
@@ -15,8 +28,8 @@ android {
         applicationId = "com.matura.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 20
-        versionName = "0.9.3"
+        versionCode = 24
+        versionName = "0.9.7"
     }
 
     // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego
@@ -93,4 +106,10 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     testImplementation("junit:junit:4.13.2")
+    // UI i warstwa audio testowane bez emulatora (Robolectric renderuje na JVM).
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.test.ext:junit:1.2.1")
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }

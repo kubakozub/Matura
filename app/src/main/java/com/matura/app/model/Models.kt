@@ -54,6 +54,16 @@ data class Options(
     val direction: Direction = Direction.TERM_TO_DEF,
     val uiLanguage: UiLanguage = UiLanguage.PL,
     val speed: Speed = Speed.NORMAL,
+    /**
+     * Wpisywanie klawiatura SYSTEMOWA zamiast wbudowanej pikselowej.
+     *
+     * Powod jest jeden i bardzo praktyczny: wbudowana klawiatura nie ma mikrofonu, a na czesci
+     * telefonow (m.in. Samsungi) rozpoznawanie mowy uruchamiane przez aplikacje odmawia dzialania
+     * — silnik zglasza sie jako dostepny, po czym odrzuca zadanie bledem ERROR_CLIENT. Klawiatura
+     * systemowa ma wlasne dyktowanie, ktore nie przechodzi przez ten mechanizm w ogole: to zwykle
+     * wprowadzanie tekstu. Wlaczenie tej opcji daje wiec glos tam, gdzie tryb glosowy zawodzi.
+     */
+    val systemKeyboard: Boolean = false,
 )
 
 /**

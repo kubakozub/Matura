@@ -1,6 +1,25 @@
 package com.matura.app.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
+import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +74,7 @@ import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.matura.app.game.VoiceMatch
 import com.matura.app.model.Direction
@@ -68,6 +88,10 @@ fun PlayScreen(
     playerName: String,
     onExit: () -> Unit,
     onFinished: (ScoreRecord) -> Unit,
+    // Zmiana opcji z poziomu gry (awaryjne wlaczenie klawiatury telefonu). Idzie ta sama
+    // droga co ekran OPCJE, wiec zapis jest trwaly; domyslnie pusta — testy i podglad
+    // nie musza niczego podawac.
+    onOptionsChange: (Options) -> Unit = {},
 ) {
     var restarts by remember { mutableIntStateOf(0) }
     // Systemowy back = czyste wyjscie do menu (bez cichego gubienia rundy na SetPick).
@@ -209,16 +233,128 @@ fun PlayScreen(
         )
     }
 
+    // Podpowiedz o gluchym mikrofonie VoiceInput pokazuje sam (asynchronicznie, bez dostepu
+    // do Str) — podstawiamy mu wersje w jezyku interfejsu.
+    LaunchedEffect(str) { voice.tekstCiszy = str.micSilentHint }
+
+    // NAPRAWDE OSTATNIA DESKA: klawiatura telefonu z wlasnym dyktowaniem. Gdy nie ma ani uslugi
+    // do zwiazania, ani okna systemowego (albo okno nie chce sie otworzyc), przelaczamy opcje
+    // "klawiatura telefonu" ta sama droga co ekran OPCJE — wiec ustawienie ZOSTAJE na kolejne
+    // gry. To nie jest rozpoznawanie mowy w aplikacji, tylko zwykle wprowadzanie tekstu;
+    // mikrofon pochodzi z klawiatury systemowej, wiec nie zawodzi tak, jak SpeechRecognizer.
+    fun klawiaturaAwaryjna() {
+        if (!options.systemKeyboard) onOptionsChange(options.copy(systemKeyboard = true))
+        voiceMsg = str.voiceKeyboardAuto
+    }
+
+    // OSTATNIA DESKA RATUNKU (przed klawiatura): okno systemowe rozpoznawania mowy.
+    // Rozni sie od calej reszty w sposob zasadniczy — nie WIAZE sie z zadna usluga
+    // (to wlasnie wiazanie odmawia na czesci telefonow, m.in. Samsungach), tylko oddaje
+    // zadanie systemowi, ktory sam wybiera obslugujaca aplikacje. Dziala wszedzie, gdzie
+    // jest jakiekolwiek wprowadzanie glosowe. Cena: modalne okno zamiast ciaglego nasluchu,
+    // wiec gra jest na ten czas wstrzymana, a rozpoznanie dotyczy jednej wypowiedzi.
+    // Pamietamy, czy to MY wstrzymalismy gre na czas okna — zeby nie odwiesic pauzy,
+    // ktora uczen wlaczyl sam przed nacisnieciem mikrofonu.
+    var pauzaOdOkna by remember { mutableStateOf(false) }
+    val okno = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { wynik ->
+        if (pauzaOdOkna) { paused = false; pauzaOdOkna = false }
+        val slowa = if (wynik.resultCode == Activity.RESULT_OK)
+            wynik.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) else null
+        if (!slowa.isNullOrEmpty()) onHeard(slowa.toList(), true)
+        // Wynik okna ZAPISUJEMY. Bez tego "nie zadzialalo" nie da sie odroznic od
+        // "uzytkownik zamknal okno" ani od "okno zwrocilo pusta liste".
+        else voiceMsg = "okno systemowe: wynik " + wynik.resultCode +
+            (if (wynik.data == null) ", brak danych" else ", pusta lista")
+    }
+
+    fun oknoSystemowe() {
+        val i = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (answeringPolish()) "pl-PL" else "en-US")
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 6)
+            putExtra(RecognizerIntent.EXTRA_PROMPT, str.speakNow)
+        }
+        // Gra stoi na czas okna — inaczej potworki szlyby dalej, gdy uczen mowi.
+        if (!paused) { paused = true; pauzaOdOkna = true }
+        // Brak aplikacji od okna (ActivityNotFoundException) albo inna wywrotka przy starcie:
+        // nie komunikat o porazce, tylko klawiatura telefonu — ona jest zawsze.
+        try { okno.launch(i) } catch (_: Throwable) {
+            if (pauzaOdOkna) { paused = false; pauzaOdOkna = false }
+            klawiaturaAwaryjna()
+        }
+    }
+
+    // Gdy zwiazane silniki zawiodly: okno systemowe, a bez okna — klawiatura telefonu.
+    fun awaryjnie() { if (voice.oknoDostepne) oknoSystemowe() else klawiaturaAwaryjna() }
+
+    // ZGODA NA MIKROFON. Po odmowie sprawdzamy, czy system jeszcze pokaze pytanie
+    // (shouldShowRequestPermissionRationale). Jesli nie — odmowa jest trwala i jedyna droga
+    // to ustawienia aplikacji: NASTEPNE dotkniecie paska je otwiera, zamiast prosic w prozni.
+    // Tak samo traktujemy ERROR_INSUFFICIENT_PERMISSIONS od silnika — to ta sama blokada,
+    // tylko zgloszona z drugiej strony (np. mikrofon odebrany aplikacji w menedzerze uprawnien).
+    val activity = remember(context) { context.znajdzActivity() }
+    var ustawieniaPrzyDotknieciu by remember { mutableStateOf(false) }
+    var zgodaPrzyOdmowie by remember { mutableStateOf(false) }
+
+    fun zgodaNaMikrofon(): Boolean = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.RECORD_AUDIO
+    ) == PackageManager.PERMISSION_GRANTED
+
+    fun odmowaMikrofonu() {
+        val trwala = activity != null &&
+            !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
+        if (trwala) {
+            ustawieniaPrzyDotknieciu = true
+            zgodaPrzyOdmowie = zgodaNaMikrofon()
+            voiceMsg = str.micDeniedSettings
+        } else {
+            voiceMsg = str.micDenied
+        }
+    }
+
+    fun otworzUstawienia() {
+        ustawieniaPrzyDotknieciu = false
+        val i = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.parse("package:" + context.packageName),
+        )
+        try {
+            if (activity != null) activity.startActivity(i)
+            else context.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (_: Throwable) { voiceMsg = str.micDeniedSettings }
+    }
+
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> if (granted) startVoice() else voiceMsg = str.micDenied }
+    ) { granted -> if (granted) startVoice() else odmowaMikrofonu() }
 
+    // Droge glosu wybieramy PRZY DOTKNIECIU, nie przy zlozeniu ekranu: uczen mogl w miedzyczasie
+    // dac zgode w ustawieniach, doinstalowac aplikacje Google albo zwolnic mikrofon. Kolejnosc
+    // i regula siedza w VoicePolicy (czysta logika, testowana bez Androida).
     fun toggleVoice() {
         if (voice.listening) { voice.stop(); voiceMsg = ""; return }
-        if (voice.mode == VoiceMode.UNAVAILABLE) { voiceMsg = str.voiceUnavailable; return }
-        val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-            PackageManager.PERMISSION_GRANTED
-        if (granted) startVoice() else micPermission.launch(Manifest.permission.RECORD_AUDIO)
+        voice.refresh()
+        val zgoda = zgodaNaMikrofon()
+        // Uczen sam wlaczyl mikrofon w ustawieniach — skok do ustawien jest juz niepotrzebny.
+        if (ustawieniaPrzyDotknieciu && zgoda != zgodaPrzyOdmowie) ustawieniaPrzyDotknieciu = false
+        when (VoicePolicy.path(zgoda, ustawieniaPrzyDotknieciu, voice.maSilnik, voice.oknoDostepne)) {
+            VoicePath.OPEN_SETTINGS -> otworzUstawienia()
+            VoicePath.REQUEST_PERMISSION -> micPermission.launch(Manifest.permission.RECORD_AUDIO)
+            VoicePath.ENGINE -> startVoice()
+            VoicePath.SYSTEM_DIALOG -> oknoSystemowe()
+            VoicePath.KEYBOARD -> klawiaturaAwaryjna()
+        }
+    }
+
+    // Gdy drabinka silnikow sie wyczerpie, przechodzimy na okno systemowe (albo klawiature
+    // telefonu) zamiast konczyc komunikatem o porazce. Brak zgody zglaszany przez silnik
+    // traktujemy jak odmowe z okienka uprawnien.
+    DisposableEffect(voice) {
+        voice.onExhausted = { awaryjnie() }
+        voice.onBrakZgody = { odmowaMikrofonu() }
+        onDispose { voice.onExhausted = null; voice.onBrakZgody = null }
     }
 
     // Pauza i koniec rundy koncza nasluch - mikrofon nie ma chodzic w tle.
@@ -297,19 +433,72 @@ fun PlayScreen(
             listening = voice.listening,
             mode = voice.mode,
             message = if (voiceMsg.isNotEmpty()) voiceMsg else voice.status,
+            onDiagnostyka = { voiceMsg = voice.diagnostyka() },
             str = str,
             onToggle = { toggleVoice() },
+            dialogAvailable = voice.oknoDostepne,
         )
 
-        GameKeyboard(
-            onChar = { c -> if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
-            onBackspace = { if (!paused) engine.backspace() },
-            onEnter = { submit() },
-            onSpace = { if (!paused) engine.type(' ') },
-            onLeft = { engine.cursorLeft() },
-            onRight = { engine.cursorRight() },
-        )
+        if (options.systemKeyboard) {
+            // POLE SYSTEMOWE. Wbudowana klawiatura pikselowa nie ma mikrofonu, a tryb glosowy
+            // aplikacji na czesci telefonow nie dziala (silnik odmawia obslugi aplikacjom trzecim).
+            // Zwykle pole tekstowe otwiera klawiature TELEFONU — a ta ma wlasne dyktowanie,
+            // ktore nie przechodzi przez ten mechanizm w ogole. To najpewniejsza droga do glosu.
+            val fokus = remember { FocusRequester() }
+            LaunchedEffect(Unit) { runCatching { fokus.requestFocus() } }
+            BasicTextField(
+                // Zrodlem prawdy zostaje silnik: pole pokazuje `snap.typed`, a kursor trzymamy
+                // na koncu, zeby dyktowanie doklejalo tekst tam, gdzie uzytkownik sie spodziewa.
+                value = TextFieldValue(snap.typed, TextRange(snap.typed.length)),
+                onValueChange = { nowa ->
+                    if (paused) return@BasicTextField
+                    val czyste = nowa.text.filter { it.isLetter() || it == ' ' || it == '-' }.take(40)
+                    if (czyste != snap.typed) {
+                        engine.clearTyped()
+                        for (ch in czyste) engine.type(ch)
+                    }
+                },
+                singleLine = true,
+                textStyle = TextStyle(color = Palette.Ink, fontSize = 22.sp, textAlign = TextAlign.Center),
+                cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.Accent),
+                keyboardOptions = KeyboardOptions(
+                    autoCorrect = false,
+                    capitalization = KeyboardCapitalization.None,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
+                    .background(Palette.Bone)
+                    .border(3.dp, Palette.Ink)
+                    .padding(14.dp)
+                    .focusRequester(fokus),
+            )
+        } else {
+            GameKeyboard(
+                onChar = { c -> if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
+                onBackspace = { if (!paused) engine.backspace() },
+                onEnter = { submit() },
+                onSpace = { if (!paused) engine.type(' ') },
+                onLeft = { engine.cursorLeft() },
+                onRight = { engine.cursorRight() },
+            )
+        }
     }
+}
+
+/**
+ * Activity spod LocalContext. Compose potrafi owinac je w ContextWrapper, wiec schodzimy
+ * po lancuchu baseContext; null, gdy kontekst nie nalezy do zadnego Activity (podglad, test).
+ */
+private fun Context.znajdzActivity(): Activity? {
+    var c: Context? = this
+    while (c is ContextWrapper) {
+        if (c is Activity) return c
+        c = c.baseContext
+    }
+    return null
 }
 
 @Composable

@@ -17,6 +17,12 @@ Thumbs.db
 
 # Robocze
 warmup.log
+build.log
+build3.log
+test2.log
+
+# Cache kompilatora Kotlin (zrzuty bledow)
+.kotlin/
 
 # APK trafia do docs/ ręcznie przed publikacją na Pages, nie do historii
 docs/*.apk

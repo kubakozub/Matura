@@ -120,6 +120,9 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                         GameMode.CLASSIC -> PlayScreen(
                             set = set, options = data.options, str = str,
                             playerName = data.profile.name, onExit = exit, onFinished = finish,
+                            // Gra moze sama wlaczyc klawiature telefonu (awaryjna droga glosu);
+                            // zapis ta sama droga co z ekranu OPCJE, wiec zostaje na kolejne gry.
+                            onOptionsChange = { o: Options -> repo.setOptions(o); refresh() },
                         )
                         GameMode.TRUE_FALSE -> TrueFalseScreen(
                             set = set, options = data.options, str = str,

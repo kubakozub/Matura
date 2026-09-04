@@ -531,6 +531,9 @@ fun OptionsScreen(
                 ) {
                     Toggle(options.soundEnabled) { onChange(options.copy(soundEnabled = it)) }
                 }
+                OptionRow(str.systemKeyboard, icon = R.drawable.icon_settings) {
+                    Toggle(options.systemKeyboard) { onChange(options.copy(systemKeyboard = it)) }
+                }
                 OptionRow(str.lives, icon = R.drawable.heart) {
                     Stepper(options.lives, 1, 9) { onChange(options.copy(lives = it)) }
                 }

@@ -11,6 +11,12 @@
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>
+        <!-- Okno systemowe rozpoznawania mowy to INNY intent niz usluga wiazana.
+             Bez tego wpisu Android 11+ nie znajdzie aplikacji, ktora je obsluguje,
+             i ostatni szczebel fallbacku bylby martwy. -->
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
     </queries>
 
     <application
@@ -26,7 +32,7 @@
             android:exported="true"
             android:screenOrientation="portrait"
             android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
-            android:windowSoftInputMode="adjustNothing"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Matura">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
