@@ -1,8 +1,10 @@
 package com.matura.app.ui
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
@@ -31,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 
 /** Ktory silnik faktycznie obsluguje nasluch. */
 enum class VoiceMode { UNAVAILABLE, ON_DEVICE, ONLINE }
@@ -64,7 +67,7 @@ class VoiceInput(private val context: Context) {
         private set
 
     /** Podpowiedz o gluchym mikrofonie — ekran podstawia wersje z Str (PL/EN). */
-    var tekstCiszy: String = "Mikrofon nic nie słyszy — sprawdź, czy nie jest wyłączony albo zajęty"
+    var tekstCiszy: String = "Mikrofon nic nie słyszy — wyłączony lub zajęty?"
 
     private var recognizer: SpeechRecognizer? = null
     private var wantListening = false
@@ -89,6 +92,14 @@ class VoiceInput(private val context: Context) {
     // z konkretna usluga po ComponentName — najczesciej dziala ta od Google.
     private var silniki: List<ComponentName> = emptyList()
     private var silnikIdx = -1
+
+    /**
+     * Drabinka doszla do konca ([onExhausted] juz poszlo do ekranu). Do nastepnej ZMIANY listy
+     * uslug albo trybu z sondy [maSilnik] jest false — inaczej kazde dotkniecie najpierw
+     * mieliloby ten sam martwy silnik (szybki ERROR_CLIENT albo pelne 6 s "SŁUCHAM…"),
+     * zanim ekran doszedlby do okna systemowego, a podpis dalej klamalby "online".
+     */
+    private var wyczerpany = false
 
     /** Czy biezacy silnik dal znak zycia (gotowosc albo wynik). Decyduje o resecie drabinki. */
     private var dzialal = false
@@ -123,33 +134,61 @@ class VoiceInput(private val context: Context) {
     /**
      * Ponowna sonda NA DOTKNIECIE paska. Lista uslug, okno systemowe i tryb moga sie zmienic
      * w trakcie gry (instalacja aplikacji Google, pobranie pakietu jezyka), a raz ustalone
-     * UNAVAILABLE nie moze byc wyrokiem na cala rozgrywke. Dzialajacy silnik z drabinki
-     * zostaje ten sam — szukamy go w nowej liscie po nazwie.
+     * UNAVAILABLE nie moze byc wyrokiem na cala rozgrywke.
+     *
+     * Biezacy silnik z drabinki zostaje ten sam i zostaje PIERWSZY na liscie: sortowanie
+     * Google-first z [dostepneSilniki] nie moze cofac kolejnosci ustawionej w [resetujDrabinke],
+     * bo [escalate] idzie tylko do przodu (silnikIdx + 1) i uslugi przed biezacym nigdy nie
+     * dostalyby drugiej szansy w nowej sesji.
      */
     fun refresh() {
-        val biezacy = silniki.getOrNull(silnikIdx)
-        silniki = dostepneSilniki()
-        if (biezacy != null) {
-            val idx = silniki.indexOf(biezacy)
-            if (idx >= 0) silnikIdx = idx else { silnikIdx = -1; zwolnijRecognizer() }
+        val stare = silniki
+        val trybPrzed = mode
+        val biezacy = stare.getOrNull(silnikIdx)
+        val nowe = dostepneSilniki()
+        when {
+            biezacy == null -> { silniki = nowe; silnikIdx = -1 }
+            biezacy in nowe -> { silniki = listOf(biezacy) + nowe.filter { it != biezacy }; silnikIdx = 0 }
+            else -> { silniki = nowe; silnikIdx = -1; zwolnijRecognizer() }
         }
         oknoDostepne = sprawdzOkno()
         if (mode == VoiceMode.UNAVAILABLE) probe()
+        // Wyczerpana drabinka wraca do gry tylko, gdy cos sie naprawde zmienilo: inna lista
+        // uslug albo inny tryb z sondy. Samo dotkniecie nie jest zmiana.
+        if (wyczerpany && (nowe.toSet() != stare.toSet() || mode != trybPrzed)) wyczerpany = false
     }
 
-    /** Czy jest cokolwiek, z czym da sie zwiazac: silnik domyslny albo konkretna usluga. */
+    /**
+     * Czy jest cokolwiek, z czym da sie zwiazac: silnik domyslny albo konkretna usluga —
+     * i czy drabinka nie jest juz wyczerpana. To wejscie dla VoicePolicy (droga i podpis).
+     */
     val maSilnik: Boolean
-        get() = mode != VoiceMode.UNAVAILABLE || silniki.isNotEmpty()
+        get() = !wyczerpany && (mode != VoiceMode.UNAVAILABLE || silniki.isNotEmpty())
 
     private fun create(): SpeechRecognizer? = when (mode) {
-        VoiceMode.ON_DEVICE -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-            SpeechRecognizer.createOnDeviceSpeechRecognizer(context) else null
+        VoiceMode.ON_DEVICE -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            try {
+                SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+            } catch (_: Throwable) {
+                // Dostepnosc on-device zmienila sie miedzy sonda a dotknieciem (usuniety pakiet
+                // jezyka, wylaczony silnik) — createOnDeviceSpeechRecognizer rzuca wtedy
+                // UnsupportedOperationException. Zamiast wywrotki: zwykly silnik, bez wymuszania
+                // offline; null i tak trafia w start()/scheduleRestart() na drabinke lub onExhausted.
+                mode = VoiceMode.ONLINE
+                preferOffline = false
+                zwyklyRecognizer()
+            }
+        } else null
         // Gdy drabinka doszla do konkretnego silnika, wiazemy sie WPROST z nim.
         VoiceMode.ONLINE -> silniki.getOrNull(silnikIdx)
-            ?.let { SpeechRecognizer.createSpeechRecognizer(context, it) }
-            ?: SpeechRecognizer.createSpeechRecognizer(context)
+            ?.let { try { SpeechRecognizer.createSpeechRecognizer(context, it) } catch (_: Throwable) { null } }
+            ?: zwyklyRecognizer()
         VoiceMode.UNAVAILABLE -> null
     }
+
+    private fun zwyklyRecognizer(): SpeechRecognizer? = try {
+        SpeechRecognizer.createSpeechRecognizer(context)
+    } catch (_: Throwable) { null }
 
     private fun zwolnijRecognizer() {
         try { recognizer?.destroy() } catch (_: Throwable) {}
@@ -188,6 +227,7 @@ class VoiceInput(private val context: Context) {
             append('\n').append("próbowano: ")
             append(if (probowane.isEmpty()) "—" else probowane.joinToString(", "))
             append('\n').append("ostatni błąd: ").append(ostatniBlad)
+            append(" · drabinka: ").append(if (wyczerpany) "wyczerpana" else "ok")
             append(" · rms max: ")
             append(if (cisza.maxRms == Float.NEGATIVE_INFINITY) "—" else "%.1f".format(cisza.maxRms))
             append(" · wyciszony: ").append(if (mikrofonWyciszony()) "tak" else "nie")
@@ -224,7 +264,7 @@ class VoiceInput(private val context: Context) {
         czekamNaSilnik = false
         ostatniBlad = ERROR_WATCHDOG
         zanotujProbe(silnikOpis + ":" + ERROR_WATCHDOG)
-        if (!escalate()) { status = friendlyError(ERROR_WATCHDOG); stop(); onExhausted?.invoke() }
+        if (!escalate()) wyczerpane(friendlyError(ERROR_WATCHDOG))
     }
 
     private fun uzbrojWatchdog() {
@@ -241,7 +281,11 @@ class VoiceInput(private val context: Context) {
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
-            zyje(); dzialal = true; bledyAudio = 0
+            // Gotowosc NIE zeruje licznika ERROR_AUDIO: silnik z mikrofonem zajetym przez inna
+            // aplikacje potrafi zglaszac onReadyForSpeech i zaraz ERROR_AUDIO, w kolko — licznik
+            // nigdy nie doszedlby do limitu. Zeruje go dopiero dowod, ze dzwiek plynie (wynik
+            // albo pelny cykl nasluchu bez mowy).
+            zyje(); dzialal = true
             // Podpowiedz o gluchym mikrofonie ma zostac, dopoki cos nie wejdzie — nasluch trwa dalej.
             if (!cisza.active) status = ""
         }
@@ -277,12 +321,21 @@ class VoiceInput(private val context: Context) {
 
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> restartSoon()
 
-                // Brak zgody to sprawa ekranu (ustawienia aplikacji), nie drabinki silnikow.
+                // Brak zgody to sprawa ekranu (ustawienia aplikacji), nie drabinki silnikow —
+                // ale tylko gdy aplikacja NAPRAWDE nie ma RECORD_AUDIO. Silnik potrafi zglosic
+                // kod 9 z wlasnej winy (usluga producenta bez wlasnej zgody, kaprys AppOps);
+                // wtedy ustawienia nic nie dadza (mikrofon juz jest dozwolony), a nastepny silnik
+                // z drabinki (Google) zwykle dziala — traktujemy to jak kazdy inny blad.
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                     ostatniBlad = error
-                    status = "brak zgody na mikrofon (" + error + ")"
-                    stop()
-                    onBrakZgody?.invoke()
+                    if (maZgode()) {
+                        zanotujProbe(silnikOpis + ":" + error)
+                        if (!escalate()) wyczerpane(friendlyError(error))
+                    } else {
+                        status = "brak zgody na mikrofon (" + error + ")"
+                        stop()
+                        onBrakZgody?.invoke()
+                    }
                 }
 
                 // Blad nagrywania (3): mikrofon zajety przez inna aplikacje albo chwilowo niedostepny.
@@ -304,7 +357,7 @@ class VoiceInput(private val context: Context) {
                 else -> {
                     ostatniBlad = error
                     zanotujProbe(silnikOpis + ":" + error)
-                    if (!escalate()) { status = friendlyError(error); stop(); onExhausted?.invoke() }
+                    if (!escalate()) wyczerpane(friendlyError(error))
                 }
             }
         }
@@ -386,6 +439,7 @@ class VoiceInput(private val context: Context) {
         val list = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
         if (list.isEmpty()) return
         cisza.onSpeech()
+        bledyAudio = 0 // wynik = dzwiek plynie; dopiero to kasuje serie ERROR_AUDIO
         onHeard?.invoke(list.toList(), final)
     }
 
@@ -405,7 +459,7 @@ class VoiceInput(private val context: Context) {
             val r = recognizer
             if (r == null) {
                 // Szczebel bez recognizera (np. on-device ponizej Androida 12) — dalej po drabince.
-                if (!escalate()) { status = friendlyError(ostatniBlad); stop(); onExhausted?.invoke() }
+                if (!escalate()) wyczerpane(friendlyError(ostatniBlad))
                 return@postDelayed
             }
             cisza.onCycleStart()
@@ -435,8 +489,7 @@ class VoiceInput(private val context: Context) {
         // Brak czegokolwiek do zwiazania NIE jest koncem: ekran ma jeszcze okno systemowe
         // i klawiature telefonu. Oddajemy mu decyzje zamiast zostawiac komunikat o porazce.
         if (mode == VoiceMode.UNAVAILABLE) {
-            status = ""
-            onExhausted?.invoke()
+            wyczerpane()
             return
         }
         // Nie sondujemy na nowo, jesli poprzednio doszlismy fallbackiem do dzialajacego
@@ -448,7 +501,7 @@ class VoiceInput(private val context: Context) {
         this.biasing = biasing
         this.onHeard = onHeard
         if (recognizer == null) recognizer = create()
-        val r = recognizer ?: run { status = ""; onExhausted?.invoke(); return }
+        val r = recognizer ?: run { wyczerpane(); return }
         r.setRecognitionListener(listener)
         wantListening = true
         listening = true
@@ -463,7 +516,7 @@ class VoiceInput(private val context: Context) {
         try {
             r.startListening(buildIntent())
         } catch (t: Throwable) {
-            if (!escalate()) { status = ""; stop(); onExhausted?.invoke() }
+            if (!escalate()) wyczerpane()
             return
         }
         uzbrojWatchdog()
@@ -472,6 +525,24 @@ class VoiceInput(private val context: Context) {
     private fun mikrofonWyciszony(): Boolean = try {
         (context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager)?.isMicrophoneMute == true
     } catch (_: Throwable) { false }
+
+    /** Czy aplikacja ma RECORD_AUDIO — rozstrzyga, czyj jest ERROR_INSUFFICIENT_PERMISSIONS. */
+    private fun maZgode(): Boolean = try {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+    } catch (_: Throwable) { false }
+
+    /**
+     * Koniec drabinki: nic wiecej do zwiazania. Komunikat (jesli jest) zostaje w podpisie,
+     * nasluch staje, a decyzje przejmuje ekran ([onExhausted]: okno systemowe / klawiatura).
+     * Od tej chwili [maSilnik] = false, az [refresh] zobaczy inna liste uslug albo inny tryb.
+     */
+    private fun wyczerpane(komunikat: String = "") {
+        wyczerpany = true
+        status = komunikat
+        stop()
+        onExhausted?.invoke()
+    }
 
     fun stop() {
         wantListening = false
@@ -521,8 +592,14 @@ fun rememberVoiceInput(context: Context): VoiceInput {
  * prowadzi do jakiejs drogi glosu (silnik, okno systemowe, klawiatura telefonu), a podpis
  * pod przyciskiem mowi, ktora to bedzie.
  *
- * Pod przyciskiem leci jedna linia informacji zwrotnej: co uslyszal silnik albo
- * dlaczego nie strzelil. Bez niej nietrafiona wypowiedz wyglada jak awaria.
+ * Pod przyciskiem leci JEDNA linia informacji zwrotnej: co uslyszal silnik albo
+ * dlaczego nie strzelil. Bez niej nietrafiona wypowiedz wyglada jak awaria. Jedna linia
+ * jest celowa: pasek nie ma stalej wysokosci, a pod nim siedzi klawiatura gry — gdyby podpis
+ * rosl z komunikatem, klawisze skakalyby pod kciukami w trakcie rundy. Dluzsze teksty
+ * (diagnostyka z przytrzymania) pokazuje ekran w nakladce nad plansza.
+ *
+ * [hasEngine] mowi, czy dotkniecie pojdzie do zwiazanego silnika (VoiceInput.maSilnik);
+ * sam [mode] tego nie rozstrzyga (UNAVAILABLE z lista uslug, wyczerpana drabinka).
  */
 @Composable
 @OptIn(ExperimentalFoundationApi::class)
@@ -534,6 +611,7 @@ fun VoiceBar(
     onToggle: () -> Unit,
     onDiagnostyka: () -> Unit = {},
     dialogAvailable: Boolean = false,
+    hasEngine: Boolean = mode != VoiceMode.UNAVAILABLE,
 ) {
     val body = if (listening) Palette.Accent else Palette.Bone
     val shadow = if (listening) Palette.AccentDim else Palette.Muted
@@ -572,7 +650,7 @@ fun VoiceBar(
             androidx.compose.ui.Modifier.fillMaxWidth().padding(top = 3.dp),
             horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
         ) {
-            val label = when (VoicePolicy.label(listening, mode, message.isNotEmpty(), dialogAvailable)) {
+            val label = when (VoicePolicy.label(listening, mode, message.isNotEmpty(), dialogAvailable, hasEngine)) {
                 VoiceLabel.MESSAGE -> message
                 VoiceLabel.ON_DEVICE -> str.voiceOnDevice
                 VoiceLabel.ONLINE -> str.voiceOnline
@@ -585,9 +663,9 @@ fun VoiceBar(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 textAlign = TextAlign.Center,
-                // Podpisy mieszcza sie w jednej linii; dluzsze podpowiedzi (mikrofon gluchy,
-                // zablokowany) potrzebuja dwoch, a diagnostyka z przytrzymania — kilku.
-                maxLines = if (label.contains('\n')) 6 else 2,
+                // Stala wysokosc paska: jedna linia, reszta w wielokropku. Teksty w Strings.kt
+                // sa skrojone pod ~45 znakow, zeby na 360 dp nic nie trzeba bylo ucinac.
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
         }

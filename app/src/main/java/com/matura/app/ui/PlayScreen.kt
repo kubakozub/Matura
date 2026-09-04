@@ -8,9 +8,13 @@ import android.net.Uri
 import android.provider.Settings
 import android.speech.RecognizerIntent
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.text.TextRange
@@ -32,6 +36,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,6 +49,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -242,9 +248,10 @@ fun PlayScreen(
     // "klawiatura telefonu" ta sama droga co ekran OPCJE — wiec ustawienie ZOSTAJE na kolejne
     // gry. To nie jest rozpoznawanie mowy w aplikacji, tylko zwykle wprowadzanie tekstu;
     // mikrofon pochodzi z klawiatury systemowej, wiec nie zawodzi tak, jak SpeechRecognizer.
-    fun klawiaturaAwaryjna() {
+    // [podpis] — co zostaje pod przyciskiem; domyslnie instrukcja, jak uzyc mikrofonu klawiatury.
+    fun klawiaturaAwaryjna(podpis: String = str.voiceKeyboardAuto) {
         if (!options.systemKeyboard) onOptionsChange(options.copy(systemKeyboard = true))
-        voiceMsg = str.voiceKeyboardAuto
+        voiceMsg = podpis
     }
 
     // OSTATNIA DESKA RATUNKU (przed klawiatura): okno systemowe rozpoznawania mowy.
@@ -263,10 +270,11 @@ fun PlayScreen(
         val slowa = if (wynik.resultCode == Activity.RESULT_OK)
             wynik.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) else null
         if (!slowa.isNullOrEmpty()) onHeard(slowa.toList(), true)
-        // Wynik okna ZAPISUJEMY. Bez tego "nie zadzialalo" nie da sie odroznic od
-        // "uzytkownik zamknal okno" ani od "okno zwrocilo pusta liste".
-        else voiceMsg = "okno systemowe: wynik " + wynik.resultCode +
-            (if (wynik.data == null) ", brak danych" else ", pusta lista")
+        // Wynik okna ZAPISUJEMY w kodzie w nawiasie: "(0)" = okno zamkniete bez danych,
+        // "(0/0)" = okno zwrocilo pusta liste. Zdanie jest w jezyku interfejsu, kod zostaje
+        // dla diagnostyki — bez niego "nie zadzialalo" nie da sie odroznic od "zamknal okno".
+        else voiceMsg = str.voiceDialogNoResult + " (" + wynik.resultCode +
+            (if (wynik.data == null) ")" else "/0)")
     }
 
     fun oknoSystemowe() {
@@ -294,20 +302,30 @@ fun PlayScreen(
     // to ustawienia aplikacji: NASTEPNE dotkniecie paska je otwiera, zamiast prosic w prozni.
     // Tak samo traktujemy ERROR_INSUFFICIENT_PERMISSIONS od silnika — to ta sama blokada,
     // tylko zgloszona z drugiej strony (np. mikrofon odebrany aplikacji w menedzerze uprawnien).
+    //
+    // Zgoda dotyczy TYLKO silnika (okno systemowe i klawiatura telefonu jej nie potrzebuja),
+    // a ustawienia otwieramy RAZ: uczen, ktory wrocil z nich bez zmiany, nie ma krecic sie
+    // w kolko ustawienia -> cicha odmowa -> ustawienia. Po tym dotkniecie schodzi do okna /
+    // klawiatury (VoicePolicy: settingsTried), a szczebel zgody wraca, gdy zgoda sie pojawi.
     val activity = remember(context) { context.znajdzActivity() }
     var ustawieniaPrzyDotknieciu by remember { mutableStateOf(false) }
-    var zgodaPrzyOdmowie by remember { mutableStateOf(false) }
+    var ustawieniaOtwarte by remember { mutableStateOf(false) }
 
     fun zgodaNaMikrofon(): Boolean = ContextCompat.checkSelfPermission(
         context, Manifest.permission.RECORD_AUDIO
     ) == PackageManager.PERMISSION_GRANTED
 
     fun odmowaMikrofonu() {
+        // Zgoda JEST, a mimo to "odmowa" (silnik zglosil kod 9 z wlasnej winy, kaprys AppOps):
+        // to awaria silnika, nie ucznia. shouldShowRequestPermissionRationale dla dozwolonego
+        // uprawnienia zwraca false i wygladaloby to jak odmowa trwala — ustawienia z juz
+        // wlaczonym mikrofonem nic by nie naprawily. Idziemy droga awaryjna (okno/klawiatura).
+        if (zgodaNaMikrofon()) { awaryjnie(); return }
         val trwala = activity != null &&
             !ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
         if (trwala) {
             ustawieniaPrzyDotknieciu = true
-            zgodaPrzyOdmowie = zgodaNaMikrofon()
+            ustawieniaOtwarte = false
             voiceMsg = str.micDeniedSettings
         } else {
             voiceMsg = str.micDenied
@@ -315,7 +333,9 @@ fun PlayScreen(
     }
 
     fun otworzUstawienia() {
-        ustawieniaPrzyDotknieciu = false
+        // Zaliczamy probe niezaleznie od wyniku: gdy ustawien nie da sie otworzyc, ponawianie
+        // tez nic nie da — nastepne dotkniecie ma isc do okna / klawiatury.
+        ustawieniaOtwarte = true
         val i = Intent(
             Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
             Uri.parse("package:" + context.packageName),
@@ -337,29 +357,53 @@ fun PlayScreen(
         if (voice.listening) { voice.stop(); voiceMsg = ""; return }
         voice.refresh()
         val zgoda = zgodaNaMikrofon()
-        // Uczen sam wlaczyl mikrofon w ustawieniach — skok do ustawien jest juz niepotrzebny.
-        if (ustawieniaPrzyDotknieciu && zgoda != zgodaPrzyOdmowie) ustawieniaPrzyDotknieciu = false
-        when (VoicePolicy.path(zgoda, ustawieniaPrzyDotknieciu, voice.maSilnik, voice.oknoDostepne)) {
+        // Uczen sam wlaczyl mikrofon w ustawieniach — szczebel zgody zaczyna od nowa (a ze
+        // zgoda jest, VoicePolicy pojdzie prosto do silnika).
+        if (zgoda && ustawieniaPrzyDotknieciu) { ustawieniaPrzyDotknieciu = false; ustawieniaOtwarte = false }
+        when (VoicePolicy.path(zgoda, ustawieniaPrzyDotknieciu, voice.maSilnik, voice.oknoDostepne, ustawieniaOtwarte)) {
             VoicePath.OPEN_SETTINGS -> otworzUstawienia()
             VoicePath.REQUEST_PERMISSION -> micPermission.launch(Manifest.permission.RECORD_AUDIO)
             VoicePath.ENGINE -> startVoice()
             VoicePath.SYSTEM_DIALOG -> oknoSystemowe()
-            VoicePath.KEYBOARD -> klawiaturaAwaryjna()
+            // Po wyczerpanym szczeblu zgody podpis dalej wskazuje prawdziwa naprawe (ustawienia);
+            // klawiatura z mikrofonem i tak jest juz na ekranie.
+            VoicePath.KEYBOARD -> klawiaturaAwaryjna(
+                if (ustawieniaOtwarte) str.micDeniedSettings else str.voiceKeyboardAuto
+            )
         }
     }
 
     // Gdy drabinka silnikow sie wyczerpie, przechodzimy na okno systemowe (albo klawiature
     // telefonu) zamiast konczyc komunikatem o porazce. Brak zgody zglaszany przez silnik
     // traktujemy jak odmowe z okienka uprawnien.
+    // Efekt zaklada sie RAZ na VoiceInput, a awaryjnie()/odmowaMikrofonu() lapia options,
+    // str i engine z biezacego zlozenia — po "Zagraj jeszcze raz" (nowy engine) stare domkniecie
+    // czytaloby stara plansze. rememberUpdatedState zawsze wola wersje z ostatniego zlozenia.
+    val awaryjnieNow by rememberUpdatedState({ awaryjnie() })
+    val odmowaNow by rememberUpdatedState({ odmowaMikrofonu() })
     DisposableEffect(voice) {
-        voice.onExhausted = { awaryjnie() }
-        voice.onBrakZgody = { odmowaMikrofonu() }
+        voice.onExhausted = { awaryjnieNow() }
+        voice.onBrakZgody = { odmowaNow() }
         onDispose { voice.onExhausted = null; voice.onBrakZgody = null }
     }
 
     // Pauza i koniec rundy koncza nasluch - mikrofon nie ma chodzic w tle.
     LaunchedEffect(paused, snap.gameOver) {
         if ((paused || snap.gameOver) && voice.listening) { voice.stop(); voiceMsg = "" }
+    }
+
+    // DIAGNOSTYKA GLOSU (dlugie przytrzymanie paska): pelny zrzut w nakladce nad plansza,
+    // nie w podpisie pod przyciskiem — podpis ma jedna linie i stala wysokosc, zeby klawiatura
+    // pod nim nie skakala. Gra stoi na czas nakladki, tak jak przy oknie systemowym.
+    var diagnostyka by remember { mutableStateOf<String?>(null) }
+    var pauzaOdDiagnostyki by remember { mutableStateOf(false) }
+    fun pokazDiagnostyke() {
+        diagnostyka = voice.diagnostyka()
+        if (!paused) { paused = true; pauzaOdDiagnostyki = true }
+    }
+    fun zamknijDiagnostyke() {
+        diagnostyka = null
+        if (pauzaOdDiagnostyki) { paused = false; pauzaOdDiagnostyki = false }
     }
 
     Column(
@@ -425,6 +469,10 @@ fun PlayScreen(
             if (snap.gameOver) {
                 GameOverOverlay(snap, str, sprites, font, onAgain = { restarts++ }, onMenu = onExit)
             }
+
+            diagnostyka?.let { tekst ->
+                DiagnosticsOverlay(tekst, str, font, onClose = { zamknijDiagnostyke() })
+            }
         }
 
         AnswerBar(snap.typed, snap.cursor, font)
@@ -433,10 +481,11 @@ fun PlayScreen(
             listening = voice.listening,
             mode = voice.mode,
             message = if (voiceMsg.isNotEmpty()) voiceMsg else voice.status,
-            onDiagnostyka = { voiceMsg = voice.diagnostyka() },
+            onDiagnostyka = { pokazDiagnostyke() },
             str = str,
             onToggle = { toggleVoice() },
             dialogAvailable = voice.oknoDostepne,
+            hasEngine = voice.maSilnik,
         )
 
         if (options.systemKeyboard) {
@@ -578,6 +627,48 @@ private fun GameOverOverlay(
                 Spacer(Modifier.width(12.dp))
                 GhostButton(str.toMenu, onClick = onMenu)
             }
+        }
+    }
+}
+
+/**
+ * Zrzut diagnostyki glosu (VoiceInput.diagnostyka) nad plansza. Zwykla czcionka, nie pikselowa
+ * (nazwy pakietow, polskie znaki), tekst zaznaczalny — zeby dalo sie go skopiowac i przeslac,
+ * zamiast przepisywac z ekranu telefonu.
+ */
+@Composable
+private fun DiagnosticsOverlay(text: String, str: Str, font: PixelFont, onClose: () -> Unit) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Palette.Ink.copy(alpha = 0.86f))
+            .padding(12.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .background(Palette.Surface)
+                .border(3.dp, Palette.SurfaceHigh)
+                .padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            PixelText(str.voiceDiagnostics, color = Palette.Accent, glyphHeight = 9.dp, font = font)
+            Spacer(Modifier.height(10.dp))
+            SelectionContainer {
+                Text(
+                    text,
+                    color = Palette.Bone,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 240.dp)
+                        .verticalScroll(rememberScrollState()),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            GhostButton(str.back, onClick = onClose)
         }
     }
 }

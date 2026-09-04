@@ -48,16 +48,21 @@ class Str(private val lang: UiLanguage) {
     // Krotkie — mieszcza sie w jednej linii 12 sp.
     val voiceDialog get() = pick("okno systemowe", "system dialog")
     val voiceKeyboardHint get() = pick("głos przez klawiaturę telefonu", "voice via phone keyboard")
-    // Dluzsze komunikaty w linii pod przyciskiem (do dwoch linii).
+    // Komunikaty w linii pod przyciskiem: JEDNA linia (pasek ma stala wysokosc, pod nim jest
+    // klawiatura gry), wiec do ~45 znakow — tyle miesci sie w 12 sp na ekranie 360 dp.
     val voiceKeyboardAuto get() = pick(
-        "Głos przez klawiaturę telefonu — dotknij pola i użyj mikrofonu klawiatury",
-        "Voice via your phone keyboard — tap the field and use its mic key")
+        "Głos: użyj mikrofonu klawiatury telefonu",
+        "Voice: use the mic key on your keyboard")
     val micDeniedSettings get() = pick(
-        "Mikrofon zablokowany — otwórz ustawienia aplikacji i włącz go",
-        "Microphone blocked — open app settings and allow it")
+        "Mikrofon zablokowany — włącz w ustawieniach",
+        "Mic blocked — allow it in app settings")
     val micSilentHint get() = pick(
-        "Mikrofon nic nie słyszy — sprawdź, czy nie jest wyłączony w ustawieniach szybkich albo zajęty przez inną aplikację",
-        "The mic hears nothing — check the quick-settings mic toggle or another app using it")
+        "Mikrofon nic nie słyszy — wyłączony lub zajęty?",
+        "Mic hears nothing — muted or in use elsewhere?")
+    // Okno systemowe zamkniete bez odpowiedzi; kod wyniku ekran dokleja w nawiasie.
+    val voiceDialogNoResult get() = pick("Okno zamknięte bez odpowiedzi", "Dialog closed without an answer")
+    // Naglowek nakladki z diagnostyka glosu (czcionka pikselowa — bez polskich znakow).
+    val voiceDiagnostics get() = pick("DIAGNOSTYKA MIKROFONU", "MICROPHONE DIAGNOSTICS")
     val speakNow get() = pick("Powiedz odpowiedź", "Say the answer")
     val voiceOnDevice get() = pick("na urządzeniu", "on-device")
     val voiceOnline get() = pick("online", "online")

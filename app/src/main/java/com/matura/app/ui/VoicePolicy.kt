@@ -27,35 +27,53 @@ enum class VoiceLabel { MESSAGE, ON_DEVICE, ONLINE, DIALOG, KEYBOARD }
 object VoicePolicy {
 
     /**
-     * Ktora droga glosu po dotknieciu paska. Kolejnosc jest celowa: najpierw sprawy zgody
-     * (bez niej silnik i tak odpowie ERROR_INSUFFICIENT_PERMISSIONS), potem ciagly nasluch,
-     * potem okno systemowe, a na koncu klawiatura telefonu — ktora dziala zawsze.
+     * Ktora droga glosu po dotknieciu paska.
+     *
+     * Zgoda na mikrofon (RECORD_AUDIO) dotyczy WYLACZNIE szczebla silnika: okno systemowe
+     * nagrywa aplikacja Google na wlasnej zgodzie, a klawiatura telefonu to zwykle wpisywanie
+     * tekstu. Dlatego bez silnika nie prosimy o zgode, ktorej i tak bysmy nie uzyli, tylko
+     * od razu idziemy do okna albo klawiatury.
+     *
+     * Po trwalej odmowie ([settingsPending]) dotkniecie otwiera ustawienia aplikacji — ale
+     * tylko RAZ. Jesli uczen wroci z ustawien bez zmiany zgody ([settingsTried]), ponowna
+     * prosba nic nie da (Android 11+ odpowiada natychmiast "nie", bez zadnego okna), a kolejne
+     * ustawienia bylyby natretne: schodzimy wtedy do okna systemowego / klawiatury, ktore
+     * zgody aplikacji nie potrzebuja. Szczebel zgody wraca, gdy zgoda sie zmieni (ekran).
      */
     fun path(
         permissionGranted: Boolean,
         settingsPending: Boolean,
         hasEngine: Boolean,
         dialogAvailable: Boolean,
-    ): VoicePath = when {
-        settingsPending -> VoicePath.OPEN_SETTINGS
-        !permissionGranted -> VoicePath.REQUEST_PERMISSION
-        hasEngine -> VoicePath.ENGINE
-        dialogAvailable -> VoicePath.SYSTEM_DIALOG
-        else -> VoicePath.KEYBOARD
+        settingsTried: Boolean = false,
+    ): VoicePath {
+        val bezSilnika = if (dialogAvailable) VoicePath.SYSTEM_DIALOG else VoicePath.KEYBOARD
+        return when {
+            !hasEngine -> bezSilnika
+            permissionGranted -> VoicePath.ENGINE
+            settingsTried -> bezSilnika
+            settingsPending -> VoicePath.OPEN_SETTINGS
+            else -> VoicePath.REQUEST_PERMISSION
+        }
     }
 
-    /** Podpis pod przyciskiem: komunikat ma pierwszenstwo, potem tryb silnika, potem droga awaryjna. */
+    /**
+     * Podpis pod przyciskiem: komunikat ma pierwszenstwo, potem tryb silnika, potem droga
+     * awaryjna. [hasEngine] (a nie sam [mode]) rozstrzyga, czy dotkniecie pojdzie do silnika:
+     * tryb UNAVAILABLE z niepusta lista uslug i tak zwiaze sie z pierwsza z nich (online),
+     * a wyczerpana drabinka przy trybie ONLINE pojdzie do okna — podpis ma mowic prawde.
+     */
     fun label(
         listening: Boolean,
         mode: VoiceMode,
         hasMessage: Boolean,
         dialogAvailable: Boolean,
+        hasEngine: Boolean,
     ): VoiceLabel = when {
         hasMessage -> VoiceLabel.MESSAGE
+        !listening && !hasEngine -> if (dialogAvailable) VoiceLabel.DIALOG else VoiceLabel.KEYBOARD
         mode == VoiceMode.ON_DEVICE -> VoiceLabel.ON_DEVICE
-        listening || mode == VoiceMode.ONLINE -> VoiceLabel.ONLINE
-        dialogAvailable -> VoiceLabel.DIALOG
-        else -> VoiceLabel.KEYBOARD
+        else -> VoiceLabel.ONLINE
     }
 }
 
