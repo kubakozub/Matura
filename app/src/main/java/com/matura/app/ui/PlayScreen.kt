@@ -241,7 +241,11 @@ fun PlayScreen(
 
     // Podpowiedz o gluchym mikrofonie VoiceInput pokazuje sam (asynchronicznie, bez dostepu
     // do Str) — podstawiamy mu wersje w jezyku interfejsu.
-    LaunchedEffect(str) { voice.tekstCiszy = str.micSilentHint }
+    LaunchedEffect(str) {
+        voice.tekstCiszy = str.micSilentHint
+        voice.tekstInnySilnik = str.voiceOtherEngine
+        voice.tekstBrakMowy = str.voiceNoSpeech
+    }
 
     // NAPRAWDE OSTATNIA DESKA: klawiatura telefonu z wlasnym dyktowaniem. Gdy nie ma ani uslugi
     // do zwiazania, ani okna systemowego (albo okno nie chce sie otworzyc), przelaczamy opcje

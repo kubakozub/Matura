@@ -60,6 +60,8 @@ class Str(private val lang: UiLanguage) {
     val micDeniedSettings get() = pick(
         "Mikrofon zablokowany — włącz w ustawieniach",
         "Mic blocked — allow it in app settings")
+    val voiceOtherEngine get() = pick("próbuję innego silnika mowy…", "trying another speech engine…")
+    val voiceNoSpeech get() = pick("nie rozpoznaję mowy — wpisz odpowiedź", "speech not recognised — type your answer")
     val micSilentHint get() = pick(
         "Mikrofon nic nie słyszy — wyłączony lub zajęty?",
         "Mic hears nothing — muted or in use elsewhere?")

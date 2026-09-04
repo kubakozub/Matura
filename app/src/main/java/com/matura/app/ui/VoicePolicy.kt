@@ -140,3 +140,48 @@ class SilenceDetector(
         const val CYCLES = 2
     }
 }
+
+/**
+ * Czy pusty cykl rozpoznawania (NO_MATCH / SPEECH_TIMEOUT) ma juz oznaczac awarie silnika.
+ *
+ * Cisza jest normalna, dopoki silnik cokolwiek rozpoznal — wtedy wiadomo, ze dziala, a uzytkownik
+ * po prostu milczy. Silnik, ktory NIC jeszcze nie rozpoznal, zachowuje sie tak samo, gdy nie ma
+ * modelu jezyka albo odmawia pracy offline: przyjmuje nagranie i zwraca "nic nie slyszalem" w kolko.
+ * Rozroznienie robi mikrofon: jesli slychac bylo mowe, a silnik i tak nic nie zwrocil, nie ma na co
+ * czekac.
+ *
+ * @param dzialal czy ten silnik w tej sesji rozpoznal juz cokolwiek
+ * @param pusteCykle ile pustych cykli z rzedu (biezacy wliczony)
+ * @param slyszalMowe czy w tych cyklach mikrofon rejestrowal dzwiek ponad progiem ciszy
+ */
+fun eskalowacPoPustym(dzialal: Boolean, pusteCykle: Int, slyszalMowe: Boolean): Boolean {
+    if (dzialal) return false
+    val prog = if (slyszalMowe) PUSTE_Z_MOWA else PUSTE_BEZ_MOWY
+    return pusteCykle >= prog
+}
+
+/** Uzytkownik mowil, a silnik nic nie zwrocil — dwa takie cykle wystarcza. */
+const val PUSTE_Z_MOWA = 2
+/** Sama cisza moze byc wina uzytkownika; dajemy silnikowi wiecej prob. */
+const val PUSTE_BEZ_MOWY = 4
+
+/**
+ * Dziennik ostatnich zdarzen silnika mowy. Sluzy WYLACZNIE diagnostyce pod dlugim przytrzymaniem
+ * paska: bez niego zgloszenie "przycisk dziala, nic sie nie dzieje" nie niesie zadnej informacji.
+ * Nie zapisuje tresci wypowiedzi — tylko rodzaj zdarzenia, kod bledu i czas wzgledny.
+ */
+class VoiceLog(private val limit: Int = 14) {
+    private val wpisy = ArrayDeque<String>()
+    private var start = 0L
+
+    fun reset(teraz: Long) { wpisy.clear(); start = teraz }
+
+    fun dodaj(teraz: Long, co: String) {
+        if (start == 0L) start = teraz
+        val s = (teraz - start) / 100L
+        wpisy.addLast("%d.%ds %s".format(s / 10, s % 10, co))
+        while (wpisy.size > limit) wpisy.removeFirst()
+    }
+
+    fun tekst(): String = if (wpisy.isEmpty()) "—" else wpisy.joinToString("\n")
+}

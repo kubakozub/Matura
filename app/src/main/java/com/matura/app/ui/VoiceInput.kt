@@ -68,6 +68,10 @@ class VoiceInput(private val context: Context) {
 
     /** Podpowiedz o gluchym mikrofonie — ekran podstawia wersje z Str (PL/EN). */
     var tekstCiszy: String = "Mikrofon nic nie słyszy — wyłączony lub zajęty?"
+    /** Krotka informacja, ze zmieniamy silnik — inaczej pauza wyglada jak zawieszenie. */
+    var tekstInnySilnik: String = "Próbuję innego silnika mowy…"
+    /** Komunikat, gdy zaden silnik nie rozpoznaje mowy w tym jezyku. */
+    var tekstBrakMowy: String = "Nie rozpoznaję mowy — wpisz odpowiedź"
 
     private var recognizer: SpeechRecognizer? = null
     private var wantListening = false
@@ -109,8 +113,17 @@ class VoiceInput(private val context: Context) {
     /** Watchdog: czekamy na PIERWSZE zdarzenie od silnika po startListening. */
     private var czekamNaSilnik = false
     private var bledyAudio = 0
+    /** Puste cykle (NO_MATCH / SPEECH_TIMEOUT) POD RZAD na silniku, ktory jeszcze nic nie
+     *  rozpoznal. Silnik bez modelu jezyka zwraca dokladnie to — i tylko to. */
+    private var pusteCykle = 0
     private var bledyBusy = 0
     private val cisza = SilenceDetector()
+    /** Dziennik zdarzen do diagnostyki (nie zapisuje tresci wypowiedzi). */
+    private val dziennik = VoiceLog()
+    /** Po pierwszej eskalacji nie wysylamy juz podpowiedzi slownikowych — patrz buildIntent. */
+    private var bezBiasingu = false
+    /** Czy w biezacej serii pustych cykli mikrofon w ogole cos slyszal. */
+    private var slyszalMowe = false
 
     private fun dostepneSilniki(): List<ComponentName> = try {
         context.packageManager
@@ -246,6 +259,11 @@ class VoiceInput(private val context: Context) {
             append('\n').append("próbowano: ")
             append(if (probowane.isEmpty()) "—" else probowane.joinToString(", "))
             append('\n').append("ostatni błąd: ").append(ostatniBlad)
+            append(" · puste cykle: ").append(pusteCykle)
+            append(" · rozpoznał coś: ").append(if (dzialal) "tak" else "NIE")
+            append('\n').append("język: ").append(language)
+            append(" · podpowiedzi: ").append(if (bezBiasingu) "nie" else biasing.size.toString())
+            append('\n').append("— przebieg —\n").append(dziennik.tekst())
             append(" · drabinka: ").append(if (wyczerpany) "wyczerpana" else "ok")
             append(" · rms max: ")
             append(if (cisza.maxRms == Float.NEGATIVE_INFINITY) "—" else "%.1f".format(cisza.maxRms))
@@ -265,7 +283,9 @@ class VoiceInput(private val context: Context) {
         // Prosimy o rozpoznanie bez sieci — ale tylko dopoki silnik to akceptuje.
         // Gdy odmowi (ERROR_CLIENT), escalate() wylacza offline i dzwiek moze pojsc siecia.
         if (preferOffline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && biasing.isNotEmpty()) {
+        // Podpowiedzi slownikowe pomijamy po pierwszej eskalacji: dluga lista potrafi byc
+        // powodem, dla ktorego silnik przestaje zwracac wyniki (bez zadnego bledu).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && biasing.isNotEmpty() && !bezBiasingu) {
             // Slownik zestawu: silnik nie zgaduje z calego jezyka, tylko wazy te slowa.
             putStringArrayListExtra(
                 RecognizerIntent.EXTRA_BIASING_STRINGS,
@@ -300,6 +320,7 @@ class VoiceInput(private val context: Context) {
 
     private val listener = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
+            dziennik.dodaj(System.currentTimeMillis(), "gotowy")
             // Gotowosc NIE zeruje licznika ERROR_AUDIO: silnik z mikrofonem zajetym przez inna
             // aplikacje potrafi zglaszac onReadyForSpeech i zaraz ERROR_AUDIO, w kolko — licznik
             // nigdy nie doszedlby do limitu. Zeruje go dopiero dowod, ze dzwiek plynie (wynik
@@ -316,13 +337,14 @@ class VoiceInput(private val context: Context) {
 
         override fun onPartialResults(partialResults: Bundle?) {
             if (!wantListening) return
-            zyje(); dzialal = true
+            zyje(); dzialal = true; pusteCykle = 0
             deliver(partialResults, final = false)
         }
 
         override fun onResults(results: Bundle?) {
             if (!wantListening) return
-            zyje(); dzialal = true
+            dziennik.dodaj(System.currentTimeMillis(), "wynik")
+            zyje(); dzialal = true; pusteCykle = 0; slyszalMowe = false
             deliver(results, final = true)
             restartSoon()
         }
@@ -339,7 +361,23 @@ class VoiceInput(private val context: Context) {
                 SpeechRecognizer.ERROR_NO_MATCH,
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
                     bledyAudio = 0
+                    pusteCykle += 1
+                    if (cisza.maxRms > SilenceDetector.SILENCE_DB) slyszalMowe = true
+                    dziennik.dodaj(System.currentTimeMillis(), "pusto (" + error + "), RMS " + "%.1f".format(cisza.maxRms) + ", cykl " + pusteCykle)
                     if (cisza.onEmptyCycle()) status = tekstCiszy
+                    // Cisza jest normalna TYLKO na silniku, ktory juz raz cos rozpoznal. Silnik,
+                    // ktory nie rozpoznal jeszcze niczego i trzeci raz z rzedu mowi "nic nie
+                    // slyszalem", w praktyce nie ma modelu tego jezyka albo odmawia pracy offline
+                    // (zgloszenie z Motoroli: przycisk dziala, zero bledow, zero reakcji na mowe).
+                    // Zamiast krecic sie w kolko schodzimy drabinke nizej.
+                    if (eskalowacPoPustym(dzialal, pusteCykle, slyszalMowe)) {
+                        pusteCykle = 0
+                        ostatniBlad = error
+                        zanotujProbe(silnikOpis + ":nic")
+                        if (escalate()) status = tekstInnySilnik
+                        else wyczerpane(tekstBrakMowy)
+                        return
+                    }
                     restartSoon()
                 }
 
@@ -432,10 +470,13 @@ class VoiceInput(private val context: Context) {
 
     /** Przelaczenie silnika: niszczy obecny recognizer i tworzy nowy pod nowy tryb. */
     private fun useEngine(newMode: VoiceMode, offline: Boolean) {
+        bezBiasingu = true   // od drugiego podejscia liczy sie to, zeby w ogole dzialalo
+        dziennik.dodaj(System.currentTimeMillis(), "silnik -> " + (if (newMode == VoiceMode.ON_DEVICE) "on-device" else "sieciowy") + (if (offline) " (offline)" else ""))
         try { recognizer?.destroy() } catch (_: Throwable) {}
         mode = newMode
         preferOffline = offline
         dzialal = false
+        pusteCykle = 0
         recognizer = create()?.also { it.setRecognitionListener(listener) }
     }
 
@@ -533,6 +574,12 @@ class VoiceInput(private val context: Context) {
         // pod nim wraca do dyspozycji.
         if (dzialal) resetujDrabinke()
         dzialal = false
+        // Nowe wlaczenie nasluchu to nowy przebieg: licznik pustych cykli, sygnal o mowie
+        // i dziennik zaczynaja od zera, zeby diagnostyka pokazywala TE probe, a nie poprzednia.
+        pusteCykle = 0
+        slyszalMowe = false
+        dziennik.reset(System.currentTimeMillis())
+        dziennik.dodaj(System.currentTimeMillis(), "start (" + language + ", " + (if (mode == VoiceMode.ON_DEVICE) "on-device" else "sieciowy") + (if (preferOffline) ", offline" else "") + ")")
         this.language = language
         this.biasing = biasing
         this.onHeard = onHeard
@@ -585,6 +632,7 @@ class VoiceInput(private val context: Context) {
     }
 
     fun stop() {
+        dziennik.dodaj(System.currentTimeMillis(), "stop")
         wantListening = false
         listening = false
         czekamNaSilnik = false
@@ -604,12 +652,14 @@ class VoiceInput(private val context: Context) {
     private companion object {
         /** Ile razy z rzedu wolno uslyszec "silnik zajety", zanim uznamy to za awarie. */
         const val MAX_BUSY_RETRIES = 5
+        /** Trzy puste cykle wystarcza: przy krotkich hasłach jeden cykl to ok. 2-3 s. */
+        const val MAX_PUSTYCH_CYKLI = 3
         /** Jak dlugo wyczerpana drabinka zostaje zamknieta (ms). */
         const val BLOKADA_MS = 25_000L
         /** Sztuczny kod bledu watchdoga (silnik milczy). */
         const val KOD_WATCHDOG = 99
         const val MAX_ALTERNATIVES = 6
-        const val MAX_BIASING_WORDS = 200
+        const val MAX_BIASING_WORDS = 50
         const val MAX_PROBOWANE = 12
         /** Ile czekamy na PIERWSZE zdarzenie od silnika po startListening. */
         const val WATCHDOG_MS = 6_000L
