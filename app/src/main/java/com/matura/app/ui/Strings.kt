@@ -91,6 +91,33 @@ class Str(private val lang: UiLanguage) {
     // Po polsku dopelniacz ("brak pakietu mowy polskiego"), po angielsku przydawka ("no Polish speech pack").
     val voiceLangPolish get() = pick("polskiego", "Polish")
     val voiceLangEnglish get() = pick("angielskiego", "English")
+
+    // ---- Etap 3: trudne slowa i codzienna sesja ----------------------------
+    val hardWordsMenu get() = pick("TRUDNE SŁOWA", "HARD WORDS")
+    val hardWordsMenuDesc get() = pick("Słowa, przy których się potykasz", "The words you keep missing")
+    val dailyMenu get() = pick("DZISIEJSZY TRENING", "TODAY'S DRILL")
+    val dailyMenuDesc get() = pick("Krótka sesja na dziś", "A short session for today")
+    val hardWords get() = pick("Trudne słowa", "Hard words")
+    val hardWordsCount get() = pick("słów do powtórki", "words to review")
+    val hardReasonDue get() = pick("termin powtórki minął", "review overdue")
+    val hardReasonBackToStart get() = pick("pierwsze pudełko po błędzie", "first box after a mistake")
+    val hardReasonMistakes get() = pick("były pomyłki", "answered wrong before")
+    val hardReasonHints get() = pick("z podpowiedzią", "needed a hint")
+    val hardCountMistakes get() = pick("pomyłki", "mistakes")
+    val hardCountHints get() = pick("podpowiedzi", "hints")
+    val hardOverdueDays get() = pick("dni po terminie", "days overdue")
+    val hardDueToday get() = pick("termin: dzisiaj", "due today")
+    val hardListen get() = pick("Posłuchaj wymowy", "Listen to the pronunciation")
+    val hardPractice get() = pick("ĆWICZ", "PRACTISE")
+    val hardPracticeAll get() = pick("ĆWICZ WSZYSTKIE", "PRACTISE ALL")
+    val hardEmptyNoHistory get() = pick(
+        "Nic tu jeszcze nie ma. Zagraj kilka rund — wrócą tutaj słowa, przy których się potkniesz.",
+        "Nothing here yet. Play a few rounds — the words you stumble on will show up here.",
+    )
+    val hardEmptyNothingHard get() = pick(
+        "W tym wyborze nie ma nic do poprawki — wszystko czeka na swój termin.",
+        "Nothing to fix in this selection — everything is waiting for its next review.",
+    )
     val micSilentHint get() = pick(
         "Mikrofon nic nie słyszy — wyłączony lub zajęty?",
         "Mic hears nothing — muted or in use elsewhere?")

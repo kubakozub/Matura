@@ -240,6 +240,13 @@ data class SaveData(
      */
     val schemaVersion: Int = 0,
     val profile: Profile = Profile(),
+    /**
+     * Przerwana sesja "Dzisiejsze 5 minut". Zapisujemy ja, bo brief wymaga, zeby przerwa nie
+     * kasowala nauki — a sesja bez zapisu ginie razem z procesem. null znaczy "nic nie trwa";
+     * sesja z innego dnia jest odrzucana przy wznowieniu (Sesja.czyWznawialna), wiec stary
+     * wpis nie zalega w nieskonczonosc.
+     */
+    val sesja: com.matura.app.learn.StanSesji? = null,
     val options: Options = Options(),
     val sets: List<WordSet> = emptyList(),
     val scores: List<ScoreRecord> = emptyList(),

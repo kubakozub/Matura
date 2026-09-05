@@ -130,6 +130,9 @@ class Repository(private val dir: File) {
     }
 
     /** Stan nauki jednego celu; brak wpisu znaczy "pudelko 0", a nie blad. */
+    /** Zapis albo skasowanie przerwanej sesji. null konczy sesje. */
+    fun setSesja(stan: com.matura.app.learn.StanSesji?): Boolean = save(load().copy(sesja = stan))
+
     fun progressOf(entryId: String, direction: Direction): WordProgress =
         Srs.progressOf(load().progress, entryId, direction)
 

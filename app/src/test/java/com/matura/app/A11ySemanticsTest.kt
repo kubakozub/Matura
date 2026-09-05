@@ -32,7 +32,7 @@ class A11ySemanticsTest {
             MenuScreen(
                 str = Str(UiLanguage.PL),
                 profile = Profile(name = "Ala"),
-                onPlay = {}, onSets = {}, onOptions = {},
+                onDaily = {}, onHardWords = {}, onPlay = {}, onSets = {}, onOptions = {},
                 onAchievements = {}, onScores = {}, onExit = {},
             )
         }

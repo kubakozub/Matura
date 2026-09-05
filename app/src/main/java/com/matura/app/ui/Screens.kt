@@ -23,6 +23,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.activity.compose.BackHandler
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -123,6 +124,8 @@ fun StartScreen(str: Str, profile: Profile, onPlayAnonymously: (String) -> Unit)
 fun MenuScreen(
     str: Str,
     profile: Profile,
+    onDaily: () -> Unit,
+    onHardWords: () -> Unit,
     onPlay: () -> Unit,
     onSets: () -> Unit,
     onOptions: () -> Unit,
@@ -130,10 +133,14 @@ fun MenuScreen(
     onScores: () -> Unit,
     onExit: () -> Unit,
 ) {
+    // Menu bylo JEDYNYM ekranem listowym bez przewijania. Szesc przyciskow miescilo sie
+    // na typowym telefonie, ale osiem przy powiekszonej czcionce systemowej albo na niskim
+    // ekranie zostaje po prostu UCIETE — bez paska, bez sygnalu, ze cos jest nizej.
     Column(
         Modifier
             .fillMaxSize()
             .background(Palette.Background)
+            .verticalScroll(rememberScrollState())
             .padding(18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -144,6 +151,16 @@ fun MenuScreen(
         Spacer(Modifier.height(22.dp))
 
         // Icons follow the asset pack's own menu mapping.
+        // Nauka idzie PRZED gra o rekord: to sa wejscia "jednym dotknieciem do nauki",
+        // a uczen, ktory ma dzis zaplanowane powtorki, ma je zobaczyc od razu.
+        MenuButton(
+            str.dailyMenu, subtitle = str.dailyMenuDesc,
+            icon = pixel(R.drawable.icon_target), onClick = onDaily,
+        )
+        MenuButton(
+            str.hardWordsMenu, subtitle = str.hardWordsMenuDesc,
+            icon = pixel(R.drawable.medal_gold), onClick = onHardWords,
+        )
         MenuButton(str.play, icon = pixel(R.drawable.icon_target), onClick = onPlay)
         MenuButton(str.sets, icon = pixel(R.drawable.mode_classic), onClick = onSets)
         MenuButton(str.options, icon = pixel(R.drawable.icon_settings), onClick = onOptions)

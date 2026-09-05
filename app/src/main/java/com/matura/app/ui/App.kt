@@ -12,6 +12,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
 import com.matura.app.data.Repository
 import com.matura.app.model.GameMode
 import com.matura.app.model.Options
@@ -20,6 +22,11 @@ import com.matura.app.model.SaveData
 import com.matura.app.model.WordSet
 import com.matura.app.learn.Attempt
 import com.matura.app.learn.Srs
+import com.matura.app.audio.Pronunciation
+import com.matura.app.learn.Clock
+import com.matura.app.learn.RodzajKroku
+import com.matura.app.learn.Sesja
+import com.matura.app.model.Direction
 
 sealed interface Screen {
     data object Start : Screen
@@ -34,6 +41,8 @@ sealed interface Screen {
     data object Scores : Screen
     data object Privacy : Screen
     data object VoiceTest : Screen
+    data object TrudneSlowa : Screen
+    data object DzisiejszaSesja : Screen
 }
 
 @Composable
@@ -49,6 +58,20 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
     fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
     fun replaceTop(s: Screen) { stack = stack.dropLast(1) + s }
     fun refresh() { data = repo.load() }
+
+    // Dzien harmonogramu dla calej aplikacji. Liczony raz przy wejsciu — przekroczenie polnocy
+    // UTC w trakcie jednej sesji nie ma przestawiac list pod palcami ucznia.
+    val dzisiaj = remember { Srs.dayOf(System.currentTimeMillis()) }
+    // Klasa Pronunciation istniala juz wczesniej, ale nie miala ANI JEDNEGO wolajacego —
+    // "Trudne slowa" sa pierwszym ekranem, ktory czyta haslo na glos. Instancja zyje tak dlugo
+    // jak aplikacja i zwalnia zasoby przy wyjsciu z kompozycji.
+    val kontekst = LocalContext.current
+    val wymowa = remember(kontekst) { Pronunciation(kontekst) }
+    DisposableEffect(wymowa) { onDispose { wymowa.release() } }
+    val zegar = remember { Clock { System.currentTimeMillis() } }
+    // Runda uruchomiona z codziennej sesji jest SPOKOJNA: brief wymaga wariantu bez utraty zyc
+    // przy nauce nowych slow. Flaga zyje tu, bo tylko App sklada opcje dla ekranu gry.
+    var rundaSpokojna by remember { mutableStateOf(false) }
 
     BackHandler(enabled = stack.size > 1) { pop() }
 
@@ -81,7 +104,9 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
             Screen.Menu -> MenuScreen(
                 str = str,
                 profile = data.profile,
-                onPlay = { push(Screen.SetPick) },
+                onDaily = { rundaSpokojna = false; push(Screen.DzisiejszaSesja) },
+                onHardWords = { push(Screen.TrudneSlowa) },
+                onPlay = { rundaSpokojna = false; push(Screen.SetPick) },
                 onSets = { push(Screen.Sets) },
                 onOptions = { push(Screen.Options) },
                 onAchievements = { push(Screen.Achievements) },
@@ -134,9 +159,14 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                         repo.recordGame(record.copy(mode = s.mode), set.id)
                         refresh()
                     }
+                    // Spokojna runda z codziennej sesji dostaje zapas zyc, zeby nauka nowego
+                    // slowa nie konczyla sie przegrana. Reszta ustawien bez zmian.
+                    val opcjeRundy =
+                        if (rundaSpokojna) data.options.copy(lives = maxOf(data.options.lives, 9))
+                        else data.options
                     when (s.mode) {
                         GameMode.CLASSIC -> PlayScreen(
-                            set = set, options = data.options, str = str,
+                            set = set, options = opcjeRundy, str = str,
                             playerName = data.profile.name, onExit = exit, onFinished = finish,
                             // Gra moze sama wlaczyc klawiature telefonu (awaryjna droga glosu);
                             // zapis ta sama droga co z ekranu OPCJE, wiec zostaje na kolejne gry.
@@ -162,6 +192,104 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                         )
                     }
                 }
+            }
+
+            Screen.TrudneSlowa -> TrudneSlowaScreen(
+                teksty = TrudneTeksty(
+                    tytul = str.hardWords,
+                    wroc = str.back,
+                    wszystkieDzialy = str.filterAll,
+                    mojeZestawy = str.ownSets,
+                    kierunekHasloZnaczenie = str.dirTermToDef,
+                    kierunekZnaczenieHaslo = str.dirDefToTerm,
+                    etykietaLiczby = str.hardWordsCount,
+                    powodZalegle = str.hardReasonDue,
+                    powodCofniete = str.hardReasonBackToStart,
+                    powodPomylki = str.hardReasonMistakes,
+                    powodPodpowiedzi = str.hardReasonHints,
+                    etykietaPomylki = str.hardCountMistakes,
+                    etykietaPodpowiedzi = str.hardCountHints,
+                    etykietaPoTerminie = str.hardOverdueDays,
+                    terminDzis = str.hardDueToday,
+                    wymowa = str.hardListen,
+                    cwicz = str.hardPractice,
+                    cwiczWszystkie = str.hardPracticeAll,
+                    pustoBrakHistorii = str.hardEmptyNoHistory,
+                    pustoNicTrudnego = str.hardEmptyNothingHard,
+                ),
+                zestawy = data.sets,
+                postep = data.progress,
+                dzis = dzisiaj,
+                onBack = { pop() },
+                onWymowa = { slowo -> wymowa.play(slowo, data.options.soundEnabled) },
+                onCwicz = { trudne ->
+                    // Jedno slowo do poprawki gramy na mieszance zbudowanej wokol niego:
+                    // plansza potrzebuje kilku hasel, zeby w ogole miec z czego losowac.
+                    mixSet = BuiltInSets.randomMix().let { mix ->
+                        mix.copy(entries = (listOf(trudne.entry) + mix.entries).distinct().take(20))
+                    }
+                    rundaSpokojna = true
+                    push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
+                },
+                onCwiczWszystkie = { lista ->
+                    mixSet = BuiltInSets.randomMix().copy(entries = lista.map { it.entry }.take(20))
+                    rundaSpokojna = true
+                    push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
+                },
+            )
+
+            Screen.DzisiejszaSesja -> {
+                // Kierunek losowy to USTAWIENIE, nie kierunek — sesja musi go rozstrzygnac,
+                // zanim ulozy plan (Sesja.zaplanuj wprost tego pilnuje).
+                val kierunek = if (data.options.direction == Direction.RANDOM) {
+                    Direction.TERM_TO_DEF
+                } else {
+                    data.options.direction
+                }
+                val idki = remember(data.sets) {
+                    data.sets.flatMap { it.entries }.map { it.id }.filter { it.isNotBlank() }
+                }
+                val plan = remember(data.progress, idki, kierunek, dzisiaj) {
+                    Sesja.zaplanuj(data.progress, idki, kierunek, dzisiaj)
+                }
+                var stanSesji by remember(plan) {
+                    mutableStateOf(Sesja.wznow(data.sesja, plan, zegar))
+                }
+                DzisiejszaSesjaScreen(
+                    jezyk = data.options.uiLanguage,
+                    plan = plan,
+                    stan = stanSesji,
+                    podsumowanie = Sesja.podsumuj(plan, stanSesji, data.progress, dzisiaj),
+                    czasNaKoniec = Sesja.czasNaKoniec(stanSesji, plan, zegar),
+                    wznowiona = data.sesja != null,
+                    // Przerwanie ZAPISUJE stan: brief wymaga, zeby przerwa nie kasowala nauki.
+                    onPrzerwij = { repo.setSesja(stanSesji); refresh(); pop() },
+                    onKrok = { krok ->
+                        if (krok.rodzaj == RodzajKroku.POWTORKA || krok.rodzaj == RodzajKroku.GRA) {
+                            val cele = krok.cele.toSet()
+                            val wpisy = data.sets.flatMap { it.entries }.filter { it.id in cele }
+                            mixSet = BuiltInSets.randomMix().copy(entries = wpisy.take(20))
+                            rundaSpokojna = krok.spokojny
+                            repo.setSesja(stanSesji)
+                            push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
+                        } else {
+                            stanSesji = Sesja.dalej(stanSesji, plan)
+                            repo.setSesja(stanSesji)
+                        }
+                    },
+                    onDalej = {
+                        stanSesji = Sesja.dalej(stanSesji, plan)
+                        repo.setSesja(stanSesji)
+                    },
+                    onZakoncz = {
+                        stanSesji = Sesja.zakoncz(stanSesji, plan)
+                        // Skonczona sesja przestaje byc "przerwana" — inaczej jutro proponowaloby
+                        // sie wznowienie czegos, co juz sie domknelo.
+                        repo.setSesja(null)
+                        refresh()
+                        pop()
+                    },
+                )
             }
 
             Screen.Sets -> SetsScreen(
