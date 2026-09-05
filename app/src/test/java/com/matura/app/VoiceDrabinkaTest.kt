@@ -542,9 +542,13 @@ class VoiceInputPrzebiegTest {
         uplyw(200)
         assertSame("sama gotowosc niczego jeszcze nie przestawia", pierwszy, ostatni())
 
-        uplyw(20_000)   // wiecej niz limit cyklu
+        // Trzy sekundy, nie dwadziescia. Od 0.9.15 milczacy silnik lapie STRAZNIK DZWIEKU
+        // (DZWIEK_MS = 2,5 s), a nie straznik cyklu (15 s) — bo telefon uzytkownika pokazal,
+        // ze gracz przerywa nasluch po niecalych osmiu sekundach i przy starym limicie drabinka
+        // nie schodzila ani o szczebel.
+        uplyw(3_000)
 
-        assertNotSame("po limicie cyklu drabinka musi zejsc nizej", pierwszy, ostatni())
+        assertNotSame("po limicie dzwieku drabinka musi zejsc nizej", pierwszy, ostatni())
         assertEquals("ale jeszcze nie oddawac decyzji ekranowi", 0, wyczerpane)
     }
 
@@ -633,12 +637,59 @@ class VoiceInputPrzebiegTest {
      * PUSTY_CYKL i BRAK_JEZYKA. Bez tego pasek milczy przez cala zmiane silnika i wyglada jak
      * zawieszenie, czyli jak awaria, ktora wlasnie obchodzimy.
      */
+    /**
+     * REGRESJA ZE ZGLOSZENIA (motorola edge 50 neo, Android 36, diagnostyka z 0.9.14):
+     *
+     *     0.0s start (pl-PL, TERM_TO_DEF, on-device, offline)
+     *     0.3s gotowy
+     *     7.8s stop - drabinka: ok - rms max: — - wyciszony: nie
+     *
+     * Silnik zameldowal gotowosc i przez 7,5 s nie oddal ANI JEDNEJ probki poziomu dzwieku.
+     * Zaden blad nie padl, wiec drabinka stala ("drabinka: ok") — jedynym limitem byl straznik
+     * cyklu, 15 s, czyli dwa razy dluzej, niz gracz wytrzymal.
+     *
+     * Ten test pilnuje obietnicy, ktora z tego wynika: przy silniku, do ktorego nie wchodzi
+     * dzwiek, drabinka ma zejsc ZANIM gracz zrezygnuje. Osiem sekund to zmierzona cierpliwosc
+     * uzytkownika; mamy sie zmiescic z zapasem.
+     */
+    @Test
+    fun gotowoscBezDzwieku_odpowiadaZanimGraczZrezygnuje() {
+        start()
+        val pierwszy = ostatni()
+        cien(pierwszy).triggerOnReadyForSpeech(Bundle())
+
+        uplyw(3_000)
+
+        assertNotSame(
+            "silnik bez ani jednej probki poziomu musi ustapic miejsca w kilka sekund",
+            pierwszy,
+            ostatni(),
+        )
+    }
+
+    /**
+     * Kontrola ujemna dla powyzszego: silnik, ktory poziom RAPORTUJE, nie jest martwy — nawet
+     * gdy gracz milczy. onRmsChanged nie jest gwarantowane kontraktem API, wiec straznik dzwieku
+     * musi ustepowac kazdemu dowodowi, ze cos jednak wchodzi.
+     */
+    @Test
+    fun silnikRaportujacyPoziom_nieJestRuszanyPrzezStraznikaDzwieku() {
+        start()
+        val pierwszy = ostatni()
+        cien(pierwszy).triggerOnReadyForSpeech(Bundle())
+        cien(pierwszy).triggerOnRmsChanged(-2f)
+
+        uplyw(3_000)
+
+        assertSame("poziom dzwieku to dowod, ze mikrofon dochodzi", pierwszy, ostatni())
+    }
+
     @Test
     fun zejscieStraznika_mowiUczniowiZeZmieniamySilnik() {
         voice.tekstInnySilnik = "INNY SILNIK"
         start()
         cien(ostatni()).triggerOnReadyForSpeech(Bundle())
-        uplyw(16_000)
+        uplyw(3_000)
         assertEquals("INNY SILNIK", voice.status)
     }
 

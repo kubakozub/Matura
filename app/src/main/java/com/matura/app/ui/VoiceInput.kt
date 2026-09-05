@@ -183,6 +183,12 @@ class VoiceInput(private val context: Context) {
     var wypowiedz = 0
         private set
 
+    /**
+     * Czy w BIEZACYM cyklu przyszla choc jedna probka poziomu dzwieku (albo poczatek mowy,
+     * albo wynik czesciowy). Zerowane przy kazdym uzbrojeniu strażnika dzwieku.
+     */
+    private var wchodziDzwiek = false
+
     /** Czy probowalismy juz tagu jezyka bez regionu (szczebel drabinki, raz na sesje). */
     private var probowanyJezykBezRegionu = false
 
@@ -237,6 +243,16 @@ class VoiceInput(private val context: Context) {
             .mapNotNull { it.serviceInfo?.let { s -> ComponentName(s.packageName, s.name) } }
             .sortedBy { if (it.packageName.contains("google", true)) 0 else 1 }
     } catch (_: Throwable) { emptyList() }
+
+    /**
+     * Ktora usluga rozpoznawania jest ustawiona jako domyslna w systemie. Czytamy WYLACZNIE do
+     * diagnostyki — bez tej nazwy raport z telefonu mowi tylko, ze jakas usluga jest, a nie ktora.
+     */
+    private fun domyslnaUsluga(): String = try {
+        android.provider.Settings.Secure.getString(
+            context.contentResolver, "voice_recognition_service",
+        ).orEmpty().substringBefore('/')
+    } catch (_: Throwable) { "" }
 
     private fun sprawdzOkno(): Boolean = try {
         context.packageManager.resolveActivity(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0) != null
@@ -364,6 +380,10 @@ class VoiceInput(private val context: Context) {
             append(" · ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL).append('\n')
             append("on-device: ").append(if (naUrzadzeniu) "tak" else "nie")
             append(" · usługa: ").append(if (jestUsluga) "tak" else "nie")
+            // NAZWA domyslnej uslugi, nie samo tak/nie. Raport z telefonu uzytkownika pokazal
+            // trzy zarejestrowane uslugi rozpoznawania, w tym jedna spoza Google — bez tej linii
+            // nie da sie odroznic "silnik Google milczy" od "domyslna jest zupelnie inna usluga".
+            append("\n · domyślna: ").append(domyslnaUsluga().ifEmpty { "brak" })
             append(" · okno: ").append(if (oknoDostepne) "tak" else "NIE").append('\n')
             append("silniki (").append(silniki.size).append("): ")
             append(if (silniki.isEmpty()) "brak" else silniki.joinToString(", ") { it.packageName })
@@ -478,6 +498,42 @@ class VoiceInput(private val context: Context) {
     }
 
     /** Uzbrajane przy KAZDYM startListening (patrz [uzbrojWatchdog]) i przy wyniku czesciowym. */
+    // STRAZNIK DZWIEKU. Sygnatura awarii z telefonu uzytkownika: "gotowy" po 0,3 s i ZERO
+    // probek poziomu przez nastepne 7,5 s. Sprawny silnik raportuje poziom kilkadziesiat razy
+    // na sekunde od pierwszej chwili, wiec brak choc jednej probki nie jest cisza gracza —
+    // to znaczy, ze do silnika nie wchodzi dzwiek.
+    //
+    // Straznik cyklu (15 s) teoretycznie by to zlapal, ale praktycznie nie: uzytkownik przerywa
+    // wczesniej. Ten daje odpowiedz w DZWIEK_MS, czyli zanim ktokolwiek zdazy sie zniechecic.
+    private val straznikDzwieku = Runnable {
+        if (!wantListening || wchodziDzwiek) return@Runnable
+        // Silnik, ktory w tej sesji juz cos rozpoznal, ma prawo milczec — milczy gracz.
+        if (oddalWynik) return@Runnable
+        ostrzez("straznik dzwieku: " + silnikOpis + " zglosil gotowosc, ale przez " + DZWIEK_MS +
+            " ms nie oddal ani jednej probki poziomu — schodze drabinka")
+        dziennik.dodaj(System.currentTimeMillis(), "brak dźwięku z mikrofonu")
+        ostatniBlad = ERROR_BEZ_DZWIEKU
+        zanotujProbe(silnikOpis + ":" + ERROR_BEZ_DZWIEKU)
+        if (escalate()) status = tekstInnySilnik
+        else wyczerpane(friendlyError(ERROR_BEZ_DZWIEKU))
+    }
+
+    /** Uzbrajane po gotowosci silnika — patrz [straznikDzwieku]. */
+    private fun uzbrojStraznikaDzwieku() {
+        wchodziDzwiek = false
+        handler.removeCallbacks(straznikDzwieku)
+        handler.postDelayed(straznikDzwieku, DZWIEK_MS)
+    }
+
+    /**
+     * Dzwiek dochodzi. Wolane z onRmsChanged, onBeginningOfSpeech i z niepustego wyniku
+     * czesciowego — kazde z nich osobno dowodzi, ze silnik cos slyszy.
+     */
+    private fun dzwiekDochodzi() {
+        wchodziDzwiek = true
+        handler.removeCallbacks(straznikDzwieku)
+    }
+
     private fun uzbrojStraznikaCyklu() {
         handler.removeCallbacks(straznikCyklu)
         handler.postDelayed(straznikCyklu, CYKL_MS)
@@ -539,18 +595,22 @@ class VoiceInput(private val context: Context) {
             // nigdy nie doszedlby do limitu. Zeruje go dopiero dowod, ze dzwiek plynie (wynik
             // albo pelny cykl nasluchu bez mowy).
             zyje(); dzialal = true
+            // Gotowosc zdjela straznik uruchomienia, wiec od tej chwili pilnuje krotki straznik
+            // dzwieku. Bez niego jedynym limitem zostaje straznik cyklu (15 s) — dluzej, niz
+            // ktokolwiek czeka, patrzac na napis "mikrofon gotowy".
+            uzbrojStraznikaDzwieku()
             // Podpowiedz o gluchym mikrofonie ma zostac, dopoki cos nie wejdzie — nasluch trwa dalej.
             if (!cisza.active && bledyAudio == 0 && !mikrofonWyciszony()) status = ""
         }
         override fun onBeginningOfSpeech() {
             if (obcy()) return
-            zyje()
+            zyje(); dzwiekDochodzi()
             log("onBeginningOfSpeech")
         }
 
         override fun onRmsChanged(rmsdB: Float) {
             if (obcy()) return
-            zyje(); cisza.onRms(rmsdB)
+            zyje(); dzwiekDochodzi(); cisza.onRms(rmsdB)
             // Silnik raportuje poziom kilkadziesiat razy na sekunde — do logcata idzie co
             // RMS_CO probka albo wyrazne nowe maksimum. Poziom jest KLUCZOWY dla tego
             // zgloszenia: rozstrzyga, czy do silnika w ogole cokolwiek wchodzi.
@@ -1224,6 +1284,21 @@ class VoiceInput(private val context: Context) {
         const val MAX_AUDIO_RETRIES = 6
         /** Syntetyczny kod dla watchdoga — poza zakresem kodow SpeechRecognizer (1–15). */
         const val ERROR_WATCHDOG = 99
+
+        /**
+         * Silnik zglosil gotowosc, ale nie oddal ani jednej probki poziomu dzwieku.
+         * Wlasny kod, osobny od kodow Androida — patrz [straznikDzwieku].
+         */
+        const val ERROR_BEZ_DZWIEKU = 98
+
+        /**
+         * Ile czekamy po gotowosci na PIERWSZY znak, ze dzwiek wchodzi.
+         *
+         * Dwie i pol sekundy, bo tyle mniej wiecej trwa nabranie powietrza i pierwsze slowo,
+         * a sprawny silnik raportuje poziom jeszcze zanim gracz otworzy usta. Krocej byloby
+         * ryzykowne na wolnym telefonie, dluzej — nie do zniesienia dla gracza.
+         */
+        const val DZWIEK_MS = 2_500L
     }
 }
 
