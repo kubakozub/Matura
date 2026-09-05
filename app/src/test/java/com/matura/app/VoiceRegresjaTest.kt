@@ -137,7 +137,9 @@ class VoiceRegresjaTest {
     fun kryterium2_pustyWynikNieJestTranskrypcja_aPoSukcesieDaSieOdzyskac() {
         start()
         val pierwszy = ostatni()
-        // onResults BEZ listy rozpoznan i onResults z PUSTA lista — deliver() odrzuca oba.
+        // onResults BEZ listy rozpoznan i onResults z PUSTA lista. Oba to brak transkrypcji:
+        // deliver() ich nie przepuszcza, a sam cykl idzie odtad ta sama droga co NO_MATCH
+        // (patrz VoicePustaTranskrypcjaTest) — czyli tez zbliza silnik do zejscia drabinka.
         cien(pierwszy).triggerOnResults(Bundle())
         uplyw(10)
         cien(pierwszy).triggerOnResults(wynikBundle())

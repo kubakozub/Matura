@@ -62,6 +62,35 @@ class Str(private val lang: UiLanguage) {
         "Mic blocked — allow it in app settings")
     val voiceOtherEngine get() = pick("próbuję innego silnika mowy…", "trying another speech engine…")
     val voiceNoSpeech get() = pick("nie rozpoznaję mowy — wpisz odpowiedź", "speech not recognised — type your answer")
+
+    // KOMUNIKATY O AWARII GLOSU. Trafiaja do VoiceInput przez pola (patrz LaunchedEffect w PlayScreen),
+    // bo warstwa mowy nie ma dostepu do Str — jest tworzona poza kompozycja i zyje dluzej niz ekran.
+    // Wzorce "%s" wypelnia VoiceInput: nazwa jezyka albo kod bledu i liczba silnikow.
+    val voiceNoNetwork get() = pick(
+        "brak internetu dla głosu — wpisz odpowiedź",
+        "no internet for speech — type your answer",
+    )
+    /** "%s" to nazwa jezyka w dopelniaczu ([voiceLangPolish] / [voiceLangEnglish]). */
+    val voiceNoLanguagePack get() = pick(
+        "brak pakietu mowy %s — wpisz odpowiedź",
+        "no %s speech pack — type your answer",
+    )
+    /** Gdy tag jezyka jest nieznany — bez nazwy, zamiast zgadywania. */
+    val voiceNoPack get() = pick(
+        "brak pakietu mowy — wpisz odpowiedź",
+        "speech pack missing — type your answer",
+    )
+    val voiceEngineSilent get() = pick(
+        "silnik mowy nie odpowiada (%s/%s) — wpisz odpowiedź",
+        "speech engine not responding (%s/%s) — type your answer",
+    )
+    val voiceUnavailable get() = pick(
+        "głos niedostępny (%s/%s) — wpisz odpowiedź",
+        "speech unavailable (%s/%s) — type your answer",
+    )
+    // Po polsku dopelniacz ("brak pakietu mowy polskiego"), po angielsku przydawka ("no Polish speech pack").
+    val voiceLangPolish get() = pick("polskiego", "Polish")
+    val voiceLangEnglish get() = pick("angielskiego", "English")
     val micSilentHint get() = pick(
         "Mikrofon nic nie słyszy — wyłączony lub zajęty?",
         "Mic hears nothing — muted or in use elsewhere?")

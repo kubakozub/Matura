@@ -84,8 +84,66 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.matura.app.game.VoiceMatch
 import com.matura.app.model.Direction
+import com.matura.app.model.UiLanguage
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import kotlin.math.sin
+
+// ---- napisy i reguly ekranu ------------------------------------------------
+
+/** Lokalna tablica napisow — [Str] jest plikiem wspolnym i nie wolno go rozszerzac. */
+private fun t(pl: String, en: String, lang: UiLanguage) = if (lang == UiLanguage.PL) pl else en
+
+/**
+ * Co pasek ma powiedziec o mikrofonie JEZYKIEM GRACZA.
+ *
+ * Wczesniej w podpisie stal tryb silnika ("na urzadzeniu" / "online"). Uczen nie ma z tego nic:
+ * to informacja o naszej implementacji, a nie o tym, czy juz mowic, czy jeszcze czekac. Nazwy
+ * silnikow i kody bledow zostaja tam, gdzie sa naprawde potrzebne — w nakladce diagnostycznej
+ * pod dlugim przytrzymaniem paska.
+ *
+ * Stan bierzemy z [VoiceInput.stan], czyli z tych samych flag, ktore steruja nasluchem. Osobne
+ * pole "co teraz pokazac" trzeba by zerowac w kazdej sciezce wyjscia i rozjechaloby sie
+ * z rzeczywistoscia dokladnie wtedy, gdy uczen patrzy na pasek i pyta, czemu mikrofon milczy.
+ */
+fun opisStanuMikrofonu(stan: VoiceStan, lang: UiLanguage): String = when (stan) {
+    VoiceStan.BEZCZYNNY -> t("mikrofon gotowy", "microphone ready", lang)
+    VoiceStan.URUCHAMIANIE -> t("uruchamiam mikrofon…", "starting the microphone…", lang)
+    VoiceStan.NASLUCH -> t("słucham — mów teraz", "listening — speak now", lang)
+    VoiceStan.PONOWIENIE -> t("ponawiam nasłuch…", "retrying…", lang)
+    VoiceStan.BLAD -> t("brak dostępu do mikrofonu", "no microphone access", lang)
+}
+
+/**
+ * Czy wolno teraz wstrzymac runde "z urzedu" — po awarii drogi glosowej albo przy zejsciu
+ * aplikacji w tlo.
+ *
+ * Awaria mikrofonu nie jest odpowiedzia ucznia. Potwor, ktory dochodzi do dziala, gdy uczen
+ * czyta komunikat o bledzie i przesiada sie na klawiature, zabiera zycie za usterke silnika
+ * mowy — a brief mowi wprost, ze brak transkrypcji nie jest dowodem niewiedzy. Zatrzymujemy
+ * wiec plansze, ale tylko wtedy, gdy jest co zatrzymywac: przy wlasnej pauzie ucznia nie ma
+ * czego zmieniac, a po koncu rundy pauza tylko zablokowalaby ekran wyniku.
+ */
+fun wstrzymacRunde(paused: Boolean, gameOver: Boolean): Boolean = !paused && !gameOver
+
+/**
+ * Podpis po awarii drogi glosowej (wyczerpana drabinka silnikow, brak okna systemowego).
+ *
+ * Bez "gra stoi": pauza po awarii konczy sie przy pierwszym klawiszu, wiec zdanie o wstrzymaniu
+ * byloby falszywe pol sekundy pozniej. Sam fakt przerwy widac na planszy i na przycisku pauzy;
+ * podpis mowi to, co zostaje prawda takze po wznowieniu — co uczen ma teraz zrobic.
+ */
+fun podpisAwariiMikrofonu(lang: UiLanguage): String =
+    t("Mikrofon zawiódł — wpisz odpowiedź", "Mic failed — type your answer", lang)
+
+/**
+ * Podpis po odmowie zgody na mikrofon. Zastepuje [Str.micDenied] ("bez zgody tryb glosowy nie
+ * zadziala"), bo tamto zdanie zostawia ucznia przed wstrzymana plansza bez zadnej dalszej drogi.
+ */
+fun podpisBrakuMikrofonu(lang: UiLanguage): String =
+    t("Bez mikrofonu — wpisz odpowiedź", "No mic — type your answer", lang)
 
 @Composable
 fun PlayScreen(
@@ -181,6 +239,7 @@ fun PlayScreen(
     // pytac "czy transkrypt rowna sie odpowiedzi" szukamy najblizszej z kilkunastu.
     val context = LocalContext.current
     val voice = rememberVoiceInput(context)
+    val lang = options.uiLanguage
     var voiceMsg by remember(engine) { mutableStateOf("") }
     var lastSpoken by remember(engine) { mutableStateOf("") }
     /**
@@ -301,6 +360,15 @@ fun PlayScreen(
         voice.tekstCiszy = str.micSilentHint
         voice.tekstInnySilnik = str.voiceOtherEngine
         voice.tekstBrakMowy = str.voiceNoSpeech
+        // Bez tych szesciu linii friendlyError() zostaje przy polskich wartosciach domyslnych,
+        // wiec uczen z angielskim interfejsem dostaje polskie zdanie w chwili awarii glosu.
+        voice.tekstBrakSieci = str.voiceNoNetwork
+        voice.tekstBrakPakietuJezyka = str.voiceNoLanguagePack
+        voice.tekstBrakPakietu = str.voiceNoPack
+        voice.tekstSilnikMilczy = str.voiceEngineSilent
+        voice.tekstGlosNiedostepny = str.voiceUnavailable
+        voice.tekstJezykPolski = str.voiceLangPolish
+        voice.tekstJezykAngielski = str.voiceLangEnglish
     }
 
     // Jezyk silnika ustala sie RAZ, przy starcie nasluchu — a w trybie losowym plansza zmienia
@@ -350,6 +418,27 @@ fun PlayScreen(
         voiceMsg = podpis
     }
 
+    // UCZCIWOSC OCENIANIA. Gdy droga glosowa sie wyczerpie albo zgoda na mikrofon nie przyjdzie,
+    // plansza NIE moze isc dalej: potworki dochodzace do dziala odbieraja zycie i zeruja serie,
+    // czyli awaria silnika mowy zamienia sie w kare za odpowiedz, ktorej uczen nigdy nie udzielil.
+    //
+    // Uzywamy TEJ SAMEJ pauzy, ktora ma przycisk u gory (paused) — drugi, rownolegly mechanizm
+    // wstrzymania rozjechalby sie z nia przy pierwszej sciezce, ktorej ktos nie przewidzi.
+    // Flaga mowi tylko tyle, ze te pauze zalozyla awaria, a nie uczen: dzieki temu konczy sie
+    // sama przy pierwszym klawiszu (patrz [wznowPoAwarii]) — inaczej uczen wpisywalby odpowiedz
+    // w zatrzymana gre i nic by sie nie dzialo.
+    var pauzaOdAwarii by remember(engine) { mutableStateOf(false) }
+    fun bezpiecznaPrzerwa() {
+        if (wstrzymacRunde(paused, engine.snapshot().gameOver)) { paused = true; pauzaOdAwarii = true }
+    }
+    /** Przesiadka na klawiature skonczona — presja czasu wraca dokladnie wtedy, gdy uczen pisze. */
+    fun wznowPoAwarii() {
+        if (pauzaOdAwarii) { pauzaOdAwarii = false; paused = false }
+    }
+
+    val podpisAwarii = podpisAwariiMikrofonu(lang)
+    val podpisBezMikrofonu = podpisBrakuMikrofonu(lang)
+
     // OSTATNIA DESKA RATUNKU (przed klawiatura): okno systemowe rozpoznawania mowy.
     // Rozni sie od calej reszty w sposob zasadniczy — nie WIAZE sie z zadna usluga
     // (to wlasnie wiazanie odmawia na czesci telefonow, m.in. Samsungach), tylko oddaje
@@ -391,13 +480,22 @@ fun PlayScreen(
         // Brak aplikacji od okna (ActivityNotFoundException) albo inna wywrotka przy starcie:
         // nie komunikat o porazce, tylko klawiatura telefonu — ona jest zawsze.
         try { okno.launch(i) } catch (_: Throwable) {
+            // Okno sie nie otworzylo, wiec pauza "na czas okna" traci powod — ale gra ma zostac
+            // wstrzymana dalej, juz jako przerwa na przesiadke (patrz bezpiecznaPrzerwa).
             if (pauzaOdOkna) { paused = false; pauzaOdOkna = false }
-            klawiaturaAwaryjna()
+            bezpiecznaPrzerwa()
+            klawiaturaAwaryjna(podpisAwarii)
         }
     }
 
     // Gdy zwiazane silniki zawiodly: okno systemowe, a bez okna — klawiatura telefonu.
-    fun awaryjnie() { if (voice.oknoDostepne) oknoSystemowe() else klawiaturaAwaryjna() }
+    // Okno wstrzymuje runde SAMO (pauzaOdOkna) i samo ja odwiesza po wyniku, wiec presji czasu
+    // zdejmowac tu nie wolno — inaczej wynik z okna wrocilby do gry, ktora wciaz stoi, i onHeard
+    // by go odrzucil. Droga klawiaturowa takiego domkniecia nie ma i tam pauza jest potrzebna.
+    fun awaryjnie() {
+        if (voice.oknoDostepne) oknoSystemowe()
+        else { bezpiecznaPrzerwa(); klawiaturaAwaryjna(podpisAwarii) }
+    }
 
     // ZGODA NA MIKROFON. Po odmowie sprawdzamy, czy system jeszcze pokaze pytanie
     // (shouldShowRequestPermissionRationale). Jesli nie — odmowa jest trwala i jedyna droga
@@ -433,12 +531,17 @@ fun PlayScreen(
         val uzasadnieniePo = activity != null &&
             ActivityCompat.shouldShowRequestPermissionRationale(activity, Manifest.permission.RECORD_AUDIO)
         val trwala = activity != null && !uzasadnieniePo && (uzasadnieniePrzed || prosbyOZgode >= 2)
+        // Odmowa zgody tez nie jest odpowiedzia ucznia: gra staje, zeby zdazyl przejsc na
+        // klawiature, zamiast tracic zycie przy czytaniu komunikatu.
+        bezpiecznaPrzerwa()
         if (trwala) {
             ustawieniaPrzyDotknieciu = true
             ustawieniaOtwarte = false
             voiceMsg = str.micDeniedSettings
         } else {
-            voiceMsg = str.micDenied
+            // str.micDenied mowi tylko, ze bez zgody tryb glosowy nie zadziala — a uczen stoi
+            // wlasnie przed wstrzymana plansza i musi wiedziec, co ma teraz zrobic.
+            voiceMsg = podpisBezMikrofonu
         }
     }
 
@@ -518,6 +621,30 @@ fun PlayScreen(
         if ((paused || snap.gameOver) && voice.listening) { voice.stop(); voiceMsg = "" }
     }
 
+    // ZEJSCIE W TLO (HOME, przelaczenie aplikacji, zgaszony ekran). Zadne z nich nie wyprowadza
+    // ekranu z kompozycji, wiec onDispose z rememberVoiceInput NIE leci, a pauza sama sie nie
+    // wlacza: do tej pory nasluch zostawal wlaczony poza aplikacja (mikrofon zajety, a od
+    // Androida 12 w tle i tak gluchy), a runda odliczala dalej. Oddajemy mikrofon od razu
+    // i wstrzymujemy plansze — czas spedzony poza gra nie jest odpowiedzia ucznia.
+    //
+    // Domkniecie przez rememberUpdatedState, bo "Zagraj jeszcze raz" tworzy NOWY stan paused
+    // (remember(engine)), a obserwator kluczowany wlascicielem cyklu zyje dalej i pisalby do
+    // poprzedniego — ta sama pulapka, ktora zalatano wyzej przy onExhausted.
+    val wTlo by rememberUpdatedState({
+        if (voice.listening) { voice.stop(); voiceMsg = "" }
+        // To NIE jest pauza od awarii: powrot z tla ma byc swiadomy, wiec zdejmuje ja dopiero
+        // przycisk u gory, a nie pierwszy dotkniety klawisz.
+        if (wstrzymacRunde(paused, engine.snapshot().gameOver)) paused = true
+    })
+    val wlascicielCyklu = LocalLifecycleOwner.current
+    DisposableEffect(wlascicielCyklu) {
+        val obserwator = LifecycleEventObserver { _, zdarzenie ->
+            if (zdarzenie == Lifecycle.Event.ON_STOP) wTlo()
+        }
+        wlascicielCyklu.lifecycle.addObserver(obserwator)
+        onDispose { wlascicielCyklu.lifecycle.removeObserver(obserwator) }
+    }
+
     // DIAGNOSTYKA GLOSU (dlugie przytrzymanie paska): pelny zrzut w nakladce nad plansza,
     // nie w podpisie pod przyciskiem — podpis ma jedna linie i stala wysokosc, zeby klawiatura
     // pod nim nie skakala. Gra stoi na czas nakladki, tak jak przy oknie systemowym.
@@ -581,7 +708,9 @@ fun PlayScreen(
                     .padding(top = 5.dp)
                     .background(Palette.Ink.copy(alpha = 0.75f))
                     .border(2.dp, Palette.SurfaceHigh)
-                    .clickable { paused = !paused }
+                    // Wznowienie reka ucznia konczy takze pauze od awarii — inaczej flaga
+                    // zostalaby zapalona i nastepny klawisz "odwieszalby" gre, ktora juz idzie.
+                    .clickable { paused = !paused; if (!paused) pauzaOdAwarii = false }
                     .padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -607,10 +736,22 @@ fun PlayScreen(
 
         AnswerBar(snap.typed, snap.cursor, font)
 
+        // Podpis paska, od najwazniejszego: wlasny komunikat ekranu (trafienie, awaria, odmowa),
+        // potem konkretna podpowiedz silnika (gluchy mikrofon, inny silnik), a dopiero na koncu
+        // stan mikrofonu jezykiem gracza. Gdy silnika NIE MA, zostawiamy pusto — wtedy VoicePolicy
+        // wpisuje pod przyciskiem droge, ktora pojdzie dotkniecie (okno systemowe / klawiatura),
+        // a to jest w tej sytuacji jedyna informacja, ktora do czegos prowadzi.
+        val podpisPaska = when {
+            voiceMsg.isNotEmpty() -> voiceMsg
+            voice.status.isNotEmpty() -> voice.status
+            voice.maSilnik || voice.listening -> opisStanuMikrofonu(voice.stan, lang)
+            else -> ""
+        }
+
         VoiceBar(
             listening = voice.listening,
             mode = voice.mode,
-            message = if (voiceMsg.isNotEmpty()) voiceMsg else voice.status,
+            message = podpisPaska,
             onDiagnostyka = { pokazDiagnostyke() },
             str = str,
             onToggle = { toggleVoice() },
@@ -630,6 +771,8 @@ fun PlayScreen(
                 // na koncu, zeby dyktowanie doklejalo tekst tam, gdzie uzytkownik sie spodziewa.
                 value = TextFieldValue(snap.typed, TextRange(snap.typed.length)),
                 onValueChange = { nowa ->
+                    // Pisanie = koniec przesiadki po awarii mikrofonu (patrz wznowPoAwarii).
+                    wznowPoAwarii()
                     if (paused) return@BasicTextField
                     val czyste = nowa.text.filter { it.isLetter() || it == ' ' || it == '-' }.take(40)
                     if (czyste != snap.typed) {
@@ -656,10 +799,13 @@ fun PlayScreen(
             )
         } else {
             GameKeyboard(
-                onChar = { c -> if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
-                onBackspace = { if (!paused) engine.backspace() },
-                onEnter = { submit() },
-                onSpace = { if (!paused) engine.type(' ') },
+                // Pierwszy klawisz konczy pauze zalozona przez awarie mikrofonu — uczen przeszedl
+                // wlasnie na klawiature, wiec przerwa spelnila swoja role. Pauzy WLASNEJ (przycisk
+                // u gory, zejscie w tle) to nie rusza: tam czekamy na swiadome wznowienie.
+                onChar = { c -> wznowPoAwarii(); if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
+                onBackspace = { wznowPoAwarii(); if (!paused) engine.backspace() },
+                onEnter = { wznowPoAwarii(); submit() },
+                onSpace = { wznowPoAwarii(); if (!paused) engine.type(' ') },
                 onLeft = { engine.cursorLeft() },
                 onRight = { engine.cursorRight() },
             )

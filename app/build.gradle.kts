@@ -28,8 +28,8 @@ android {
         applicationId = "com.matura.app"
         minSdk = 24
         targetSdk = 36
-        versionCode = 29
-        versionName = "0.9.12"
+        versionCode = 30
+        versionName = "0.9.13"
     }
 
     // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego

@@ -142,6 +142,29 @@ class SilenceDetector(
 }
 
 /**
+ * Ktore hipotezy silnika naprawde niosa transkrypcje.
+ *
+ * SpeechRecognizer ma CZTERY sposoby na powiedzenie "nic nie uslyszalem", a do 0.9.11 kod
+ * rozpoznawal tylko dwa: brak Bundle i pusta lista. Trzeci i czwarty — lista jednego pustego
+ * ciagu albo samych bialych znakow — przechodzily obie bramki w deliver(), ustawialy "silnik
+ * oddal wynik" i przez to na zawsze wylaczaly schodzenie drabinka. Objaw jest dokladnie ten
+ * ze zgloszenia: pasek swieci "SLUCHAM…", w logu same wyniki, mowa bez reakcji.
+ *
+ * Filtr jest celowo prosty: trim, a potem wymog choc jednego znaku alfanumerycznego. Sam
+ * isNotBlank przepuscilby hipoteze "." albo ",", ktora czesc silnikow zwraca zamiast pustego
+ * ciagu, a ktora dla dopasowania odpowiedzi znaczy tyle samo co nic.
+ *
+ * @param surowe lista spod RESULTS_RECOGNITION; null = brak Bundle albo brak klucza. Typ
+ *        dopuszcza null W SRODKU listy, bo przychodzi ona z uslugi spoza aplikacji i Kotlin
+ *        nie sprawdza jej elementow — jeden null wywracalby nasluch wyjatkiem.
+ * @return przyciete hipotezy z trescia, w kolejnosci od silnika; pusta lista = BRAK TRANSKRYPCJI
+ */
+fun uzyteczneHipotezy(surowe: List<String?>?): List<String> =
+    surowe.orEmpty().mapNotNull { h ->
+        h?.trim()?.takeIf { t -> t.any { z -> z.isLetterOrDigit() } }
+    }
+
+/**
  * Czy pusty cykl rozpoznawania (NO_MATCH / SPEECH_TIMEOUT) ma juz oznaczac awarie silnika.
  *
  * Cisza jest normalna, dopoki silnik cokolwiek rozpoznal — wtedy wiadomo, ze dziala, a uzytkownik
@@ -463,4 +486,24 @@ fun jezykBezRegionu(tag: String): String {
     val i = tag.indexOfFirst { it == '-' || it == '_' }
     if (i <= 0) return ""
     return tag.substring(0, i)
+}
+
+/**
+ * Nazwa jezyka do komunikatu o braku pakietu mowy — z TAGU, ktory naprawde poszedl do silnika.
+ *
+ * Do 0.9.11 komunikat brzmial "brak pakietu mowy PL" niezaleznie od tego, o co silnik byl pytany,
+ * a gra rownie czesto slucha po angielsku: jezyk odpowiedzi ustala ekran z kierunku gry albo
+ * z przewagi na planszy. Uczen dostawal wiec polecenie zainstalowania nie tego pakietu, co trzeba.
+ *
+ * Surowego tagu nie pokazujemy — "en-US" nic uczniowi nie mowi. Gra uzywa dokladnie dwoch tagow
+ * i ich wersji bez regionu (szczebel 2b drabinki zamienia "en-US" na "en"), wiec rozstrzyga
+ * przedrostek; dla czegokolwiek innego zwracamy pusty ciag, a wolajacy pokazuje wtedy zdanie
+ * bez nazwy jezyka, zamiast wpisywac w nie kod BCP 47.
+ *
+ * @param polski nazwa jezyka w postaci, ktora wchodzi do zdania — ekran podstawia wersje PL/EN
+ */
+fun jezykDoKomunikatu(tag: String, polski: String, angielski: String): String = when {
+    tag.startsWith("pl", ignoreCase = true) -> polski
+    tag.startsWith("en", ignoreCase = true) -> angielski
+    else -> ""
 }

@@ -102,6 +102,25 @@ class VoiceInput(private val context: Context) {
     /** Komunikat, gdy zaden silnik nie rozpoznaje mowy w tym jezyku. */
     var tekstBrakMowy: String = "Nie rozpoznaję mowy — wpisz odpowiedź"
 
+    // Komunikaty konca drabinki ([friendlyError]). Do 0.9.11 byly wpisane w kod po polsku,
+    // wiec uczen w angielskiej wersji interfejsu dostawal je po polsku — a jeden z nich mowil
+    // na dodatek o pakiecie "PL", chociaz blad dotyczyl tagu, o ktory silnik byl pytany.
+    // Droga jest ta sama co dla tekstCiszy: ekran podstawia tlumaczenia, bo VoiceInput
+    // nie ma dostepu do Str (komunikat powstaje asynchronicznie, poza kompozycja).
+    /** Koniec drabinki przez siec (kody 1/2). */
+    var tekstBrakSieci: String = "brak internetu dla głosu — wpisz odpowiedź"
+    /** Brak pakietu mowy (12/13) DLA ZNANEGO jezyka; "%s" zastepuje [tekstJezykPolski]/[tekstJezykAngielski]. */
+    var tekstBrakPakietuJezyka: String = "brak pakietu mowy %s — wpisz odpowiedź"
+    /** To samo dla tagu, ktorego nie umiemy nazwac po ludzku — surowy BCP 47 nic uczniowi nie mowi. */
+    var tekstBrakPakietu: String = "brak pakietu mowy — wpisz odpowiedź"
+    /** Watchdog: silnik przyjal zlecenie i milczy; "%s" po kolei — kod bledu i liczba uslug. */
+    var tekstSilnikMilczy: String = "silnik mowy nie odpowiada (%s/%s) — wpisz odpowiedź"
+    /** Kazda inna awaria konczaca drabinke; "%s" jak wyzej. */
+    var tekstGlosNiedostepny: String = "głos niedostępny (%s/%s) — wpisz odpowiedź"
+    /** Nazwy jezykow w postaci, ktora wchodzi do [tekstBrakPakietuJezyka] (po polsku: dopelniacz). */
+    var tekstJezykPolski: String = "polskiego"
+    var tekstJezykAngielski: String = "angielskiego"
+
     private var recognizer: SpeechRecognizer? = null
     private var wantListening = false
     private var language = "pl-PL"
@@ -480,6 +499,15 @@ class VoiceInput(private val context: Context) {
     private fun dlugoscPierwszej(b: Bundle?): Int =
         b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.length ?: -1
 
+    /**
+     * Hipotezy z Bundle silnika, przepuszczone przez JEDNA polityke ([uzyteczneHipotezy]).
+     * Wynik czesciowy i koncowy czytamy tak samo — inaczej "nic nie przyszlo" znaczyloby
+     * co innego w kazdym z callbackow, a to wlasnie ta rozbieznosc dala silnikowi oddajacemu
+     * same puste ciagi nieskonczony kredyt zaufania.
+     */
+    private fun hipotezy(b: Bundle?): List<String> =
+        uzyteczneHipotezy(b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION))
+
     /** Silnik dal znak zycia — watchdog schodzi z posterunku do nastepnego startu. */
     private fun zyje() {
         czekamNaSilnik = false
@@ -546,13 +574,23 @@ class VoiceInput(private val context: Context) {
 
         override fun onPartialResults(partialResults: Bundle?) {
             if (obcy()) return
-            zyje(); dzialal = true; pusteCykle = 0
+            // Znak zycia jest BEZWARUNKOWY — silnik faktycznie odpowiada, wiec watchdog
+            // pierwszego zdarzenia nie ma juz czego pilnowac. Ale HISTORIA NIEPOWODZEN
+            // (dzialal, pusteCykle) czeka na TRESC: silnik bez modelu jezyka potrafi na kazdy
+            // cykl oddac jeden PUSTY wynik czesciowy i zaraz NO_MATCH. Zerowanie licznika tutaj
+            // kasowalo mu wtedy kazdy cykl, wiec progi PUSTE_Z_MOWA / PUSTE_BEZ_MOWY nie byly
+            // osiagalne NIGDY i drabinka stala w miejscu przy zapalonym pasku.
+            zyje()
             // Do logu tylko LICZBA alternatyw. Tresci wypowiedzi nie logujemy nigdy.
             log("onPartialResults alternatyw=" + ileAlternatyw(partialResults))
-            // Silnik, ktory sypie wynikami czesciowymi, PRACUJE: straznik cyklu dostaje nowy
-            // limit, zeby dluga wypowiedz nie wygladala jak zawis i nie zjadala szczebla.
-            if (ileAlternatyw(partialResults) > 0) uzbrojStraznikaCyklu()
-            deliver(partialResults, final = false)
+            val uzyteczne = hipotezy(partialResults)
+            if (uzyteczne.isEmpty()) return
+            dzialal = true
+            pusteCykle = 0
+            // Silnik, ktory sypie wynikami czesciowymi Z TRESCIA, PRACUJE: straznik cyklu dostaje
+            // nowy limit, zeby dluga wypowiedz nie wygladala jak zawis i nie zjadala szczebla.
+            uzbrojStraznikaCyklu()
+            deliver(uzyteczne, final = false)
         }
 
         override fun onResults(results: Bundle?) {
@@ -560,13 +598,24 @@ class VoiceInput(private val context: Context) {
                 log("onResults pominiety (pokolenie " + pok + "/" + pokolenie + ")")
                 return
             }
-            dziennik.dodaj(System.currentTimeMillis(), "wynik")
             // `dzialal` to znak zycia i tyle — dowodem rozpoznania jest oddalWynik, ustawiany
-            // w deliver() dopiero dla NIEPUSTEJ listy. Pusty onResults nie moze uchodzic za sukces.
-            zyje(); zdejmijStraznikaCyklu(); dzialal = true; pusteCykle = 0; slyszalMowe = false
+            // w deliver() dopiero dla listy Z TRESCIA. Pusty onResults nie moze uchodzic za sukces.
+            zyje(); zdejmijStraznikaCyklu(); dzialal = true
             log("onResults alternatyw=" + ileAlternatyw(results) +
                 " dlugosc pierwszej=" + dlugoscPierwszej(results))
-            deliver(results, final = true)
+            val uzyteczne = hipotezy(results)
+            if (uzyteczne.isEmpty()) {
+                // Pusty wynik koncowy to to samo co NO_MATCH — czesc silnikow zglasza brak
+                // dopasowania wlasnie tak, bez zadnego kodu bledu. Idzie wiec ta sama droga,
+                // lacznie z eskalacja; wpis w dzienniku nie moze brzmiec "wynik", gdy wyniku
+                // nie bylo, bo wtedy diagnostyka klamie akurat tam, gdzie ma pomoc.
+                pustyCykl(SpeechRecognizer.ERROR_NO_MATCH, "pusty wynik")
+                return
+            }
+            dziennik.dodaj(System.currentTimeMillis(), "wynik")
+            pusteCykle = 0
+            slyszalMowe = false
+            deliver(uzyteczne, final = true)
             restartSoon()
         }
 
@@ -591,29 +640,7 @@ class VoiceInput(private val context: Context) {
                 // Cisza i brak dopasowania sa normalne przy ciaglym nasluchu. Ale dwa puste cykle
                 // z rzedu przy RMS na dnie to mikrofon, ktory nic nie slyszy — podpowiadamy
                 // (przelacznik w ustawieniach szybkich, inna aplikacja), nasluch trwa dalej.
-                ReakcjaNaBlad.PUSTY_CYKL -> {
-                    bledyAudio = 0
-                    pusteCykle += 1
-                    if (cisza.maxRms > SilenceDetector.SILENCE_DB) slyszalMowe = true
-                    dziennik.dodaj(System.currentTimeMillis(), "pusto (" + error + "), RMS " + "%.1f".format(cisza.maxRms) + ", cykl " + pusteCykle)
-                    if (cisza.onEmptyCycle()) status = tekstCiszy
-                    // Cisza jest normalna TYLKO na silniku, ktory juz raz cos rozpoznal. Silnik,
-                    // ktory nie rozpoznal jeszcze niczego i trzeci raz z rzedu mowi "nic nie
-                    // slyszalem", w praktyce nie ma modelu tego jezyka albo odmawia pracy offline
-                    // (zgloszenie z Motoroli: przycisk dziala, zero bledow, zero reakcji na mowe).
-                    // Zamiast krecic sie w kolko schodzimy drabinke nizej.
-                    // oddalWynik, nie dzialal: patrz komentarz przy eskalowacPoPustym.
-                    if (eskalowacPoPustym(oddalWynik, pusteCykle, slyszalMowe)) {
-                        pusteCykle = 0
-                        ostatniBlad = error
-                        zanotujProbe(silnikOpis + ":nic")
-                        ostrzez("puste cykle bez rozpoznania — schodze drabinka")
-                        if (escalate()) status = tekstInnySilnik
-                        else wyczerpane(tekstBrakMowy)
-                        return
-                    }
-                    restartSoon()
-                }
+                ReakcjaNaBlad.PUSTY_CYKL -> pustyCykl(error, "pusto (" + error + ")")
 
                 // Zajety silnik: kilka ponowien ma sens (poprzednia sesja jeszcze sie sprzata),
                 // ale nie w nieskonczonosc z zapalonym "SŁUCHAM…" — po limicie traktujemy to jak
@@ -683,6 +710,50 @@ class VoiceInput(private val context: Context) {
                 }
             }
         }
+    }
+
+    /**
+     * Cykl, w ktorym silnik przyjal dzwiek i NIE oddal tresci. JEDNA droga dla dwoch objawow
+     * tej samej awarii:
+     *  - kod bledu NO_MATCH / SPEECH_TIMEOUT (galaz [ReakcjaNaBlad.PUSTY_CYKL]),
+     *  - pusty wynik KONCOWY — czesc silnikow zglasza brak dopasowania wlasnie tak, bez zadnego
+     *    kodu bledu (ekran testu mowy czyta to identycznie — patrz [VoiceProbe]).
+     *
+     * Do 0.9.11 druga droga nie istniala: pusty final zerowal licznik pustych cykli, zapisywal
+     * sie w dzienniku jako "wynik" i konczyl zwyklym restartem. Silnik oddajacy same puste listy
+     * nie schodzil wiec drabinka NIGDY — pasek swiecil "SŁUCHAM…", watchdog byl zdjety przez
+     * zyje(), straznik cyklu zdjety w onResults, a licznik stal na zerze. Nie ma powodu, zeby
+     * te dwie drogi kiedykolwiek sie rozjechaly, wiec jest jedna funkcja, a nie kopia kodu.
+     *
+     * @param kod kod do historii prob i do [ostatniBlad]; pusty wynik podstawia ERROR_NO_MATCH,
+     *        bo znaczy dokladnie to samo
+     * @param powod poczatek wpisu w dzienniku — ma odrozniac "pusto (7)" od "pusty wynik",
+     *        inaczej diagnostyka mowi o bledzie, ktorego nie bylo
+     */
+    private fun pustyCykl(kod: Int, powod: String) {
+        bledyAudio = 0
+        pusteCykle += 1
+        if (cisza.maxRms > SilenceDetector.SILENCE_DB) slyszalMowe = true
+        dziennik.dodaj(
+            System.currentTimeMillis(),
+            powod + ", RMS " + "%.1f".format(cisza.maxRms) + ", cykl " + pusteCykle,
+        )
+        if (cisza.onEmptyCycle()) status = tekstCiszy
+        // Cisza jest normalna TYLKO na silniku, ktory juz raz cos rozpoznal. Silnik, ktory nie
+        // rozpoznal jeszcze niczego i kolejny raz z rzedu mowi "nic nie slyszalem", w praktyce
+        // nie ma modelu tego jezyka albo odmawia pracy offline (zgloszenie z Motoroli: przycisk
+        // dziala, zero bledow, zero reakcji na mowe). Zamiast krecic sie w kolko schodzimy nizej.
+        // oddalWynik, nie dzialal: patrz komentarz przy eskalowacPoPustym.
+        if (eskalowacPoPustym(oddalWynik, pusteCykle, slyszalMowe)) {
+            pusteCykle = 0
+            ostatniBlad = kod
+            zanotujProbe(silnikOpis + ":nic")
+            ostrzez("puste cykle bez rozpoznania — schodze drabinka")
+            if (escalate()) status = tekstInnySilnik
+            else wyczerpane(tekstBrakMowy)
+            return
+        }
+        restartSoon()
     }
 
     /** Kolejny szczebel fallbacku. Zwraca true, jesli ponowiono nasluch innym silnikiem. */
@@ -813,22 +884,40 @@ class VoiceInput(private val context: Context) {
     // maly i w nawiasie — nie przeszkadza, a ratuje pol godziny zgadywania.
     private fun friendlyError(error: Int): String = when (error) {
         SpeechRecognizer.ERROR_NETWORK,
-        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "brak internetu dla głosu — wpisz odpowiedź"
-        13, 12 -> "brak pakietu mowy PL — wpisz odpowiedź" // LANGUAGE_UNAVAILABLE / NOT_SUPPORTED
-        ERROR_WATCHDOG -> "silnik mowy nie odpowiada (" + error + "/" + silniki.size + ") — wpisz odpowiedź"
-        else -> "głos niedostępny (" + error + "/" + silniki.size + ") — wpisz odpowiedź"
+        SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> tekstBrakSieci
+        // LANGUAGE_UNAVAILABLE / NOT_SUPPORTED. Do 0.9.11 stalo tu "PL" na sztywno, choc blad
+        // dotyczy TAGU, o ktory silnik byl wlasnie pytany — a gra startuje rownie czesto
+        // "en-US" (jezyk odpowiedzi ustala ekran) i probuje jeszcze tagu bez regionu.
+        13, 12 -> {
+            val jezyk = jezykDoKomunikatu(language, tekstJezykPolski, tekstJezykAngielski)
+            if (jezyk.isEmpty()) tekstBrakPakietu else zloz(tekstBrakPakietuJezyka, jezyk)
+        }
+        ERROR_WATCHDOG -> zloz(tekstSilnikMilczy, error, silniki.size)
+        else -> zloz(tekstGlosNiedostepny, error, silniki.size)
     }
 
-    private fun deliver(bundle: Bundle?, final: Boolean) {
-        val list = bundle?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION) ?: return
-        if (list.isEmpty()) return
+    /**
+     * Podstawienie do szablonu komunikatu. Szablony przychodza z ekranu wraz z tlumaczeniem,
+     * wiec literowka w "%s" nie moze wywrocic nasluchu wyjatkiem formatera — w najgorszym razie
+     * uczen zobaczy zdanie bez kodu bledu, a to nadal lepsze niz zgaszony glos.
+     */
+    private fun zloz(szablon: String, vararg co: Any?): String =
+        try { szablon.format(*co) } catch (_: Throwable) { szablon }
+
+    /**
+     * Sukces cyklu: silnik oddal TRESC. Lista jest juz przefiltrowana ([uzyteczneHipotezy]),
+     * wiec do ekranu nie ida puste ciagi — inaczej PlayScreen wypisywalby pod paskiem puste
+     * cudzyslowy, a VoiceMatch probowalby dopasowywac nic do odpowiedzi na planszy.
+     */
+    private fun deliver(uzyteczne: List<String>, final: Boolean) {
+        if (uzyteczne.isEmpty()) return
         // TU, a nie przy gotowosci: silnik wlasnie zamienil mowe na tekst. Jedyny twardy dowod,
         // ze pracuje — i jedyne, co chroni go przed zejsciem drabinka po milczacym cyklu.
         oddalWynik = true
         cisza.onSpeech()
         bledyAudio = 0 // wynik = dzwiek plynie; dopiero to kasuje serie ERROR_AUDIO
         bledyBusy = 0
-        onHeard?.invoke(list.toList(), final)
+        onHeard?.invoke(uzyteczne, final)
     }
 
     /** Android konczy nasluch po kazdej wypowiedzi - wznawiamy, dopoki gracz chce. */

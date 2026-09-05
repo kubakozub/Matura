@@ -141,6 +141,15 @@ enum class Achievement(
 
 @Serializable
 data class SaveData(
+    /**
+     * Wersja ukladu danych w pliku. Pole jest PIERWSZE, bo laduje na poczatku JSON-a i widac
+     * je od razu przy recznym ogladaniu zapisu.
+     *
+     * Zero znaczy "zapis sprzed wersjonowania": stare pliki tego pola nie maja, wiec
+     * deserializacja podstawia wartosc domyslna i po tym Repository poznaje, ze dane trzeba
+     * przepuscic przez migracje (Repository.migrate).
+     */
+    val schemaVersion: Int = 0,
     val profile: Profile = Profile(),
     val options: Options = Options(),
     val sets: List<WordSet> = emptyList(),
