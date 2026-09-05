@@ -6,16 +6,105 @@ import kotlinx.serialization.Serializable
  * One row of a set, mirroring the Quizlet-style editor from the design document:
  * a term on the left, its definition on the right. A definition may list several
  * accepted translations separated by commas, e.g. "konsorcjum, syndykat".
+ *
+ * [id] to TRWALA tozsamosc wpisu i jedyny klucz, pod ktorym wolno trzymac postep nauki.
+ * Przedtem tozsamosc byla podwojnie nietrwala: rownosc data class liczyla sie z tresci,
+ * a edytor zestawow budowal liste OD ZERA z wierszy ekranu, wiec poprawka literowki albo
+ * przestawienie wiersza robily z tego samego slowa nowe slowo. Zasady nadawania (prefiks
+ * "w" dla katalogu, "u" dla wpisow wlasnych, zamrozony sens zamiast biezacego tlumaczenia)
+ * opisuje com.matura.app.learn.EntryId.
+ *
+ * Pusta wartosc domyslna oznacza wpis SPRZED wersjonowania — taki dostaje identyfikator
+ * w migracji zapisu (Repository.migrate), a nie w locie przy odczycie: identyfikator ma byc
+ * nadany raz i utrwalony, inaczej postep gubilby sie przy kazdym starcie.
  */
 @Serializable
 data class Entry(
     val term: String,
     val definition: String,
+    val id: String = "",
 )
 
 /** Which side of the set the player is asked to produce. */
 @Serializable
 enum class Direction { TERM_TO_DEF, DEF_TO_TERM, RANDOM }
+
+/**
+ * Rodzaj zadania, ktorym sprawdzono slowo. Rozroznienie jest MERYTORYCZNE, nie kosmetyczne:
+ * wybor z czterech odpowiedzi dowodzi tylko tego, ze uczen rozpoznaje znaczenie posrod
+ * podanych, i nie mowi nic o tym, czy potrafi je przypomniec sobie sam ani czy zna pisownie.
+ * Dlatego [Srs] pozwala rozpoznaniu podniesc slowo najwyzej do pudelka 1, a pudelka 2 i 3
+ * rezerwuje dla zadan produkcyjnych.
+ *
+ * Nazwy sa po polsku, bo to termin dydaktyczny z zalozen projektu (ang. recognition/recall),
+ * a nie techniczny szczegol implementacji.
+ */
+@Serializable
+enum class TaskKind {
+    /** ABCD, prawda/falsz — uczen WYBIERA sposrod podanych. */
+    ROZPOZNANIE,
+
+    /** Wpisywanie z klawiatury, odpowiedz glosem — uczen PRODUKUJE odpowiedz sam. */
+    PRZYPOMNIENIE,
+}
+
+/**
+ * Stan nauki JEDNEGO celu, czyli pary (identyfikator wpisu, kierunek). Regulami rzadzi
+ * com.matura.app.learn.Srs — tutaj jest wylacznie to, co musi przetrwac restart.
+ *
+ * Klasa mieszka w pakiecie model, mimo ze pojeciowo nalezy do nauki: [SaveData] musi ja
+ * widziec, a pakiet learn juz zalezy od modelu ([Direction]). Trzymanie jej w learn zrobiloby
+ * cykl zaleznosci miedzy pakietami. Reguly zostaja w jednym miejscu (Srs.kt), tutaj sa dane.
+ *
+ * Zapisujemy MINIMUM: pudelko, termin, dzien ostatniego awansu, dzien ostatniej pomocy oraz
+ * dwa liczniki. Celowo NIE ma tu historii odpowiedzi, nagran ani transkrypcji — do niczego
+ * w aplikacji nie sa potrzebne, a byloby to gromadzenie danych o uczniu na zapas.
+ *
+ * Dni licza sie od epoki UTC (patrz Srs.dayOf), a nie od lokalnej polnocy.
+ */
+@Serializable
+data class WordProgress(
+    /** 0 = brak danych, 1..3 = pudelka Leitnera. */
+    val box: Int = 0,
+
+    /**
+     * Dzien, od ktorego slowo znow czeka na sprawdzenie. Zero znaczy "od zawsze zalegle",
+     * wiec swiezy wpis jest zalegly od razu i nie wymaga osobnego znacznika.
+     */
+    val dueDay: Int = 0,
+
+    /**
+     * Dzien ostatniego KWALIFIKUJACEGO awansu. Blokuje drugi awans tego samego dnia:
+     * bez tego wystarczyloby kilka razy z rzedu trafic to samo slowo w jednej sesji,
+     * zeby aplikacja uznala je za utrwalone.
+     */
+    val lastPromotionDay: Int = NO_DAY,
+
+    /**
+     * Dzien, w ktorym uczen potrzebowal przy tym slowie pomocy: pomylil sie, wzial
+     * podpowiedz albo kazal pokazac odpowiedz. Poprawna odpowiedz w tym samym dniu jest
+     * wtedy tylko poprawka, a nie dowodem pamieci, wiec nie awansuje.
+     */
+    val assistedDay: Int = NO_DAY,
+
+    val mistakes: Int = 0,
+    val hints: Int = 0,
+
+    /** Rodzaj ostatniej proby — zeby ekran mogl uczciwie nazwac wynik ("rozpoznane" vs "umiesz"). */
+    val lastTask: TaskKind? = null,
+
+    /**
+     * Znacznik ostatnio przetworzonej proby. Ta sama proba potrafi trafic do zapisu dwa razy
+     * (ponowienie po bledzie zapisu, powrot na ekran, dwa zrodla zdarzen w trybie glosowym),
+     * a dwa razy zaliczony awans to nieprawda o uczniu. Pusty znacznik wylacza ten straznik.
+     */
+    val lastAttemptId: String = "",
+) {
+    companion object {
+        /** "Nigdy" dla pol dniowych. Uzywane WYLACZNIE do porownan rownosciowych — bez arytmetyki. */
+        const val NO_DAY: Int = Int.MIN_VALUE
+    }
+}
 
 @Serializable
 data class WordSet(
@@ -154,4 +243,16 @@ data class SaveData(
     val options: Options = Options(),
     val sets: List<WordSet> = emptyList(),
     val scores: List<ScoreRecord> = emptyList(),
+
+    /**
+     * Postep per slowo. Klucz buduje Srs.key(identyfikatorWpisu, kierunek) — postep jest
+     * wiec zwiazany ze SLOWEM, a nie z zestawem: to samo znaczenie w dwoch zestawach dzieli
+     * jeden stan, a usuniecie zestawu nie kasuje nauki.
+     *
+     * Mapa NIE jest sprzatana przy zmianie katalogu. Wpis, ktory zniknal ze slownika, moze
+     * do niego wrocic (katalog jest generowany i bywa poprawiany), a wtedy uczen odzyskuje
+     * swoja historie zamiast zaczynac od zera. Koszt jest zaniedbywalny: kilkadziesiat bajtow
+     * na slowo, ktore uczen naprawde cwiczyl.
+     */
+    val progress: Map<String, WordProgress> = emptyMap(),
 )

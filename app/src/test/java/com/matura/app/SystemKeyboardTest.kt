@@ -55,6 +55,7 @@ class SystemKeyboardTest {
                 playerName = "Test",
                 onExit = {},
                 onFinished = {},
+                onAttempt = {},
             )
         }
     }

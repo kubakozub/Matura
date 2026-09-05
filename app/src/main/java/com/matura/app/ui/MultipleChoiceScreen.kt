@@ -41,12 +41,15 @@ import androidx.compose.ui.unit.sp
 import com.matura.app.R
 import com.matura.app.game.FlashKind
 import com.matura.app.game.Matching
+import com.matura.app.learn.Attempt
+import com.matura.app.learn.Outcome
 import com.matura.app.model.Direction
 import com.matura.app.model.Entry
 import com.matura.app.model.GameMode
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
 import com.matura.app.model.Speed
+import com.matura.app.model.TaskKind
 import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordSet
 import kotlin.random.Random
@@ -111,6 +114,12 @@ private fun multiplierBadge(multiplier: Int) = when (multiplier) {
 
 /** Jedno gotowe pytanie: hasło, poprawna odpowiedź i potasowane kafle. */
 private data class McQuestion(
+    /**
+     * Trwaly identyfikator wpisu, z ktorego zbudowano pytanie. Postep nauki wisi na NIM,
+     * a nie na tresci kafla — inaczej poprawka literowki w zestawie kasowalaby historie.
+     * Pusty dla zestawow sprzed wersjonowania (patrz [probaAbcd]).
+     */
+    val entryId: String,
     val prompt: String,
     val correct: String,
     val choices: List<String>,
@@ -118,6 +127,51 @@ private data class McQuestion(
     val termToDef: Boolean,
 ) {
     val correctIndex: Int get() = choices.indexOf(correct)
+}
+
+/**
+ * Rozstrzygniecie jednego pytania ABCD przelozone na probe dla harmonogramu powtorek.
+ *
+ * Osobna, czysta funkcja (a nie kilka linii w [McGame]), bo to jest decyzja MERYTORYCZNA,
+ * a nie szczegol rysowania: od niej zalezy, co aplikacja twierdzi o wiedzy ucznia. Tutaj da
+ * sie ja sprawdzic testem bez uruchamiania Compose — patrz RodzajZadaniaTest.
+ *
+ * Rodzaj zadania to zawsze [TaskKind.ROZPOZNANIE]: uczen WYBIERA sposrod czterech podanych
+ * odpowiedzi, wiec nawet zgadywanie trafia co czwarty raz. Sufit awansu (pudelko 1) pilnuje
+ * [com.matura.app.learn.Srs.ceilingFor].
+ *
+ * @param wybor indeks kliknietego kafla albo `null`, gdy zszedl zegar pytania.
+ * @return `null`, gdy nie ma czego zapisac. Wpis bez identyfikatora (zestaw sprzed migracji,
+ *   dopoki nie zapisze go pierwszy zapis) NIE moze trafic do harmonogramu: Srs.key rzuca
+ *   wtedy wyjatkiem, a gra ma sie nie wywrocic z powodu starego pliku zapisu.
+ */
+internal fun probaAbcd(
+    entryId: String,
+    termToDef: Boolean,
+    wybor: Int?,
+    poprawny: Int,
+    nowMs: Long,
+): Attempt? {
+    if (entryId.isBlank()) return null
+    val outcome = when {
+        // Czas, ktory minal, NIE jest bledna odpowiedzia ucznia — nie cofamy pudelka i nie
+        // podbijamy licznika pomylek. Ekran jednak odslania wtedy poprawny kafel, wiec dzien
+        // zostaje oznaczony jako "z pomoca": to samo haslo, trafione dwie rundy pozniej, jest
+        // powtorzeniem swiezo widzianej odpowiedzi, a nie dowodem pamieci.
+        wybor == null -> Outcome.POKAZANA
+        wybor == poprawny -> Outcome.POPRAWNA
+        else -> Outcome.BLEDNA
+    }
+    return Attempt(
+        entryId = entryId,
+        // Kierunek rozlosowano juz przy budowie pytania, wiec RANDOM nie ma jak tu wpasc.
+        direction = if (termToDef) Direction.TERM_TO_DEF else Direction.DEF_TO_TERM,
+        task = TaskKind.ROZPOZNANIE,
+        outcome = outcome,
+        // Znacznik jednorazowosci: ta sama odpowiedz nie moze dac dwoch awansow. Milisekunda
+        // wystarcza — nikt nie odpowie dwa razy na to samo haslo w tej samej milisekundzie.
+        id = "$entryId#$nowMs",
+    )
 }
 
 /**
@@ -167,6 +221,7 @@ private fun buildRound(entries: List<Entry>, direction: Direction, rng: Random):
         if (distractors.size != CHOICE_COUNT - 1) return@mapNotNull null
 
         McQuestion(
+            entryId = entry.id,
             prompt = prompt,
             correct = correct,
             choices = (distractors + correct).shuffled(rng),
@@ -196,6 +251,13 @@ private fun buildNonEmptyRound(
     return emptyList()
 }
 
+/**
+ * @param onAttempt wynik JEDNEJ odpowiedzi dla harmonogramu powtorek. Ekran nie zna repozytorium
+ *   (nie zna go zaden tryb gry) i celowo nie zaklada wlasnego: druga instancja
+ *   [com.matura.app.data.Repository] ma wlasny bufor, wiec zapis wyniku gry nadpisalby postep
+ *   z calej rozgrywki. Wolajacy ma podac `repo.recordAttempt(proba, System.currentTimeMillis())`;
+ *   dopoki tego nie zrobi, domyslne nic-nie-rob zostawia tryb dokladnie takim, jaki byl.
+ */
 @Composable
 fun MultipleChoiceScreen(
     set: WordSet,
@@ -204,6 +266,13 @@ fun MultipleChoiceScreen(
     playerName: String,
     onExit: () -> Unit,
     onFinished: (ScoreRecord) -> Unit,
+    /**
+     * BEZ WARTOSCI DOMYSLNEJ — celowo. Gdy ten parametr mial domyslne nic-nie-rob, App.kt
+     * po prostu go nie podawal: kompilacja i testy byly zielone, a postep nauki nie zapisywal
+     * sie w ogole. Wymagany parametr sprawia, ze kazde nowe wywolanie ekranu musi rozstrzygnac,
+     * co zrobic z proba — a zapomnienie konczy sie bledem kompilacji, nie cicha strata danych.
+     */
+    onAttempt: (Attempt) -> Unit,
 ) {
     // Wiersze bez treści (także złożone z samych znaków, które normalizacja wycina) nie nadają
     // się ani na pytanie, ani na dystraktor — filtrujemy tak samo jak pozostałe tryby.
@@ -236,6 +305,7 @@ fun MultipleChoiceScreen(
             playerName = playerName,
             onExit = onExit,
             onFinished = onFinished,
+            onAttempt = onAttempt,
         )
     }
 }
@@ -291,6 +361,7 @@ private fun McGame(
     playerName: String,
     onExit: () -> Unit,
     onFinished: (ScoreRecord) -> Unit,
+    onAttempt: (Attempt) -> Unit,
 ) {
     val lang = options.uiLanguage
     val maxLives = options.lives.coerceAtLeast(1)
@@ -339,6 +410,15 @@ private fun McGame(
         val correct = choice >= 0 && choice == question.correctIndex
         revealed = choice
         asked += 1
+        // Nauka i punktacja to dwie rozne rachuby i celowo sie rozjezdzaja: zejscie zegara
+        // kosztuje zycie (bo to gra), ale nie jest bledna odpowiedzia (bo to nie wiedza).
+        probaAbcd(
+            entryId = question.entryId,
+            termToDef = question.termToDef,
+            wybor = if (choice == TIMED_OUT) null else choice,
+            poprawny = question.correctIndex,
+            nowMs = System.currentTimeMillis(),
+        )?.let(onAttempt)
         if (correct) {
             streak += 1
             if (streak > bestStreak) bestStreak = streak

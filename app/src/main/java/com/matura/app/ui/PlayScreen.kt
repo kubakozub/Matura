@@ -65,10 +65,15 @@ import com.matura.app.game.FlashKind
 import com.matura.app.game.GameConfig
 import com.matura.app.game.GameEngine
 import com.matura.app.game.GameSnapshot
+import com.matura.app.game.LearningEvent
 import com.matura.app.game.Matching
 import com.matura.app.game.SubmitResult
+import com.matura.app.learn.Attempt
+import com.matura.app.learn.Srs
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
+import com.matura.app.model.TaskKind
+import com.matura.app.model.WordProgress
 import com.matura.app.model.WordSet
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -157,6 +162,32 @@ fun PlayScreen(
     // droga co ekran OPCJE, wiec zapis jest trwaly; domyslnie pusta — testy i podglad
     // nie musza niczego podawac.
     onOptionsChange: (Options) -> Unit = {},
+    /**
+     * Historia nauki (SaveData.progress) — zwykle dane, nie repozytorium: ekran gry nie ma
+     * czytac z dysku, a silnik ma zostac testowalny bez Androida.
+     *
+     * PUSTA MAPA znaczy GRA O REKORD: slowa leca losowo, dokladnie jak przed wprowadzeniem
+     * harmonogramu. Mapa niepusta wlacza dobor z powtorek. Wartosc domyslna jest wiec takze
+     * zgodnoscia wstecz: wolajacy, ktory jeszcze nie podaje historii, dostaje zachowanie
+     * sprzed tej zmiany, a nie polowicznie wlaczona nauke.
+     */
+    progress: Map<String, WordProgress> = emptyMap(),
+    /**
+     * Dzien harmonogramu w chwili wejscia do gry (Srs.dayOf). Parametr, a nie odczyt zegara
+     * w srodku silnika: caly harmonogram ma byc testowalny na granicy doby — patrz Srs.
+     */
+    today: Int = Srs.dayOf(System.currentTimeMillis()),
+    /**
+     * Zapis jednej proby (Repository.recordAttempt). Domyslnie pusty, bo ekran ma dzialac
+     * takze tam, gdzie nikt postepu nie zbiera — w podgladzie i w testach Compose.
+     */
+    /**
+     * BEZ WARTOSCI DOMYSLNEJ — celowo. Gdy ten parametr mial domyslne nic-nie-rob, App.kt
+     * po prostu go nie podawal: kompilacja i testy byly zielone, a postep nauki nie zapisywal
+     * sie w ogole. Wymagany parametr sprawia, ze kazde nowe wywolanie ekranu musi rozstrzygnac,
+     * co zrobic z proba — a zapomnienie konczy sie bledem kompilacji, nie cicha strata danych.
+     */
+    onAttempt: (Attempt) -> Unit,
 ) {
     var restarts by remember { mutableIntStateOf(0) }
     // Systemowy back = czyste wyjscie do menu (bez cichego gubienia rundy na SetPick).
@@ -168,6 +199,12 @@ fun PlayScreen(
                 lives = options.lives,
                 direction = options.direction,
                 speed = options.speed,
+                // progress i today CELOWO nie sa kluczami remember. Plan rundy ma stac w
+                // miejscu od pierwszego do ostatniego potworka; gdyby byly kluczami, kazda
+                // poprawna odpowiedz (a wiec zapis postepu i nowa mapa) tworzylaby NOWY
+                // silnik i kasowala trwajaca gre. Przekroczenie polnocy UTC — tak samo.
+                progress = progress,
+                today = today,
             ),
         )
     }
@@ -185,6 +222,36 @@ fun PlayScreen(
 
     var lastFlash by remember(engine) { mutableStateOf<FlashKind?>(null) }
 
+    // Domkniecie zapisu bierzemy ZAWSZE z ostatniego zlozenia - z tego samego powodu, co przy
+    // onExhausted nizej: petla klatek zyje dluzej niz jedno zlozenie, a wolajacy sklada lambde
+    // od nowa po kazdym odswiezeniu danych. Bez tego proby szlyby do domkniecia sprzed zapisu.
+    val zapiszNow by rememberUpdatedState(onAttempt)
+
+    /**
+     * Jedna obserwacja gry -> jedna proba w harmonogramie.
+     *
+     * Rodzaj zadania w CLASSIC to ZAWSZE przypomnienie: uczen produkuje odpowiedz sam,
+     * z klawiatury albo glosem, i nie wybiera jej sposrod podanych. Od tego zalezy sufit
+     * awansu (Srs.ceilingFor), wiec nie jest to kosmetyka — z ROZPOZNANIEM slowo nigdy nie
+     * wyszloby z pudelka 1.
+     */
+    fun zapiszProbe(zdarzenie: LearningEvent) {
+        zapiszNow(
+            Attempt(
+                entryId = zdarzenie.entryId,
+                direction = zdarzenie.direction,
+                task = TaskKind.PRZYPOMNIENIE,
+                outcome = zdarzenie.outcome,
+                // Znacznik jednorazowosci musi byc unikalny takze MIEDZY rundami i po
+                // restarcie (WordProgress.lastAttemptId przezywa zapis), a silnik gry liczy
+                // proby od zera przy kazdej rundzie — sam numer powtorzylby sie w nastepnej
+                // grze i awans przepadlby jako "juz przetworzony". Czas dokladamy wiec tutaj,
+                // w warstwie, ktora ma prawo znac zegar.
+                id = zdarzenie.entryId + "#" + System.currentTimeMillis() + "#" + zdarzenie.nr,
+            )
+        )
+    }
+
     LaunchedEffect(engine, paused) {
         if (paused) return@LaunchedEffect
         var last = 0L
@@ -200,6 +267,11 @@ fun PlayScreen(
                 highlighted = engine.highlightedIds()
                 highlightedCrates = engine.highlightedCrateIds()
             }
+            // Zdarzenia nauki odbieramy PO klatce, nie w jej domknieciu. Dwa powody: zapis idzie
+            // na dysk (Repository), a takiej pracy nie wklada sie w chwile, w ktorej liczy sie
+            // plynnosc planszy; a gdy petla zostanie tu przerwana (pauza, wyjscie), zdarzenia
+            // czekaja dalej w silniku, zamiast zniknac miedzy odebraniem a zapisem.
+            for (p in engine.takeLearningEvents()) zapiszProbe(p)
         }
     }
 
@@ -232,6 +304,10 @@ fun PlayScreen(
         if (paused) return
         val r = engine.submit()
         if (r is SubmitResult.Fired) muzzle = 0.11f
+        // Zaliczona i chybiona odpowiedz sa zdarzeniami nauki. Odbieramy je TUTAJ, a nie
+        // dopiero w najblizszej klatce, bo klatki potrafia stanac (pauza po awarii mikrofonu,
+        // zejscie w tlo, koniec rundy) — a to, ze uczen odpowiedzial, wydarzylo sie mimo to.
+        for (p in engine.takeLearningEvents()) zapiszProbe(p)
     }
 
     // ---- tryb glosowy -------------------------------------------------------
@@ -663,6 +739,12 @@ fun PlayScreen(
         if (nasluchPrzedDiagnostyka) { nasluchPrzedDiagnostyka = false; startVoice() }
     }
 
+    // TRYB RUNDY jezykiem gracza. Uczen musi wiedziec, czy gra realizuje zaplanowana nauke,
+    // czy jest zwykla gra o wynik: dobor slow rozni sie miedzy nimi zasadniczo i bez podpisu
+    // wygladalby na kaprys losowania. Bez nowego ekranu przed gra — o trybie rozstrzyga to,
+    // czy wolajacy poda historie nauki tego zestawu (patrz [progress]).
+    val podpisTrybu = if (engine.plannedLearning) t("NAUKA", "STUDY", lang) else t("REKORD", "SCORE", lang)
+
     Column(
         Modifier
             .fillMaxSize()
@@ -676,7 +758,10 @@ fun PlayScreen(
                 .border(3.dp, Palette.Ink)
         ) {
             Canvas(Modifier.fillMaxSize()) {
-                drawField(snap, highlighted, highlightedCrates, theme, sprites, font, options, muzzle)
+                drawField(
+                    snap, highlighted, highlightedCrates, theme, sprites, font, options,
+                    muzzle, podpisTrybu,
+                )
             }
 
             if (!engine.isPlayable) {
@@ -968,6 +1053,8 @@ private fun DrawScope.drawField(
     font: PixelFont,
     options: Options,
     muzzle: Float,
+    /** "NAUKA" albo "REKORD" — patrz miejsce wywolania. */
+    modeLabel: String,
 ) {
     val w = size.width
     val h = size.height
@@ -1054,7 +1141,7 @@ private fun DrawScope.drawField(
             rotate(degrees = a, pivot = Offset(x, y)) { drawSprite(sprite, x, y, hgt) }
         }
 
-        drawHud(snap, w, h, unit, fs, sprites, font)
+        drawHud(snap, w, h, unit, fs, sprites, font, modeLabel)
 
         if (snap.levelUpBanner > 0f) {
             val alpha = (snap.levelUpBanner / GameEngine.LEVEL_BANNER_TIME).coerceIn(0f, 1f)
@@ -1143,6 +1230,7 @@ private fun DrawScope.drawHud(
     fs: Float,
     sprites: Sprites,
     font: PixelFont,
+    modeLabel: String,
 ) {
     val pad = unit * 0.030f
     val iconH = unit * 0.048f
@@ -1189,4 +1277,17 @@ private fun DrawScope.drawHud(
     val lx = w - pad - font.widthPx(lvl, fs)
     drawPixelText(font, lvl, lx, bottomTop, fs, Palette.Gold)
     drawSprite(sprites.iconTarget, lx - unit * 0.014f - iconH * 0.45f, bottomMid, iconH * 0.8f)
+
+    // Tryb rundy, dol-srodek — jedyne wolne miejsce miedzy wynikiem a poziomem. Mniejszy
+    // i przygaszony, bo to nie jest wynik gry, tylko odpowiedz na pytanie "czemu wyszlo
+    // wlasnie to slowo".
+    val modeScale = fs * 0.8f
+    drawPixelText(
+        font,
+        modeLabel,
+        w / 2f - font.widthPx(modeLabel, modeScale) / 2f,
+        bottomMid - PixelFont.GLYPH_H * modeScale / 2f,
+        modeScale,
+        Palette.Muted,
+    )
 }

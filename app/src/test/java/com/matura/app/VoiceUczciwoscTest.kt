@@ -84,6 +84,7 @@ class VoiceUczciwoscTest {
                     playerName = "Test",
                     onExit = {},
                     onFinished = {},
+                onAttempt = {},
                 )
             }
         }

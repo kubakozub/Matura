@@ -42,12 +42,15 @@ import androidx.compose.ui.unit.sp
 import com.matura.app.R
 import com.matura.app.game.FlashKind
 import com.matura.app.game.Matching
+import com.matura.app.learn.Attempt
+import com.matura.app.learn.Outcome
 import com.matura.app.model.Direction
 import com.matura.app.model.Entry
 import com.matura.app.model.GameMode
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
 import com.matura.app.model.Speed
+import com.matura.app.model.TaskKind
 import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordSet
 import kotlin.random.Random
@@ -73,6 +76,13 @@ private fun t(pl: String, en: String, lang: UiLanguage) = if (lang == UiLanguage
 // ---- model pytania ---------------------------------------------------------
 
 private data class TfQuestion(
+    /**
+     * Trwaly identyfikator wpisu, o ktory pytamy. Postep nauki wisi na nim, a nie na tresci —
+     * pusty tylko w zestawach sprzed wersjonowania (patrz [probaPrawdaFalsz]).
+     */
+    val entryId: String,
+    /** true = pytamy haslem, oceniana propozycja jest tlumaczenie. Stad kierunek postepu. */
+    val termToDef: Boolean,
     /** Hasło pokazane u góry panelu. */
     val prompt: String,
     /** Propozycja tłumaczenia, którą ocenia gracz. */
@@ -84,8 +94,52 @@ private data class TfQuestion(
 
 private enum class TfPhase { ASK, FEEDBACK, OVER }
 
-/** Powód, dla którego runda się skończyła — steruje tekstem feedbacku. */
-private enum class TfOutcome { RIGHT, WRONG, TIMEOUT }
+/**
+ * Powod, dla ktorego runda sie skonczyla — steruje tekstem feedbacku, a przez
+ * [probaPrawdaFalsz] takze zapisem postepu. Stad `internal`, a nie `private`: test rodzaju
+ * zadania nazywa te trzy wyjscia po imieniu.
+ */
+internal enum class TfOutcome { RIGHT, WRONG, TIMEOUT }
+
+/**
+ * Rozstrzygniecie jednej rundy prawda/falsz przelozone na probe dla harmonogramu powtorek.
+ *
+ * Rodzaj zadania to [TaskKind.ROZPOZNANIE] — uczen OCENIA podana propozycje, wiec odpowiedz
+ * "falsz" dowodzi tylko tego, ze odroznil dwa znaczenia, a nie ze umie przetlumaczyc haslo
+ * sam. Sufit awansu (pudelko 1, "poznane") ma tu nawet mocniejsze uzasadnienie niz przy ABCD:
+ * przy dwoch przyciskach zgadywanie trafia co drugi raz.
+ *
+ * Czysta funkcja, bo klasyfikacja jest merytoryczna i ma wlasny test (RodzajZadaniaTest);
+ * w srodku ekranu bylaby sprawdzalna dopiero przez rysowanie calej gry.
+ *
+ * @return `null` dla wpisu bez identyfikatora — Srs.key rzuca wtedy wyjatkiem, a stary plik
+ *   zapisu nie ma prawa wywrocic gry.
+ */
+internal fun probaPrawdaFalsz(
+    entryId: String,
+    termToDef: Boolean,
+    wynik: TfOutcome,
+    nowMs: Long,
+): Attempt? {
+    if (entryId.isBlank()) return null
+    val outcome = when (wynik) {
+        TfOutcome.RIGHT -> Outcome.POPRAWNA
+        TfOutcome.WRONG -> Outcome.BLEDNA
+        // Zejscie zegara kosztuje zycie, ale nie jest bledna odpowiedzia: uczen nic nie
+        // powiedzial o tym slowie. Panel odslania wtedy poprawne tlumaczenie, wiec dzien
+        // zostaje oznaczony jako "z pomoca" i to samo haslo, trafione za chwile, nie awansuje.
+        TfOutcome.TIMEOUT -> Outcome.POKAZANA
+    }
+    return Attempt(
+        entryId = entryId,
+        // Kierunek rozstrzygnieto przy budowie pytania — RANDOM nie ma jak tu wpasc.
+        direction = if (termToDef) Direction.TERM_TO_DEF else Direction.DEF_TO_TERM,
+        task = TaskKind.ROZPOZNANIE,
+        outcome = outcome,
+        // Znacznik jednorazowosci — jedna odpowiedz nie moze dac dwoch awansow.
+        id = "$entryId#$nowMs",
+    )
+}
 
 // ---- reguły ----------------------------------------------------------------
 
@@ -149,7 +203,9 @@ private fun buildQuestion(
     if (prompt.isEmpty() || correct.isEmpty()) return null
 
     // Około połowa pytań ma tłumaczenie prawidłowe.
-    if (rnd.nextBoolean()) return TfQuestion(prompt, correct, correct, isTrue = true)
+    if (rnd.nextBoolean()) {
+        return TfQuestion(entry.id, termToDef, prompt, correct, correct, isTrue = true)
+    }
 
     // Podmianka: dowolne inne hasło, ale odrzucamy takie, które po normalizacji
     // dzieli choć jedną akceptowaną odpowiedź z poprawną — inaczej "fałsz" byłby prawdą.
@@ -169,11 +225,11 @@ private fun buildQuestion(
         val candAnswers = Matching.acceptedAnswers(cand)
         if (candAnswers.isEmpty()) continue
         if (candAnswers.any { it in correctAnswers }) continue
-        return TfQuestion(prompt, cand, correct, isTrue = false)
+        return TfQuestion(entry.id, termToDef, prompt, cand, correct, isTrue = false)
     }
 
     // Cały zbiór okazał się synonimami jednego pojęcia — nie da się ułożyć fałszu.
-    return TfQuestion(prompt, correct, correct, isTrue = true)
+    return TfQuestion(entry.id, termToDef, prompt, correct, correct, isTrue = true)
 }
 
 /**
@@ -204,6 +260,13 @@ private fun hasFalseCandidate(entries: List<Entry>, entry: Entry, termToDef: Boo
 
 // ---- ekran -----------------------------------------------------------------
 
+/**
+ * @param onAttempt wynik JEDNEJ rundy dla harmonogramu powtorek. Ekran nie zna repozytorium
+ *   i nie zaklada wlasnego — druga instancja [com.matura.app.data.Repository] ma wlasny bufor,
+ *   wiec zapis wyniku gry nadpisalby postep z calej rozgrywki. Wolajacy podaje
+ *   `repo.recordAttempt(proba, System.currentTimeMillis())`; domyslne nic-nie-rob zostawia
+ *   tryb takim, jaki byl.
+ */
 @Composable
 fun TrueFalseScreen(
     set: WordSet,
@@ -212,6 +275,13 @@ fun TrueFalseScreen(
     playerName: String,
     onExit: () -> Unit,
     onFinished: (ScoreRecord) -> Unit,
+    /**
+     * BEZ WARTOSCI DOMYSLNEJ — celowo. Gdy ten parametr mial domyslne nic-nie-rob, App.kt
+     * po prostu go nie podawal: kompilacja i testy byly zielone, a postep nauki nie zapisywal
+     * sie w ogole. Wymagany parametr sprawia, ze kazde nowe wywolanie ekranu musi rozstrzygnac,
+     * co zrobic z proba — a zapomnienie konczy sie bledem kompilacji, nie cicha strata danych.
+     */
+    onAttempt: (Attempt) -> Unit,
 ) {
     val lang = options.uiLanguage
 
@@ -287,6 +357,12 @@ fun TrueFalseScreen(
     fun settle(result: TfOutcome) {
         if (phase != TfPhase.ASK) return
         outcome = result
+        // Postep nauki liczy sie inaczej niz punkty: strata zycia za zejscie zegara zostaje,
+        // ale harmonogram nie dostaje z tego bledu (patrz probaPrawdaFalsz).
+        question?.let { q ->
+            probaPrawdaFalsz(q.entryId, q.termToDef, result, System.currentTimeMillis())
+                ?.let(onAttempt)
+        }
         if (result == TfOutcome.RIGHT) {
             val before = levelFor(correctCount)
             streak += 1

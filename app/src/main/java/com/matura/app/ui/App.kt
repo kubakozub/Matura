@@ -18,6 +18,8 @@ import com.matura.app.model.Options
 import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
 import com.matura.app.model.WordSet
+import com.matura.app.learn.Attempt
+import com.matura.app.learn.Srs
 
 sealed interface Screen {
     data object Start : Screen
@@ -114,6 +116,20 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                     // Wszystkie tryby maja ta sama sygnature ekranu; tryb doklejamy
                     // do rekordu tutaj, wiec same ekrany nie musza go znac.
                     val exit: () -> Unit = { stack = listOf(Screen.Menu) }
+                    // JEDNO wejscie zapisu proby dla wszystkich czterech trybow. Ekrany dostaja
+                    // zwykla lambde, wiec zadne z nich nie siega do repozytorium samo i kazde
+                    // zostaje testowalne bez Androida.
+                    //
+                    // refresh() po zapisie jest CELOWO pominiete: przeladowanie SaveData w trakcie
+                    // rundy podmienialoby `data.options` i mape postepu, a te sa kluczami remember
+                    // w ekranach gry — czyli kazda poprawna odpowiedz kasowalaby trwajaca gre.
+                    // Ekran wyniku i tak czyta swiezy stan, bo finish() wola refresh().
+                    val zapiszProbe: (Attempt) -> Unit = { proba ->
+                        repo.recordAttempt(proba, System.currentTimeMillis())
+                    }
+                    // Dzien harmonogramu ustalamy RAZ, przy wejsciu do rundy. Gdyby liczyl sie na
+                    // biezaco, przekroczenie polnocy UTC w trakcie gry przestawiloby plan rundy.
+                    val dzisiaj = Srs.dayOf(System.currentTimeMillis())
                     val finish: (com.matura.app.model.ScoreRecord) -> Unit = { record ->
                         repo.recordGame(record.copy(mode = s.mode), set.id)
                         refresh()
@@ -125,18 +141,24 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                             // Gra moze sama wlaczyc klawiature telefonu (awaryjna droga glosu);
                             // zapis ta sama droga co z ekranu OPCJE, wiec zostaje na kolejne gry.
                             onOptionsChange = { o: Options -> repo.setOptions(o); refresh() },
+                            progress = data.progress,
+                            today = dzisiaj,
+                            onAttempt = zapiszProbe,
                         )
                         GameMode.TRUE_FALSE -> TrueFalseScreen(
                             set = set, options = data.options, str = str,
                             playerName = data.profile.name, onExit = exit, onFinished = finish,
+                            onAttempt = zapiszProbe,
                         )
                         GameMode.MULTIPLE_CHOICE -> MultipleChoiceScreen(
                             set = set, options = data.options, str = str,
                             playerName = data.profile.name, onExit = exit, onFinished = finish,
+                            onAttempt = zapiszProbe,
                         )
                         GameMode.TIME_ATTACK -> TimeAttackScreen(
                             set = set, options = data.options, str = str,
                             playerName = data.profile.name, onExit = exit, onFinished = finish,
+                            onAttempt = zapiszProbe,
                         )
                     }
                 }

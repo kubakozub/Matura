@@ -41,11 +41,14 @@ import androidx.compose.ui.unit.sp
 import com.matura.app.R
 import com.matura.app.game.FlashKind
 import com.matura.app.game.Matching
+import com.matura.app.learn.Attempt
+import com.matura.app.learn.Outcome
 import com.matura.app.model.Direction
 import com.matura.app.model.GameMode
 import com.matura.app.model.Options
 import com.matura.app.model.ScoreRecord
 import com.matura.app.model.Speed
+import com.matura.app.model.TaskKind
 import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordSet
 import kotlin.math.ceil
@@ -61,6 +64,12 @@ import kotlin.random.Random
  *   - POMIŃ      -> KARA -5 s (i zerwana seria, bo łańcuch poprawnych odpowiedzi się urywa).
  *
  * Gra kończy się dokładnie wtedy, gdy zegar dobije do zera.
+ *
+ * @param onAttempt wynik JEDNEGO hasla dla harmonogramu powtorek (patrz [probaWpisania]).
+ *   Ekran nie zna repozytorium i nie zaklada wlasnego — druga instancja
+ *   [com.matura.app.data.Repository] ma wlasny bufor, wiec zapis wyniku gry nadpisalby postep
+ *   z calej rozgrywki. Wolajacy podaje `repo.recordAttempt(proba, System.currentTimeMillis())`;
+ *   domyslne nic-nie-rob zostawia tryb takim, jaki byl.
  */
 @Composable
 fun TimeAttackScreen(
@@ -70,6 +79,13 @@ fun TimeAttackScreen(
     playerName: String,
     onExit: () -> Unit,
     onFinished: (ScoreRecord) -> Unit,
+    /**
+     * BEZ WARTOSCI DOMYSLNEJ — celowo. Gdy ten parametr mial domyslne nic-nie-rob, App.kt
+     * po prostu go nie podawal: kompilacja i testy byly zielone, a postep nauki nie zapisywal
+     * sie w ogole. Wymagany parametr sprawia, ze kazde nowe wywolanie ekranu musi rozstrzygnac,
+     * co zrobic z proba — a zapomnienie konczy sie bledem kompilacji, nie cicha strata danych.
+     */
+    onAttempt: (Attempt) -> Unit,
 ) {
     val lang = options.uiLanguage
 
@@ -142,6 +158,9 @@ fun TimeAttackScreen(
                     if (hintTtl > 0f) hintTtl -= dt
                     if (timeLeft <= 0f) {
                         timeLeft = 0f
+                        // Haslo, na ktorym zastal ucznia koniec czasu, NIE trafia do
+                        // harmonogramu: uczen nie zdazyl odpowiedziec, a wyczerpanie budzetu
+                        // calej gry nie mowi nic o tym jednym slowie.
                         finished = true
                     }
                 }
@@ -189,9 +208,15 @@ fun TimeAttackScreen(
         deltaTtl = 1.1f
     }
 
+    /** Zapis jednej proby do harmonogramu; osobno od punktacji, bo to dwie rozne rachuby. */
+    fun zapiszProbe(q: TaQuestion, wynik: TaWynik) {
+        probaWpisania(q.entryId, q.termToDef, wynik, System.currentTimeMillis())?.let(onAttempt)
+    }
+
     fun submit() {
         if (finished || typed.isBlank()) return
         if (Matching.isExactMatch(typed, question.answers)) {
+            zapiszProbe(question, TaWynik.TRAFIONE)
             streak += 1
             if (streak > bestStreak) bestStreak = streak
             correct += 1
@@ -206,6 +231,7 @@ fun TimeAttackScreen(
             }
             nextQuestion()
         } else {
+            zapiszProbe(question, TaWynik.POMYLKA)
             streak = 0
             flashColor = Palette.Danger
             flashTtl = 0.22f
@@ -224,6 +250,7 @@ fun TimeAttackScreen(
 
     fun skip() {
         if (finished) return
+        zapiszProbe(question, TaWynik.POMINIETE)
         skipped += 1
         streak = 0
         flashColor = Palette.Gold
@@ -367,18 +394,73 @@ private fun badgeFor(multiplier: Int): Int? = when (multiplier) {
 private fun t(pl: String, en: String, lang: UiLanguage) = if (lang == UiLanguage.PL) pl else en
 
 private data class TaQuestion(
+    /**
+     * Trwaly identyfikator wpisu — postep nauki wisi na nim, nie na tresci hasla.
+     * Pusty w zestawach sprzed wersjonowania (patrz [probaWpisania]).
+     */
+    val entryId: String,
+    /** true = pokazujemy haslo, uczen wpisuje tlumaczenie. Stad kierunek postepu. */
+    val termToDef: Boolean,
     val prompt: String,
     val answers: List<String>,
     /** Surowa poprawna odpowiedź — pokazywana jako podpowiedź po pomyłce lub pominięciu. */
     val reveal: String,
 )
 
+/** Trzy wyjscia z jednego hasla w tym trybie. Nazwane, bo od nich zalezy zapis postepu. */
+internal enum class TaWynik { TRAFIONE, POMYLKA, POMINIETE }
+
+/**
+ * Rozstrzygniecie jednego hasla w trybie NA CZAS przelozone na probe dla harmonogramu.
+ *
+ * Rodzaj zadania to [TaskKind.PRZYPOMNIENIE] i to jest tu rzecz najwazniejsza: uczen nie
+ * wybiera sposrod podanych, tylko WPISUJE odpowiedz z klawiatury — razem z pisownia. Tylko
+ * takie zadanie moze wyniesc slowo ponad pudelko 1, bo tylko ono dowodzi samodzielnego
+ * przypomnienia. Presja czasu tego nie zmienia: sprawdzamy to samo, tylko szybciej.
+ *
+ * Czysta funkcja, zeby klasyfikacje dalo sie sprawdzic testem bez rysowania gry.
+ *
+ * @return `null` dla wpisu bez identyfikatora — Srs.key rzuca wtedy wyjatkiem, a stary plik
+ *   zapisu nie ma prawa wywrocic gry.
+ */
+internal fun probaWpisania(
+    entryId: String,
+    termToDef: Boolean,
+    wynik: TaWynik,
+    nowMs: Long,
+): Attempt? {
+    if (entryId.isBlank()) return null
+    val outcome = when (wynik) {
+        TaWynik.TRAFIONE -> Outcome.POPRAWNA
+        TaWynik.POMYLKA -> Outcome.BLEDNA
+        // POMIN to nie jest bledna odpowiedz (uczen zadnej nie podal), ale nie jest tez
+        // zdarzeniem bez sladu: ekran odslania wtedy poprawne tlumaczenie na dwie sekundy.
+        // Bez oznaczenia dnia jako "z pomoca" to samo haslo, wpisane przy kolejnym obiegu puli
+        // z pamieci ekranu, awansowaloby slowo — czyli aplikacja twierdzilaby, ze uczen je umie,
+        // dokladnie po tym, jak sam powiedzial, ze nie umie.
+        TaWynik.POMINIETE -> Outcome.POKAZANA
+    }
+    return Attempt(
+        entryId = entryId,
+        // Kierunek rozlosowano przy budowie puli — RANDOM nie ma jak tu wpasc.
+        direction = if (termToDef) Direction.TERM_TO_DEF else Direction.DEF_TO_TERM,
+        task = TaskKind.PRZYPOMNIENIE,
+        outcome = outcome,
+        // Znacznik jednorazowosci — jedna odpowiedz nie moze dac dwoch awansow.
+        id = "$entryId#$nowMs",
+    )
+}
+
 private fun buildQuestions(set: WordSet, direction: Direction, seed: Int): List<TaQuestion> {
     val random = Random(seed)
     val out = ArrayList<TaQuestion>(set.entries.size)
     for (e in set.entries) {
-        val termToDef = TaQuestion(e.term.trim(), Matching.acceptedAnswers(e.definition), e.definition.trim())
-        val defToTerm = TaQuestion(e.definition.trim(), Matching.acceptedAnswers(e.term), e.term.trim())
+        val termToDef = TaQuestion(
+            e.id, true, e.term.trim(), Matching.acceptedAnswers(e.definition), e.definition.trim(),
+        )
+        val defToTerm = TaQuestion(
+            e.id, false, e.definition.trim(), Matching.acceptedAnswers(e.term), e.term.trim(),
+        )
         out += when (direction) {
             Direction.TERM_TO_DEF -> termToDef
             Direction.DEF_TO_TERM -> defToTerm

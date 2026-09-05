@@ -2,11 +2,16 @@ package com.matura.app.data
 
 import android.content.Context
 import android.util.Log
+import com.matura.app.learn.Attempt
+import com.matura.app.learn.EntryId
+import com.matura.app.learn.Srs
+import com.matura.app.model.Direction
 import com.matura.app.model.Entry
 import com.matura.app.model.Profile
 import com.matura.app.model.Options
 import com.matura.app.model.SaveData
 import com.matura.app.model.ScoreRecord
+import com.matura.app.model.WordProgress
 import com.matura.app.model.WordSet
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -102,10 +107,46 @@ class Repository(private val dir: File) {
     /** @return to, co [save] — false oznacza, ze zmiana NIE przetrwa restartu. */
     fun update(block: (SaveData) -> SaveData): Boolean = save(block(load()))
 
+    /**
+     * Zapis zestawu z ZACHOWANIEM tozsamosci wpisow.
+     *
+     * Edytor sklada liste wpisow od zera z wierszy ekranu (Screens.kt), wiec przychodzi tu
+     * zestaw, ktorego wpisy nie maja identyfikatorow. Gdyby zapisac go wprost, kazde otwarcie
+     * i zapisanie wlasnego zestawu — nawet bez zmiany — kasowaloby cala nauke w nim zawarta.
+     * Dopasowanie do poprzedniej wersji robi EntryId.reconcile; tam tez opisane sa jego granice.
+     */
     fun upsertSet(set: WordSet) = update { d ->
         val idx = d.sets.indexOfFirst { it.id == set.id }
-        val sets = if (idx >= 0) d.sets.toMutableList().also { it[idx] = set } else d.sets + set
+        val poprzednie = if (idx >= 0) d.sets[idx].entries else emptyList()
+        val zTozsamoscia = set.copy(
+            entries = EntryId.reconcile(poprzednie, set.entries, builtInSet = set.builtIn),
+        )
+        val sets = if (idx >= 0) {
+            d.sets.toMutableList().also { it[idx] = zTozsamoscia }
+        } else {
+            d.sets + zTozsamoscia
+        }
         d.copy(sets = sets)
+    }
+
+    /** Stan nauki jednego celu; brak wpisu znaczy "pudelko 0", a nie blad. */
+    fun progressOf(entryId: String, direction: Direction): WordProgress =
+        Srs.progressOf(load().progress, entryId, direction)
+
+    /**
+     * Zapisuje wynik jednej proby. Czas wchodzi PARAMETREM, bo caly harmonogram ma byc
+     * testowalny na granicy doby — patrz [Srs].
+     *
+     * @return to, co [save]; true takze wtedy, gdy proba niczego nie zmienila (przerwana proba,
+     *   kolejne trafienie tego samego dnia) — wtedy nie ma po co ruszac dysku.
+     */
+    @Synchronized
+    fun recordAttempt(attempt: Attempt, nowMs: Long): Boolean {
+        val przed = load()
+        val po = Srs.applyTo(przed.progress, attempt, Srs.dayOf(nowMs))
+        // applyTo oddaje TE SAMA mape, gdy stan sie nie zmienil - stad porownanie tozsamosci.
+        if (po === przed.progress) return true
+        return save(przed.copy(progress = po))
     }
 
     fun deleteSet(id: String) = update { d -> d.copy(sets = d.sets.filterNot { it.id == id && !it.builtIn }) }
@@ -149,7 +190,75 @@ class Repository(private val dir: File) {
      */
     fun migrate(data: SaveData): SaveData {
         if (data.schemaVersion >= SCHEMA_VERSION) return data
-        return data.copy(schemaVersion = SCHEMA_VERSION)
+        var out = data
+        if (out.schemaVersion < 2) out = nadajIdentyfikatoryWpisom(out)
+        return out.copy(schemaVersion = SCHEMA_VERSION)
+    }
+
+    /**
+     * Krok 1 -> 2: kazdy wpis dostaje trwaly identyfikator (patrz EntryId).
+     *
+     * Czego ten krok NIE robi, i to jest w nim najwazniejsze:
+     *
+     *  - nie tworzy ANI JEDNEGO wpisu postepu. Kusi, zeby ze starych punktow za gry wyliczyc
+     *    "opanowane slowa", ale punkt zdobywa sie tez za szybkosc i za trafienie potworka, a
+     *    zestaw gralo sie w calosci — z takich danych nie wynika, ktore slowo uczen umie.
+     *    Aplikacja wolalaby wtedy "utrwalone" o slowie, ktorego uczen nigdy nie napisal.
+     *    Wszystkie slowa startuja wiec ze stanem "brak danych" (pudelko 0);
+     *
+     *  - nie rusza profilu, ustawien, wynikow ani wlasnych zestawow — zmienia sie wylacznie
+     *    puste pole id we wpisach;
+     *
+     *  - nie sprzata mapy postepu. Postep wisi na identyfikatorze wpisu, a nie na zestawie,
+     *    wiec przebudowa katalogu nie ma jak go uniewaznic: slowo, ktore znika ze slownika,
+     *    zachowuje swoja historie i odzyskuje ja, jesli wroci.
+     *
+     * Wynik musi byc WYLICZALNY, bo load() celowo nie pisze po dysku i migracja biegnie od nowa
+     * przy kazdym starcie az do pierwszego zapisu. Stad brak losowosci: wpisy wlasne dostaja
+     * identyfikator liczony z zestawu i tresci (EntryId.userIdFor), a nie losowany.
+     */
+    private fun nadajIdentyfikatoryWpisom(data: SaveData): SaveData {
+        if (data.sets.none { s -> s.entries.any { it.id.isBlank() } }) return data
+
+        val katalog = katalogPoTresci()
+        return data.copy(
+            sets = data.sets.map { set ->
+                if (set.entries.none { it.id.isBlank() }) return@map set
+                val powtorzenia = HashMap<String, Int>()
+                set.copy(
+                    entries = set.entries.map { e ->
+                        val klucz = EntryId.contentKey(e.term, e.definition)
+                        val nr = powtorzenia[klucz] ?: 0
+                        powtorzenia[klucz] = nr + 1
+                        when {
+                            e.id.isNotBlank() -> e
+                            // Zapis trzyma WLASNA kopie zestawow wbudowanych, wiec moze w niej
+                            // lezec brzmienie sprzed korekty tlumaczenia. Katalog jest zrodlem
+                            // prawdy; gdy pary w nim nie ma, EntryId.builtIn liczy ten sam skrot
+                            // z tresci (i sam przepuszcza znane korekty przez tablice aliasow).
+                            set.builtIn -> e.copy(
+                                id = katalog[klucz] ?: EntryId.builtIn(e.term, e.definition),
+                            )
+                            else -> e.copy(id = EntryId.userIdFor(set.id, e.term, e.definition, nr))
+                        }
+                    },
+                )
+            },
+        )
+    }
+
+    /** Tresc wpisu katalogowego -> jego identyfikator. Pierwszy wygrywa: te same pary powtarzaja
+     *  sie miedzy dzialami i MAJA dzielic jeden identyfikator (a wiec i jeden postep). */
+    private fun katalogPoTresci(): Map<String, String> {
+        val out = HashMap<String, String>()
+        for (set in SampleData.builtInSets()) {
+            for (e in set.entries) {
+                if (e.id.isBlank()) continue
+                val klucz = EntryId.contentKey(e.term, e.definition)
+                if (!out.containsKey(klucz)) out[klucz] = e.id
+            }
+        }
+        return out
     }
 
     /**
@@ -247,8 +356,13 @@ class Repository(private val dir: File) {
         const val TEMP_NAME = FILE_NAME + ".tmp"
         const val CORRUPT_NAME = FILE_NAME + ".uszkodzony"
 
-        /** Biezaca wersja schematu zapisu; 0 oznacza plik sprzed wersjonowania. Patrz [migrate]. */
-        const val SCHEMA_VERSION = 1
+        /**
+         * Biezaca wersja schematu zapisu; 0 oznacza plik sprzed wersjonowania. Patrz [migrate].
+         *
+         * 1 -> 2: kazdy wpis ma trwaly identyfikator (Entry.id), a zapis ma mape postepu
+         * per slowo (SaveData.progress).
+         */
+        const val SCHEMA_VERSION = 2
     }
 }
 
