@@ -5,6 +5,7 @@ import com.matura.app.ui.PUSTE_Z_MOWA
 import com.matura.app.ui.SilenceDetector
 import com.matura.app.ui.VoiceLog
 import com.matura.app.ui.eskalowacPoPustym
+import com.matura.app.ui.PUSTE_PO_SUKCESIE
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -19,22 +20,25 @@ import org.junit.Test
 class VoicePustyCyklTest {
 
     @Test
-    fun silnikKtoryJuzDzialal_niePodlegaEskalacji() {
-        // Cisza przy dzialajacym silniku to po prostu cisza — uzytkownik milczy.
-        assertFalse(eskalowacPoPustym(dzialal = true, pusteCykle = 9, slyszalMowe = true))
-        assertFalse(eskalowacPoPustym(dzialal = true, pusteCykle = 9, slyszalMowe = false))
+    fun silnikKtoryJuzRozpoznal_ciszaGoNieDegraduje_aleAwariaTak() {
+        // Cisza przy sprawnym silniku to po prostu cisza — uzytkownik milczy, nie ruszamy go.
+        assertFalse(eskalowacPoPustym(oddalWynik = true, pusteCykle = 99, slyszalMowe = false))
+        // Ale gdy mikrofon slyszy mowe, a silnik przestal zwracac cokolwiek, po PUSTE_PO_SUKCESIE
+        // cyklach schodzimy nizej: wczesniejszy sukces nie moze blokowac odzyskania dzialania.
+        assertFalse(eskalowacPoPustym(oddalWynik = true, pusteCykle = PUSTE_PO_SUKCESIE - 1, slyszalMowe = true))
+        assertTrue(eskalowacPoPustym(oddalWynik = true, pusteCykle = PUSTE_PO_SUKCESIE, slyszalMowe = true))
     }
 
     @Test
     fun mowilAsilnikNicNieZwrocil_eskalacjaPoDwochCyklach() {
-        assertFalse(eskalowacPoPustym(dzialal = false, pusteCykle = 1, slyszalMowe = true))
-        assertTrue(eskalowacPoPustym(dzialal = false, pusteCykle = PUSTE_Z_MOWA, slyszalMowe = true))
+        assertFalse(eskalowacPoPustym(oddalWynik = false, pusteCykle = 1, slyszalMowe = true))
+        assertTrue(eskalowacPoPustym(oddalWynik = false, pusteCykle = PUSTE_Z_MOWA, slyszalMowe = true))
     }
 
     @Test
     fun samaCisza_dajemySilnikowiWiecejProb() {
-        assertFalse(eskalowacPoPustym(dzialal = false, pusteCykle = PUSTE_Z_MOWA, slyszalMowe = false))
-        assertTrue(eskalowacPoPustym(dzialal = false, pusteCykle = PUSTE_BEZ_MOWY, slyszalMowe = false))
+        assertFalse(eskalowacPoPustym(oddalWynik = false, pusteCykle = PUSTE_Z_MOWA, slyszalMowe = false))
+        assertTrue(eskalowacPoPustym(oddalWynik = false, pusteCykle = PUSTE_BEZ_MOWY, slyszalMowe = false))
     }
 
     @Test

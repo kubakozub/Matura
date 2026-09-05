@@ -21,6 +21,7 @@ import com.matura.app.ui.wygladaPoPolsku
 import com.matura.app.ui.zejscPoMilczacymCyklu
 import com.matura.app.ui.zmienicJezykNasluchu
 import com.matura.app.ui.eskalowacPoPustym
+import com.matura.app.ui.PUSTE_PO_SUKCESIE
 import com.matura.app.ui.PUSTE_Z_MOWA
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -688,9 +689,13 @@ class VoiceInputPrzebiegTest {
      */
     @Test
     fun przelaczenieJezyka_pozwalaZejscDrabinka() {
-        // Silnik, ktory juz cos oddal, nie eskaluje po pustym cyklu — to jest poprawne zachowanie.
-        assertFalse(eskalowacPoPustym(dzialal = true, pusteCykle = 9, slyszalMowe = true))
-        // Po zmianie jezyka traktujemy go jak nowy: te same puste cykle MAJA zejsc drabinka.
-        assertTrue(eskalowacPoPustym(dzialal = false, pusteCykle = PUSTE_Z_MOWA, slyszalMowe = true))
+        // Silnik, ktory juz cos oddal, ma szeroki kredyt: cisza nie rusza go nigdy, a przy
+        // slyszanej mowie schodzimy dopiero po PUSTE_PO_SUKCESIE cyklach.
+        assertFalse(eskalowacPoPustym(oddalWynik = true, pusteCykle = 999, slyszalMowe = false))
+        assertFalse(
+            eskalowacPoPustym(oddalWynik = true, pusteCykle = PUSTE_PO_SUKCESIE - 1, slyszalMowe = true)
+        )
+        // Po zmianie jezyka traktujemy go jak nowy: DUZO mniej pustych cykli ma zejsc drabinka.
+        assertTrue(eskalowacPoPustym(oddalWynik = false, pusteCykle = PUSTE_Z_MOWA, slyszalMowe = true))
     }
 }

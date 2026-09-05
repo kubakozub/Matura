@@ -329,6 +329,7 @@ class VoiceInput(private val context: Context) {
             append('\n').append("ostatni błąd: ").append(ostatniBlad)
             append(" · puste cykle: ").append(pusteCykle)
             append(" · znak życia: ").append(if (dzialal) "tak" else "NIE")
+            append(" · rozpoznał tekst: ").append(if (oddalWynik) "tak" else "NIE")
             // "Znak zycia" to gotowosc albo poziom mikrofonu; "rozpoznal cos" to oddany TEKST.
             // Rozroznienie jest sednem tego zgloszenia: silnik bez modelu jezyka daje pierwsze
             // i nigdy drugiego, a do 0.9.11 diagnostyka pokazywala jedno pod nazwa drugiego.
@@ -534,6 +535,8 @@ class VoiceInput(private val context: Context) {
                 return
             }
             dziennik.dodaj(System.currentTimeMillis(), "wynik")
+            // `dzialal` to znak zycia i tyle — dowodem rozpoznania jest oddalWynik, ustawiany
+            // w deliver() dopiero dla NIEPUSTEJ listy. Pusty onResults nie moze uchodzic za sukces.
             zyje(); zdejmijStraznikaCyklu(); dzialal = true; pusteCykle = 0; slyszalMowe = false
             log("onResults alternatyw=" + ileAlternatyw(results) +
                 " dlugosc pierwszej=" + dlugoscPierwszej(results))
@@ -556,7 +559,8 @@ class VoiceInput(private val context: Context) {
             zdejmijStraznikaCyklu()
             val reakcja = reakcjaNaBlad(error)
             ostrzez("onError " + nazwaBledu(error) + " -> " + reakcja + " silnik=" + silnikOpis +
-                " offline=" + preferOffline + " dzialal=" + dzialal + " puste=" + pusteCykle)
+                " offline=" + preferOffline + " znakZycia=" + dzialal +
+                " oddalTekst=" + oddalWynik + " puste=" + pusteCykle)
             when (reakcja) {
                 // Cisza i brak dopasowania sa normalne przy ciaglym nasluchu. Ale dwa puste cykle
                 // z rzedu przy RMS na dnie to mikrofon, ktory nic nie slyszy — podpowiadamy
@@ -572,7 +576,8 @@ class VoiceInput(private val context: Context) {
                     // slyszalem", w praktyce nie ma modelu tego jezyka albo odmawia pracy offline
                     // (zgloszenie z Motoroli: przycisk dziala, zero bledow, zero reakcji na mowe).
                     // Zamiast krecic sie w kolko schodzimy drabinke nizej.
-                    if (eskalowacPoPustym(dzialal, pusteCykle, slyszalMowe)) {
+                    // oddalWynik, nie dzialal: patrz komentarz przy eskalowacPoPustym.
+                    if (eskalowacPoPustym(oddalWynik, pusteCykle, slyszalMowe)) {
                         pusteCykle = 0
                         ostatniBlad = error
                         zanotujProbe(silnikOpis + ":nic")

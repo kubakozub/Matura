@@ -154,9 +154,22 @@ class SilenceDetector(
  * @param pusteCykle ile pustych cykli z rzedu (biezacy wliczony)
  * @param slyszalMowe czy w tych cyklach mikrofon rejestrowal dzwiek ponad progiem ciszy
  */
-fun eskalowacPoPustym(dzialal: Boolean, pusteCykle: Int, slyszalMowe: Boolean): Boolean {
-    if (dzialal) return false
-    val prog = if (slyszalMowe) PUSTE_Z_MOWA else PUSTE_BEZ_MOWY
+fun eskalowacPoPustym(oddalWynik: Boolean, pusteCykle: Int, slyszalMowe: Boolean): Boolean {
+    // Prog zalezy od dwoch rzeczy: czy silnik KIEDYKOLWIEK oddal tekst i czy mikrofon slyszal mowe.
+    //
+    // Sama gotowosc silnika nie liczy sie tu w ogole — i to jest sedno tej poprawki. Do 0.9.11
+    // decydowal znak zycia (`dzialal`), ustawiany juz przez onReadyForSpeech, wiec silnik, ktory
+    // melduje gotowosc i nie rozpoznaje ani slowa, na zawsze wylaczal eskalacje. Objaw: pasek
+    // swieci, zadnego bledu nie ma, mowa nie daje reakcji.
+    val prog = when {
+        // Silnik sprawdzony w boju: cisza gracza NIGDY go nie degraduje...
+        oddalWynik && !slyszalMowe -> return false
+        // ...ale gdy mikrofon slyszy mowe, a on przestal cokolwiek zwracac, po szesciu cyklach
+        // schodzimy nizej. Wczesniejszy sukces nie moze blokowac odzyskania dzialania na zawsze.
+        oddalWynik -> PUSTE_PO_SUKCESIE
+        slyszalMowe -> PUSTE_Z_MOWA
+        else -> PUSTE_BEZ_MOWY
+    }
     return pusteCykle >= prog
 }
 
@@ -181,6 +194,12 @@ fun zejscPoMilczacymCyklu(oddalWynik: Boolean): Boolean = !oddalWynik
 
 /** Uzytkownik mowil, a silnik nic nie zwrocil — dwa takie cykle wystarcza. */
 const val PUSTE_Z_MOWA = 2
+/**
+ * Silnik, ktory juz raz oddal tekst, dostaje wyrazny kredyt zaufania: dopiero szesc cykli z mowa
+ * w mikrofonie i bez zadnego wyniku znaczy, ze przestal dzialac. Prog jest wyzszy niz [PUSTE_Z_MOWA],
+ * bo u sprawnego silnika taka seria to zwykle wina otoczenia (halas, ktos mowi obok), a nie awarii.
+ */
+const val PUSTE_PO_SUKCESIE = 6
 /** Sama cisza moze byc wina uzytkownika; dajemy silnikowi wiecej prob. */
 const val PUSTE_BEZ_MOWY = 4
 
