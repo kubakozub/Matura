@@ -414,9 +414,13 @@ class VoiceInputPrzebiegTest {
     }
 
     /**
-     * Komunikat dopiero na KONCU drabinki. Przy jednej usludze na "urzadzeniu" szczeble sa dwa
-     * (zdejmij offline, zwiaz sie po nazwie), wiec dopiero TRZECI kod 13 konczy drabinke — i
-     * dopiero wtedy decyzja trafia do ekranu (okno systemowe / klawiatura), zamiast zostac cisza.
+     * Komunikat dopiero na KONCU drabinki. Przy jednej usludze na "urzadzeniu" szczeble sa trzy:
+     * zdejmij offline, sprobuj jezyka BEZ REGIONU (pl-PL -> pl) i zwiaz sie z usluga po nazwie.
+     * Dopiero CZWARTY kod 13 konczy drabinke — i dopiero wtedy decyzja trafia do ekranu (okno
+     * systemowe / klawiatura), zamiast zostac cisza.
+     *
+     * Szczebel jezykowy doszedl razem z ta poprawka: silnik, ktory ma model podpisany samym "pl"
+     * albo innym regionem angielskiego, odrzuca pelny tag kodem 13, chociaz jezyk rozpoznaje.
      */
     @Test
     fun dopieroKoniecDrabinki_oddajeDecyzjeEkranowi() {
@@ -424,12 +428,36 @@ class VoiceInputPrzebiegTest {
         blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
         assertEquals("po pierwszym kodzie drabinka jeszcze schodzi", 0, wyczerpane)
         blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
-        assertEquals("po drugim tez — jest jeszcze usluga do zwiazania", 0, wyczerpane)
+        assertEquals("po drugim tez — zostal jeszcze jezyk bez regionu", 0, wyczerpane)
+        blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
+        assertEquals("po trzecim tez — jest jeszcze usluga do zwiazania", 0, wyczerpane)
         blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
         assertEquals("po wyczerpaniu drabinki ekran musi dostac sygnal", 1, wyczerpane)
         assertFalse("nasluch nie moze zostac zapalony", voice.listening)
         assertFalse("pasek ma przestac obiecywac silnik", voice.maSilnik)
         assertTrue("komunikat ma nazwac przyczyne", voice.status.isNotEmpty())
+    }
+
+    /**
+     * REGRESJA: kod "brak modelu jezyka" ma najpierw sprobowac TEGO SAMEGO jezyka bez regionu.
+     * Silniki z modelem podpisanym samym "pl" (albo en-GB przy prosbie o en-US) odrzucaja pelny
+     * tag kodem 12/13 — a jedna proba prostszym tagiem jest tansza niz zmiana silnika i wystarcza.
+     */
+    @Test
+    fun brakModeluJezyka_probujeTagBezRegionu() {
+        start()
+        assertEquals("pl-PL", cien(ostatni()).lastRecognizerIntent?.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
+        // Szczebel 1: zdejmij wymuszony offline — tag jezyka jeszcze sie nie zmienia.
+        blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
+        assertEquals("pl-PL", cien(ostatni()).lastRecognizerIntent?.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
+        // Szczebel 2: dopiero teraz upraszczamy tag.
+        blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
+        assertEquals(
+            "po odrzuceniu pelnego tagu ma poleciec sam jezyk",
+            "pl",
+            cien(ostatni()).lastRecognizerIntent?.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE),
+        )
+        assertEquals("to nadal ta sama sesja, ekran nie dostaje sygnalu", 0, wyczerpane)
     }
 
     /**

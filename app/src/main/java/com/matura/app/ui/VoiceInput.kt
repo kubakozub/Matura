@@ -154,6 +154,25 @@ class VoiceInput(private val context: Context) {
     private var ostatniStart = 0L
     /** Watchdog: czekamy na PIERWSZE zdarzenie od silnika po startListening. */
     private var czekamNaSilnik = false
+
+    /**
+     * Numer WYPOWIEDZI. Rosnie przy kazdym startListening, czyli raz na cykl rozpoznawania.
+     * Wynik czesciowy i koncowy tej samej wypowiedzi maja ten sam numer - na tym opiera sie
+     * zasada "jedna wypowiedz zalicza slowo najwyzej raz" (patrz [zaliczycWypowiedz]).
+     * Spozniony wynik poprzedniego cyklu nosi numer sprzed restartu i tez nie dolozy punktu.
+     */
+    var wypowiedz = 0
+        private set
+
+    /** Czy probowalismy juz tagu jezyka bez regionu (szczebel drabinki, raz na sesje). */
+    private var probowanyJezykBezRegionu = false
+
+    /**
+     * Stan przebiegu - wyliczany, nie przechowywany (patrz [stanSesji]). Widoczny w diagnostyce,
+     * zeby "co sie teraz dzieje" dalo sie odczytac bez skladania go z ciagu zdarzen.
+     */
+    val stan: VoiceStan
+        get() = stanSesji(wantListening, czekamNaSilnik, dzialal, wyczerpany)
     private var bledyAudio = 0
     /** Puste cykle (NO_MATCH / SPEECH_TIMEOUT) POD RZAD na silniku, ktory jeszcze nic nie
      *  rozpoznal. Silnik bez modelu jezyka zwraca dokladnie to — i tylko to. */
@@ -291,7 +310,12 @@ class VoiceInput(private val context: Context) {
     } catch (_: Throwable) { null }
 
     private fun zwolnijRecognizer() {
-        try { recognizer?.destroy() } catch (_: Throwable) {}
+        try { recognizer?.destroy() } catch (t: Throwable) {
+            // destroy() na usludze, ktora juz odpadla, potrafi rzucic DeadObjectException.
+            // Instancje i tak porzucamy, ale slad zostaje: bez niego "mikrofon nie wraca po
+            // wyjsciu z ekranu" nie ma w logu zadnego punktu zaczepienia.
+            ostrzez("destroy() rzucil " + t.javaClass.simpleName)
+        }
         recognizer = null
     }
 
@@ -328,6 +352,8 @@ class VoiceInput(private val context: Context) {
             append(if (probowane.isEmpty()) "—" else probowane.joinToString(", "))
             append('\n').append("ostatni błąd: ").append(ostatniBlad)
             append(" · puste cykle: ").append(pusteCykle)
+            append(" · stan: ").append(stan.name.lowercase())
+            append(" · wypowiedź: ").append(wypowiedz)
             append(" · znak życia: ").append(if (dzialal) "tak" else "NIE")
             append(" · rozpoznał tekst: ").append(if (oddalWynik) "tak" else "NIE")
             // "Znak zycia" to gotowosc albo poziom mikrofonu; "rozpoznal cos" to oddany TEKST.
@@ -660,6 +686,14 @@ class VoiceInput(private val context: Context) {
     }
 
     /** Kolejny szczebel fallbacku. Zwraca true, jesli ponowiono nasluch innym silnikiem. */
+    /**
+     * Kody, ktore znacza dokladnie jedno: silnik nie ma modelu dla podanego tagu jezyka.
+     * Liczby, a nie stale z [SpeechRecognizer]: ERROR_LANGUAGE_NOT_SUPPORTED (12) i
+     * ERROR_LANGUAGE_UNAVAILABLE (13) doszly w API 33, a reszta pliku tez adresuje je wprost
+     * (patrz friendlyError i ReakcjaNaBlad.BRAK_JEZYKA) - trzymamy jedna konwencje.
+     */
+    private fun brakModeluJezyka(kod: Int): Boolean = kod == 12 || kod == 13
+
     private fun escalate(): Boolean {
         // Eskalacja po wylaczonym nasluchu nie ma sensu, ale MUSI byc widoczna w logu: to jest
         // miejsce, w ktorym drabinka cicho staje, gdy kolejnosc wywolan jest zla (patrz start()).
@@ -690,6 +724,26 @@ class VoiceInput(private val context: Context) {
             scheduleRestart(60L)
             return true
         }
+        // 2b) silnik nie ma modelu DLA TEGO TAGU -> sprobuj tego samego jezyka bez regionu.
+        //     "en-US" bywa odrzucane przez silnik, ktory ma wylacznie "en" albo "en-GB", i wraca
+        //     wtedy ERROR_LANGUAGE_UNAVAILABLE, chociaz angielski rozpoznaje. Jeden szczebel,
+        //     jedna proba na sesje - nie przegladamy listy regionow.
+        if (!probowanyJezykBezRegionu && brakModeluJezyka(ostatniBlad)) {
+            val prostszy = jezykBezRegionu(language)
+            if (prostszy.isNotEmpty()) {
+                probowanyJezykBezRegionu = true
+                log("escalate 2b: jezyk " + language + " -> " + prostszy)
+                dziennik.dodaj(System.currentTimeMillis(), "j\u0119zyk bez regionu -> " + prostszy)
+                language = prostszy
+                // Nowy tag = nowa ocena silnika, tak samo jak w przelaczJezyk().
+                dzialal = false
+                oddalWynik = false
+                pusteCykle = 0
+                slyszalMowe = false
+                scheduleRestart(60L)
+                return true
+            }
+        }
         // 3) domyslny silnik odmawia -> przechodzimy po KONKRETNYCH uslugach z urzadzenia,
         //    zaczynajac od Google. To jest szczebel, ktorego brakowalo: na czesci telefonow
         //    (Samsung) domyslna usluga nalezy do producenta i nie obsluguje aplikacji trzecich,
@@ -714,7 +768,11 @@ class VoiceInput(private val context: Context) {
         // po zniszczeniu przychodzi z opoznieniem) trafiaja do kosza, a nie na konto nowego.
         pokolenie += 1
         dziennik.dodaj(System.currentTimeMillis(), "silnik -> " + (if (newMode == VoiceMode.ON_DEVICE) "on-device" else "sieciowy") + (if (offline) " (offline)" else ""))
-        try { recognizer?.destroy() } catch (_: Throwable) {}
+        try { recognizer?.destroy() } catch (t: Throwable) {
+            // Stary silnik i tak porzucamy, ale wyjatek zostawia slad: seria takich linii to
+            // silnik, ktory rozpada sie przy kazdej zmianie szczebla.
+            ostrzez("useEngine: destroy() rzucil " + t.javaClass.simpleName)
+        }
         mode = newMode
         preferOffline = offline
         dzialal = false
@@ -810,6 +868,7 @@ class VoiceInput(private val context: Context) {
                 " offline=" + preferOffline + " podpowiedzi=" + ilePodpowiedzi())
             try {
                 r.cancel()
+                wypowiedz += 1
                 r.startListening(buildIntent())
             } catch (t: Throwable) {
                 // Wyjatek przy starcie nie daje zadnego zdarzenia zwrotnego — watchdog ponizej
@@ -836,6 +895,8 @@ class VoiceInput(private val context: Context) {
         kierunek: String = "",
         onHeard: (List<String>, Boolean) -> Unit,
     ) {
+        // Czy w chwili wejscia cos jeszcze bylo w toku - patrz cancel() nizej.
+        val bylNasluch = listening || czekamNaSilnik
         if (silniki.isEmpty()) silniki = dostepneSilniki()
         if (mode == VoiceMode.UNAVAILABLE) probe()
         // Domyslny silnik "niedostepny", ale konkretne uslugi sa (zdarza sie po wylaczeniu
@@ -899,6 +960,20 @@ class VoiceInput(private val context: Context) {
         // Zaden restart zamowiony przez poprzednia sesje nie ma wchodzic w te.
         wznowienie.anuluj()
         pokolenie += 1
+        probowanyJezykBezRegionu = false
+        // JEDEN AKTYWNY PRZEBIEG. Drugie dotkniecie paska, rekompozycja ekranu albo start
+        // zamowiony tuz po poprzednim trafialy w rozpoznawacz z OTWARTA sesja, a startListening
+        // bez cancel() konczy sie wtedy ERROR_RECOGNIZER_BUSY: nasluch wchodzil w serie ponowien
+        // zamiast sluchac. Wznowienie w scheduleRestart robilo cancel() od poczatku - start(),
+        // czyli droga wejsciowa z przycisku, nie robil tego nigdy.
+        if (bylNasluch) {
+            log("start: poprzednia sesja jeszcze zyla - cancel() przed startem")
+            try {
+                recognizer?.cancel()
+            } catch (t: Throwable) {
+                ostrzez("start: cancel() rzucil " + t.javaClass.simpleName)
+            }
+        }
         if (recognizer == null) recognizer = create()
         val r = recognizer
         if (r == null) {
@@ -913,6 +988,7 @@ class VoiceInput(private val context: Context) {
         // — ten przypadek lapie dopiero SilenceDetector po RMS.
         if (mikrofonWyciszony()) status = tekstCiszy
         try {
+            wypowiedz += 1
             r.startListening(buildIntent())
         } catch (t: Throwable) {
             ostrzez("start: startListening rzucil " + t.javaClass.simpleName + " — schodze drabinka")
@@ -959,6 +1035,7 @@ class VoiceInput(private val context: Context) {
         pusteCykle = 0
         slyszalMowe = false
         cisza.reset()
+        probowanyJezykBezRegionu = false
         dziennik.dodaj(System.currentTimeMillis(), "język -> " + nowy)
         log("przelaczJezyk -> " + nowy + " (silnik " + silnikOpis + ", ten sam przebieg)")
         // Nowe pokolenie odcina zdarzenia cyklu w starym jezyku; sluchacz musi je znac, inaczej
@@ -1012,7 +1089,9 @@ class VoiceInput(private val context: Context) {
         // Samo cancel(): stopListening() po cancel() trafia w usluge bez sesji, a ta odpowiada
         // ERROR_CLIENT. Ten spozniony blad wracal do nas juz PO stop() i konczyl sie zamknieciem
         // calej drabinki (wyczerpany=true) mimo ze uczen tylko wylaczyl nasluch.
-        try { recognizer?.cancel() } catch (_: Throwable) {}
+        try { recognizer?.cancel() } catch (t: Throwable) {
+            ostrzez("stop: cancel() rzucil " + t.javaClass.simpleName)
+        }
     }
 
     fun release() {

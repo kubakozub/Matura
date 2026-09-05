@@ -393,3 +393,74 @@ class VoiceLog(private val limit: Int = 14) {
 
     fun tekst(): String = if (wpisy.isEmpty()) "—" else wpisy.joinToString("\n")
 }
+
+/**
+ * Stan przebiegu rozpoznawania - do diagnostyki i do odpowiedzi na pytanie "co sie teraz dzieje".
+ *
+ * Stan NIE jest osobnym polem: wyliczamy go z flag, ktore i tak steruja nasluchem ([stanSesji]).
+ * Osobne pole trzeba by zerowac w kazdej z kilkunastu sciezek wyjscia i predzej czy pozniej
+ * rozjechaloby sie z rzeczywistoscia - a wtedy diagnostyka klamie akurat tam, gdzie ma pomoc.
+ */
+enum class VoiceStan { BEZCZYNNY, URUCHAMIANIE, NASLUCH, PONOWIENIE, BLAD }
+
+/**
+ * @param chceNasluchu czy nasluch jest wlaczony (wantListening)
+ * @param czekamNaSilnik czy czekamy na PIERWSZE zdarzenie po startListening (watchdog uzbrojony)
+ * @param znakZycia czy silnik w tej sesji dal juz jakikolwiek znak zycia (gotowosc, RMS, wynik)
+ * @param wyczerpany czy drabinka doszla do konca
+ */
+fun stanSesji(
+    chceNasluchu: Boolean,
+    czekamNaSilnik: Boolean,
+    znakZycia: Boolean,
+    wyczerpany: Boolean,
+): VoiceStan = when {
+    wyczerpany && !chceNasluchu -> VoiceStan.BLAD
+    !chceNasluchu -> VoiceStan.BEZCZYNNY
+    czekamNaSilnik -> VoiceStan.URUCHAMIANIE
+    znakZycia -> VoiceStan.NASLUCH
+    else -> VoiceStan.PONOWIENIE
+}
+
+/**
+ * Czy ta wypowiedz ma zaliczyc odpowiedz.
+ *
+ * Jedna wypowiedz = najwyzej jedno zaliczenie. Do 0.9.11 pilnowalo tego okno 700 ms od
+ * poprzedniego trafienia - a odstep miedzy wynikiem CZESCIOWYM a KONCOWYM tej samej wypowiedzi
+ * zalezy od silnika i od ciszy po slowie, i bywa wyraznie dluzszy. Ta sama wypowiedz potrafila
+ * wiec zaliczyc slowo dwa razy, a dwa osobne "kolano" tuz po sobie (dwa potwory z ta sama
+ * odpowiedzia) bywaly liczone raz. Numer wypowiedzi rosnie przy kazdym startListening, wiec
+ * rozstrzyga PRZEBIEG, a nie zegar.
+ *
+ * @param wypowiedz numer biezacej wypowiedzi (VoiceInput.wypowiedz); wartosci ujemne rezerwuje
+ *        okno systemowe, ktore ma wlasna numeracje i nigdy nie koliduje z nasluchem w grze.
+ */
+fun zaliczycWypowiedz(
+    odpowiedz: String,
+    ostatniaOdpowiedz: String,
+    wypowiedz: Int,
+    ostatniaWypowiedz: Int,
+): Boolean = !(odpowiedz == ostatniaOdpowiedz && wypowiedz == ostatniaWypowiedz)
+
+/**
+ * Czy po powrocie z systemowego okna zgody wolno wlaczyc nasluch.
+ *
+ * Okno zgody potrafi wrocic po dluzszej chwili - uczen zdazyl wlaczyc pauze albo skonczyc gre.
+ * Bezwarunkowe startVoice() w callbacku wlaczalo wtedy mikrofon do rundy, ktorej juz nie ma:
+ * pasek swiecil na ekranie wyniku, a wypowiedzi szly w nicosc.
+ */
+fun wznowicPoZgodzie(zgoda: Boolean, pauza: Boolean, koniecGry: Boolean): Boolean =
+    zgoda && !pauza && !koniecGry
+
+/**
+ * Tag jezyka bez regionu ("en-US" -> "en"), albo pusty gdy nie ma czego upraszczac.
+ *
+ * Czesc silnikow ma model podpisany samym jezykiem albo INNYM regionem (typowo en-GB tam, gdzie
+ * prosimy o en-US) i na pelny tag odpowiada ERROR_LANGUAGE_UNAVAILABLE, chociaz angielski
+ * rozpoznaje. To jeden szczebel drabinki, nie zgadywanie listy regionow.
+ */
+fun jezykBezRegionu(tag: String): String {
+    val i = tag.indexOfFirst { it == '-' || it == '_' }
+    if (i <= 0) return ""
+    return tag.substring(0, i)
+}

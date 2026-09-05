@@ -46,7 +46,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -184,7 +183,21 @@ fun PlayScreen(
     val voice = rememberVoiceInput(context)
     var voiceMsg by remember(engine) { mutableStateOf("") }
     var lastSpoken by remember(engine) { mutableStateOf("") }
-    var lastSpokenAt by remember(engine) { mutableLongStateOf(0L) }
+    /**
+     * Numer wypowiedzi, ktora zaliczyla [lastSpoken]. Do 0.9.11 stalo tu okno 700 ms od
+     * poprzedniego trafienia i to ono mialo pilnowac, zeby jedna wypowiedz nie punktowala dwa
+     * razy. Odstep miedzy wynikiem czesciowym a koncowym TEJ SAMEJ wypowiedzi zalezy jednak od
+     * silnika i od ciszy po slowie - bywa dluzszy niz 700 ms (wtedy slowo liczylo sie dwa razy)
+     * albo krotszy niz przerwa miedzy dwoma osobnymi "kolano" (wtedy drugie nie liczylo sie
+     * wcale). Numer przebiegu rozstrzyga to bez zegara: patrz VoiceInput.wypowiedz.
+     */
+    var lastSpokenWypowiedz by remember(engine) { mutableIntStateOf(0) }
+    /**
+     * Osobna, UJEMNA numeracja dla systemowego okna dyktowania - ono nie przechodzi przez
+     * VoiceInput, wiec nie ma numeru przebiegu. Bez tego dwa kolejne dyktowania tego samego
+     * slowa dzielilyby numer 0 i drugie przepadaloby jako "ta sama wypowiedz".
+     */
+    var oknoWypowiedz by remember(engine) { mutableIntStateOf(0) }
     /**
      * Jezyk, w ktorym silnik NAPRAWDE transkrybuje biezacy nasluch — ustalany w chwili startu
      * i podawany dalej do dopasowania. Liczenie go na nowo przy kazdej wypowiedzi rozjezdzalo sie
@@ -236,7 +249,12 @@ fun PlayScreen(
         }
     }.map { it.trim() }.filter { it.length > 1 }.distinct()
 
-    fun onHeard(alternatives: List<String>, isFinal: Boolean) {
+    /**
+     * @param wypowiedz numer przebiegu rozpoznawania, z ktorego pochodzi ten wynik. Wynik
+     *        czesciowy i koncowy tej samej wypowiedzi maja ten sam numer, a spozniony wynik
+     *        poprzedniego cyklu - numer sprzed restartu; obie sytuacje maja dac jedno zaliczenie.
+     */
+    fun onHeard(alternatives: List<String>, isFinal: Boolean, wypowiedz: Int) {
         if (paused) return
         val live = engine.snapshot()
         if (live.gameOver) return
@@ -251,10 +269,9 @@ fun PlayScreen(
             return
         }
         val answer = result.best.answer ?: return
-        val now = System.currentTimeMillis()
-        if (answer == lastSpoken && now - lastSpokenAt < 700) return   // nie dubluj wypowiedzi
+        if (!zaliczycWypowiedz(answer, lastSpoken, wypowiedz, lastSpokenWypowiedz)) return
         lastSpoken = answer
-        lastSpokenAt = now
+        lastSpokenWypowiedz = wypowiedz
         engine.clearTyped()
         for (ch in answer) engine.type(ch)
         submit()
@@ -272,7 +289,9 @@ fun PlayScreen(
             // Kierunek trafia do dziennika i logu: bez niego z raportu telefonu nie da sie
             // odczytac, czy jezyk wybieral kierunek, czy heurystyka planszy.
             kierunek = options.direction.name,
-            onHeard = ::onHeard,
+            // Numer przebiegu czytamy W CHWILI wyniku, nie przy skladaniu wywolania:
+            // miedzy startem a wypowiedzia moglo byc kilka wznowien.
+            onHeard = { alternatywy, koncowy -> onHeard(alternatywy, koncowy, voice.wypowiedz) },
         )
     }
 
@@ -346,7 +365,10 @@ fun PlayScreen(
         if (pauzaOdOkna) { paused = false; pauzaOdOkna = false }
         val slowa = if (wynik.resultCode == Activity.RESULT_OK)
             wynik.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS) else null
-        if (!slowa.isNullOrEmpty()) onHeard(slowa.toList(), true)
+        if (!slowa.isNullOrEmpty()) {
+            oknoWypowiedz -= 1
+            onHeard(slowa.toList(), true, oknoWypowiedz)
+        }
         // Wynik okna ZAPISUJEMY w kodzie w nawiasie: "(0)" = okno zamkniete bez danych,
         // "(0/0)" = okno zwrocilo pusta liste. Zdanie jest w jezyku interfejsu, kod zostaje
         // dla diagnostyki — bez niego "nie zadzialalo" nie da sie odroznic od "zamknal okno".
@@ -436,7 +458,15 @@ fun PlayScreen(
 
     val micPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { granted -> if (granted) startVoice() else odmowaMikrofonu() }
+    ) { granted ->
+        // Okno zgody potrafi wrocic po dluzszej chwili - uczen zdazyl wlaczyc pauze albo skonczyc
+        // gre. Bezwarunkowe startVoice() wlaczalo wtedy mikrofon do rundy, ktorej juz nie ma.
+        when {
+            !granted -> odmowaMikrofonu()
+            wznowicPoZgodzie(true, paused, engine.snapshot().gameOver) -> startVoice()
+            else -> voiceMsg = ""
+        }
+    }
 
     // Droge glosu wybieramy PRZY DOTKNIECIU, nie przy zlozeniu ekranu: uczen mogl w miedzyczasie
     // dac zgode w ustawieniach, doinstalowac aplikacje Google albo zwolnic mikrofon. Kolejnosc
