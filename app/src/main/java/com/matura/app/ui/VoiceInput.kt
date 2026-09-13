@@ -12,6 +12,8 @@ import android.os.Handler
 import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognitionService
+import android.speech.RecognitionSupport
+import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
@@ -96,9 +98,9 @@ class VoiceInput(private val context: Context) {
         private set
 
     /** Podpowiedz o gluchym mikrofonie — ekran podstawia wersje z Str (PL/EN). */
-    var tekstCiszy: String = "Mikrofon nic nie słyszy — wyłączony lub zajęty?"
+    var tekstCiszy: String = "Mikrofon milczy — wyłączony lub zajęty?"
     /** Krotka informacja, ze zmieniamy silnik — inaczej pauza wyglada jak zawieszenie. */
-    var tekstInnySilnik: String = "Próbuję innego silnika mowy…"
+    var tekstInnySilnik: String = "próbuję innego silnika mowy…"
     /** Komunikat, gdy zaden silnik nie rozpoznaje mowy w tym jezyku. */
     var tekstBrakMowy: String = "Nie rozpoznaję mowy — wpisz odpowiedź"
 
@@ -108,18 +110,20 @@ class VoiceInput(private val context: Context) {
     // Droga jest ta sama co dla tekstCiszy: ekran podstawia tlumaczenia, bo VoiceInput
     // nie ma dostepu do Str (komunikat powstaje asynchronicznie, poza kompozycja).
     /** Koniec drabinki przez siec (kody 1/2). */
-    var tekstBrakSieci: String = "brak internetu dla głosu — wpisz odpowiedź"
+    var tekstBrakSieci: String = "Brak internetu dla głosu — wpisz odpowiedź"
     /** Brak pakietu mowy (12/13) DLA ZNANEGO jezyka; "%s" zastepuje [tekstJezykPolski]/[tekstJezykAngielski]. */
-    var tekstBrakPakietuJezyka: String = "brak pakietu mowy %s — wpisz odpowiedź"
+    var tekstBrakPakietuJezyka: String = "Brak pakietu mowy: %s — wpisz odpowiedź"
     /** To samo dla tagu, ktorego nie umiemy nazwac po ludzku — surowy BCP 47 nic uczniowi nie mowi. */
-    var tekstBrakPakietu: String = "brak pakietu mowy — wpisz odpowiedź"
+    var tekstBrakPakietu: String = "Brak pakietu mowy — wpisz odpowiedź"
     /** Watchdog: silnik przyjal zlecenie i milczy; "%s" po kolei — kod bledu i liczba uslug. */
-    var tekstSilnikMilczy: String = "silnik mowy nie odpowiada (%s/%s) — wpisz odpowiedź"
+    var tekstSilnikMilczy: String = "Silnik mowy milczy (%s/%s) — wpisz odpowiedź"
     /** Kazda inna awaria konczaca drabinke; "%s" jak wyzej. */
-    var tekstGlosNiedostepny: String = "głos niedostępny (%s/%s) — wpisz odpowiedź"
-    /** Nazwy jezykow w postaci, ktora wchodzi do [tekstBrakPakietuJezyka] (po polsku: dopelniacz). */
-    var tekstJezykPolski: String = "polskiego"
-    var tekstJezykAngielski: String = "angielskiego"
+    var tekstGlosNiedostepny: String = "Głos niedostępny (%s/%s) — wpisz odpowiedź"
+    /** Silnik odmowil z powodu braku zgody (kod 9); "%s" to kod. */
+    var tekstBrakZgody: String = "Brak zgody na mikrofon (%s)"
+    /** Nazwy jezykow w postaci, ktora wchodzi do [tekstBrakPakietuJezyka] (mianownik po dwukropku). */
+    var tekstJezykPolski: String = "polski"
+    var tekstJezykAngielski: String = "angielski"
 
     private var recognizer: SpeechRecognizer? = null
     private var wantListening = false
@@ -135,8 +139,31 @@ class VoiceInput(private val context: Context) {
     // Drabinka fallbacku silnika. Wiele urzadzen (np. Samsung) ma silnik on-device
     // "dostepny", ktory i tak odrzuca prosbe z EXTRA_PREFER_OFFLINE bledem ERROR_CLIENT.
     // Wtedy schodzimy nizej: silnik sieciowy Google, a potem bez wymuszania offline.
-    private var preferOffline = true
+    //
+    // Od 0.9.16 offline wymuszamy WYLACZNIE na on-device z potwierdzonym modelem (patrz
+    // sprawdzModel). Silnik domyslny (aplikacja Google) sam siega po model offline, gdy go ma;
+    // EXTRA_PREFER_OFFLINE na telefonie bez pobranego pakietu konczyl sie odmowa albo cisza —
+    // czyli pierwszy szczebel drabinki byl najbardziej zawodny z calej listy.
+    private var preferOffline = false
     private var attemptedOnline = false
+
+    /**
+     * Czy on-device ma MODEL dla tagu jezyka — odpowiedz SpeechRecognizer.checkRecognitionSupport
+     * (API 33+). Klucz: tag ("pl-PL"); brak klucza = jeszcze nie pytano. Wypelniane sonda w tle
+     * ([sprawdzModeleWTle]) i przed pierwszym wiazaniem sesji ([start]).
+     *
+     * SEDNO ZGLOSZENIA Z MOTOROLI (Android 16): usluga on-device JEST (isOnDeviceRecognitionAvailable
+     * = true), przyjmuje zlecenie z pl-PL, melduje gotowosc i milczy — bez bledu, bez probki poziomu.
+     * Tak wyglada on-device bez pobranego modelu tego jezyka. Zamiast czekac, az straznik to zlapie,
+     * pytamy o model PRZED startem i bez modelu idziemy od razu do silnika domyslnego.
+     */
+    private val modelOnDevice = HashMap<String, Boolean>()
+    /**
+     * Bledy przejsciowe (CLIENT / SERVER / siec) POD RZAD na silniku, ktory w tej sesji juz oddal
+     * tekst. Taki silnik nie traci szczebla za czkawke po cancel()+startListening ani za chwilowy
+     * brak zasiegu — ponawiamy, ale skonczona liczbe razy (MAX_PRZEJSCIOWE).
+     */
+    private var bledyPrzejsciowe = 0
 
     // Lista KONKRETNYCH silnikow zainstalowanych na urzadzeniu. Domyslny silnik bywa
     // producenta (Samsung/Bixby) i potrafi odmawiac obslugi aplikacjom trzecim, mimo ze
@@ -260,14 +287,22 @@ class VoiceInput(private val context: Context) {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    /** Czy na tym urzadzeniu w ogole jest jakikolwiek silnik mowy. */
+    /**
+     * Czy na tym urzadzeniu w ogole jest jakikolwiek silnik mowy.
+     *
+     * On-device liczy sie dopiero od API 33: tam da sie ZAPYTAC o model jezyka (checkRecognitionSupport),
+     * a bez tego pytania on-device bez pobranego pakietu to silnik, ktory melduje gotowosc i milczy.
+     * Na Androidzie 12 (API 31–32) zaczynamy od silnika domyslnego — on sam uzywa modelu offline,
+     * jesli go ma.
+     */
     fun probe() {
         mode = when {
-            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 SpeechRecognizer.isOnDeviceRecognitionAvailable(context) -> VoiceMode.ON_DEVICE
             SpeechRecognizer.isRecognitionAvailable(context) -> VoiceMode.ONLINE
             else -> VoiceMode.UNAVAILABLE
         }
+        preferOffline = mode == VoiceMode.ON_DEVICE
     }
 
     /**
@@ -292,6 +327,8 @@ class VoiceInput(private val context: Context) {
         }
         oknoDostepne = sprawdzOkno()
         if (mode == VoiceMode.UNAVAILABLE) probe()
+        // Odpowiedz o modelu on-device ma czekac na dotkniecie paska, a nie odwrotnie.
+        sprawdzModeleWTle()
         // Wyczerpana drabinka wraca do gry tylko, gdy cos sie naprawde zmienilo: inna lista
         // uslug albo inny tryb z sondy. Samo dotkniecie nie jest zmiana.
         // Blokada znika, gdy: zmienila sie lista uslug albo tryb, przyczyna byla przejsciowa
@@ -307,8 +344,12 @@ class VoiceInput(private val context: Context) {
         if (wyczerpany && (nowe.toSet() != stare.toSet() || mode != trybPrzed || przejsciowy || ostyglo)) {
             wyczerpany = false
             silnikIdx = -1
-            preferOffline = true
             attemptedOnline = false
+            // Skoro zawiodly WSZYSTKIE szczeble, nie ma powodu zostawac na ostatnim: nowa sesja
+            // zaczyna od trybu z sondy (on-device z modelem, gdy jest). Bez tego on-device
+            // porzucony raz — choc to jedyny silnik z pobranym modelem — nie wracal do konca ekranu.
+            zwolnijRecognizer()
+            probe()
         }
     }
 
@@ -401,7 +442,11 @@ class VoiceInput(private val context: Context) {
             append(" · rozpoznał coś: ").append(if (oddalWynik) "tak" else "NIE")
             append('\n').append("język: ").append(language)
             append(" · kierunek: ").append(if (kierunek.isEmpty()) "—" else kierunek)
-            append(" · podpowiedzi: ").append(if (bezBiasingu) "nie" else biasing.size.toString())
+            append(" · podpowiedzi: ").append(ilePodpowiedzi())
+            // Odpowiedz checkRecognitionSupport dla obu tagow gry. "brak" przy pl-PL na telefonie
+            // z usluga on-device to dokladnie ta sytuacja, w ktorej do 0.9.15 silnik milczal.
+            append('\n').append("model on-device: ")
+            append(JEZYKI_GRY.joinToString(" · ") { it + " " + modelOpis(it) })
             append('\n').append("— przebieg —\n").append(dziennik.tekst())
             append(" · drabinka: ").append(if (wyczerpany) "wyczerpana" else "ok")
             append(" · rms max: ")
@@ -429,9 +474,15 @@ class VoiceInput(private val context: Context) {
         // Prosimy o rozpoznanie bez sieci — ale tylko dopoki silnik to akceptuje.
         // Gdy odmowi (ERROR_CLIENT), escalate() wylacza offline i dzwiek moze pojsc siecia.
         if (preferOffline) putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
-        // Podpowiedzi slownikowe pomijamy po pierwszej eskalacji: dluga lista potrafi byc
-        // powodem, dla ktorego silnik przestaje zwracac wyniki (bez zadnego bledu).
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && biasing.isNotEmpty() && !bezBiasingu) {
+        // Podpowiedzi slownikowe TYLKO dla on-device z potwierdzonym modelem: tam sa udokumentowane
+        // i tam pomagaja. Silnik domyslny (aplikacja Google, zwykle przez siec) dostaje zlecenie
+        // w najprostszej, najszerzej sprawdzonej postaci — a celnosc pojedynczego slowa zalatwia
+        // i tak dopasowanie do zamknietej planszy (VoiceMatch). Po pierwszej eskalacji podpowiedzi
+        // znikaja takze na on-device: dluga lista potrafi byc powodem, dla ktorego silnik
+        // przestaje zwracac wyniki (bez zadnego bledu).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && mode == VoiceMode.ON_DEVICE &&
+            biasing.isNotEmpty() && !bezBiasingu
+        ) {
             // Slownik zestawu: silnik nie zgaduje z calego jezyka, tylko wazy te slowa.
             putStringArrayListExtra(
                 RecognizerIntent.EXTRA_BIASING_STRINGS,
@@ -726,7 +777,7 @@ class VoiceInput(private val context: Context) {
                         zanotujProbe(silnikOpis + ":" + error)
                         if (!escalate()) wyczerpane(friendlyError(error))
                     } else {
-                        status = "brak zgody na mikrofon (" + error + ")"
+                        status = zloz(tekstBrakZgody, error)
                         stop()
                         onBrakZgody?.invoke()
                     }
@@ -765,8 +816,22 @@ class VoiceInput(private val context: Context) {
                 // pokazujemy komunikat i oddajemy decyzje ekranowi.
                 ReakcjaNaBlad.INNY -> {
                     ostatniBlad = error
-                    zanotujProbe(silnikOpis + ":" + error)
-                    if (!escalate()) wyczerpane(friendlyError(error))
+                    // Silnik SPRAWDZONY (w tej sesji oddal juz tekst) nie traci szczebla za jeden
+                    // CLIENT / SERVER / blad sieci: to zwykle czkawka po cancel()+startListening
+                    // (czesc uslug odbija wtedy ERROR_CLIENT) albo chwilowy brak zasiegu. Zejscie
+                    // drabinka kosztowaloby go szczebel i slownik do konca sesji — dokladnie temu,
+                    // komu glos wlasnie dzialal. Nowe wiazanie i ponowienie, skonczona liczbe razy.
+                    if (oddalWynik && bledyPrzejsciowe < MAX_PRZEJSCIOWE) {
+                        bledyPrzejsciowe += 1
+                        ostrzez("blad " + nazwaBledu(error) + " na sprawdzonym silniku " + silnikOpis +
+                            " — ponowienie " + bledyPrzejsciowe + "/" + MAX_PRZEJSCIOWE + " bez zejscia drabinka")
+                        dziennik.dodaj(System.currentTimeMillis(), "ponowienie po " + error)
+                        odtworzRecognizer()
+                        scheduleRestart(PRZEJSCIOWY_MS)
+                    } else {
+                        zanotujProbe(silnikOpis + ":" + error)
+                        if (!escalate()) wyczerpane(friendlyError(error))
+                    }
                 }
             }
         }
@@ -793,7 +858,8 @@ class VoiceInput(private val context: Context) {
     private fun pustyCykl(kod: Int, powod: String) {
         bledyAudio = 0
         pusteCykle += 1
-        if (cisza.maxRms > SilenceDetector.SILENCE_DB) slyszalMowe = true
+        // Mowa, nie szum: prog MOWA_DB, nie prog gluchego mikrofonu (patrz SilenceDetector).
+        if (cisza.maxRms > SilenceDetector.MOWA_DB) slyszalMowe = true
         dziennik.dodaj(
             System.currentTimeMillis(),
             powod + ", RMS " + "%.1f".format(cisza.maxRms) + ", cykl " + pusteCykle,
@@ -892,6 +958,22 @@ class VoiceInput(private val context: Context) {
         return false
     }
 
+    /**
+     * Ten sam szczebel, NOWE wiazanie: stary rozpoznawacz idzie do kosza razem ze swoimi
+     * spoznionymi sygnalami (nowe pokolenie), a wskazniki oceny silnika zostaja — to nadal
+     * ten sam, sprawdzony silnik.
+     *
+     * Nowy rozpoznawacz powstaje DOPIERO przy wznowieniu ([scheduleRestart]), nie tutaj: od
+     * Androida 15 system odlacza usluge natychmiast po zniszczeniu ostatniego klienta, a wiazanie
+     * tuz po tym konczy sie ERROR_SERVER_DISCONNECTED (11) — czyli kolejnym bledem przejsciowym,
+     * ktory zjadalby ponowienia na wyscigu, a nie na prawdziwej awarii.
+     */
+    private fun odtworzRecognizer() {
+        pokolenie += 1
+        zwolnijRecognizer()
+        log("odtworzRecognizer silnik=" + silnikOpis + " pokolenie=" + pokolenie + " — nowe wiazanie przy wznowieniu")
+    }
+
     /** Przelaczenie silnika: niszczy obecny recognizer i tworzy nowy pod nowy tryb. */
     private fun useEngine(newMode: VoiceMode, offline: Boolean) {
         bezBiasingu = true   // od drugiego podejscia liczy sie to, zeby w ogole dzialalo
@@ -911,6 +993,7 @@ class VoiceInput(private val context: Context) {
         pusteCykle = 0
         // Nowy silnik nie dziedziczy obserwacji o mikrofonie z poprzedniego cyklu.
         slyszalMowe = false
+        bledyPrzejsciowe = 0
         recognizer = create()?.also { it.setRecognitionListener(sluchacz(pokolenie)) }
         log("useEngine tryb=" + mode + " offline=" + preferOffline + " silnik=" + silnikOpis +
             " pokolenie=" + pokolenie + " rozpoznawacz=" + (if (recognizer == null) "NULL" else "ok"))
@@ -977,6 +1060,7 @@ class VoiceInput(private val context: Context) {
         cisza.onSpeech()
         bledyAudio = 0 // wynik = dzwiek plynie; dopiero to kasuje serie ERROR_AUDIO
         bledyBusy = 0
+        bledyPrzejsciowe = 0
         onHeard?.invoke(uzyteczne, final)
     }
 
@@ -1003,9 +1087,16 @@ class VoiceInput(private val context: Context) {
                 return@postDelayed
             }
             wznowienie.wykonano(znacznik)
+            // Brak rozpoznawacza to zwykle nowe wiazanie po odtworzRecognizer(); tworzymy je tu,
+            // po zwloce. Dopiero gdy i to sie nie uda (np. on-device ponizej Androida 12), dalej
+            // po drabince.
+            if (recognizer == null) {
+                recognizer = create()?.also { it.setRecognitionListener(sluchacz(pokolenie)) }
+                log("restart: nowe wiazanie silnik=" + silnikOpis + " rozpoznawacz=" +
+                    (if (recognizer == null) "NULL" else "ok"))
+            }
             val r = recognizer
             if (r == null) {
-                // Szczebel bez recognizera (np. on-device ponizej Androida 12) — dalej po drabince.
                 ostrzez("restart: brak rozpoznawacza — schodze drabinka")
                 if (!escalate()) wyczerpane(friendlyError(ostatniBlad))
                 return@postDelayed
@@ -1030,7 +1121,7 @@ class VoiceInput(private val context: Context) {
 
     /** Ile podpowiedzi slownikowych faktycznie poleci do silnika — do logu i diagnostyki. */
     private fun ilePodpowiedzi(): Int =
-        if (bezBiasingu || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 0
+        if (bezBiasingu || mode != VoiceMode.ON_DEVICE || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) 0
         else minOf(biasing.size, MAX_BIASING_WORDS)
 
     /**
@@ -1101,6 +1192,7 @@ class VoiceInput(private val context: Context) {
         wantListening = true
         listening = true
         bledyBusy = 0
+        bledyPrzejsciowe = 0
         status = ""
         bledyAudio = 0
         cisza.reset()
@@ -1122,6 +1214,42 @@ class VoiceInput(private val context: Context) {
             } catch (t: Throwable) {
                 ostrzez("start: cancel() rzucil " + t.javaClass.simpleName)
             }
+        }
+        // MODEL ON-DEVICE. Na API 33+ pytamy silnik on-device, czy ma pobrany model TEGO jezyka,
+        // ZANIM zwiazemy sie z nim na sesje. Bez tego pytania on-device bez pakietu melduje
+        // gotowosc i milczy (zgloszenie z Motoroli). Sonda w tle (refresh) zwykle juz odpowiedziala;
+        // tu czekamy tylko, gdy odpowiedzi jeszcze nie ma — najwyzej MODEL_MS.
+        if (mode == VoiceMode.ON_DEVICE && recognizer == null && !modelSprawdzony(language)) {
+            czekamNaSilnik = true   // pasek: "uruchamiam mikrofon…"
+            log("start: sprawdzam model on-device dla " + language)
+            val pok = pokolenie
+            sprawdzModel(language, przejmij = true) {
+                if (pok != pokolenie || !wantListening) {
+                    log("start: sesja zmieniona w trakcie sprawdzania modelu — nie startuje")
+                    return@sprawdzModel
+                }
+                czekamNaSilnik = false
+                uruchomNasluch()
+            }
+            return
+        }
+        uruchomNasluch()
+    }
+
+    /** Druga polowa [start]: wiazanie z silnikiem i startListening. */
+    private fun uruchomNasluch() {
+        if (!wantListening) return
+        if (mode == VoiceMode.ON_DEVICE && modelOnDevice[language] == false) {
+            // Usluga on-device jest, modelu tego jezyka nie ma: on-device milczalby. Bez czekania
+            // na straznika idziemy do silnika domyslnego — ten sam uzyje modelu offline, gdy tylko
+            // zostanie pobrany, a do tego czasu rozpozna przez siec.
+            ostrzez("model on-device dla " + language + " nie jest pobrany — start od silnika domyslnego")
+            dziennik.dodaj(System.currentTimeMillis(), "bez modelu " + language + " -> sieciowy")
+            zwolnijRecognizer()
+            mode = VoiceMode.ONLINE
+            preferOffline = false
+            attemptedOnline = true
+            silnikIdx = -1
         }
         if (recognizer == null) recognizer = create()
         val r = recognizer
@@ -1187,12 +1315,143 @@ class VoiceInput(private val context: Context) {
         probowanyJezykBezRegionu = false
         dziennik.dodaj(System.currentTimeMillis(), "język -> " + nowy)
         log("przelaczJezyk -> " + nowy + " (silnik " + silnikOpis + ", ten sam przebieg)")
+        // On-device bez modelu NOWEGO jezyka milczalby (patrz sprawdzModel) — od razu silnik
+        // domyslny, zamiast czekac na straznika dzwieku.
+        if (mode == VoiceMode.ON_DEVICE && modelOnDevice[nowy] == false) {
+            log("przelaczJezyk: brak modelu on-device dla " + nowy + " — silnik sieciowy")
+            useEngine(VoiceMode.ONLINE, offline = false)
+        }
         // Nowe pokolenie odcina zdarzenia cyklu w starym jezyku; sluchacz musi je znac, inaczej
         // wszystko, co odda biezacy rozpoznawacz, trafiloby do kosza jako "obce".
         pokolenie += 1
         recognizer?.setRecognitionListener(sluchacz(pokolenie))
         scheduleRestart(ZMIANA_JEZYKA_MS)
         return true
+    }
+
+    // ---- MODEL ON-DEVICE (API 33+) --------------------------------------------------------
+
+    /** Czy o model dla tego tagu juz pytalismy w tej sesji. */
+    private fun modelSprawdzony(tag: String): Boolean = modelOnDevice.containsKey(tag)
+
+    /** Opis wyniku sprawdzenia — do diagnostyki. */
+    private fun modelOpis(tag: String): String = when (modelOnDevice[tag]) {
+        true -> "zainstalowany"
+        false -> "brak"
+        null -> "nie sprawdzano"
+    }
+
+    /**
+     * Pyta silnik on-device o model dla [tag] i wola [dalej] z glownego watku — po odpowiedzi,
+     * po bledzie albo po limicie [MODEL_MS] (usluga potrafi nie odpowiedziec wcale). Odpowiedz
+     * laduje w [modelOnDevice]; brak odpowiedzi liczy sie jako "brak" — lepiej zaczac od silnika
+     * domyslnego niz od tego, ktory moze milczec.
+     *
+     * @param przejmij true = gdy model jest, rozpoznawacz z tej sondy zostaje rozpoznawaczem sesji
+     *        (oszczedza drugie wiazanie); false = sonda w tle, rozpoznawacz zawsze zwalniamy
+     */
+    private fun sprawdzModel(tag: String, przejmij: Boolean, ponowienie: Boolean = false, dalej: () -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            modelOnDevice[tag] = false
+            dalej()
+            return
+        }
+        val r = try {
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
+        } catch (t: Throwable) {
+            ostrzez("sprawdzenie modelu: createOnDeviceSpeechRecognizer rzucil " + t.javaClass.simpleName)
+            null
+        }
+        if (r == null) {
+            modelOnDevice[tag] = false
+            dalej()
+            return
+        }
+        val pok = pokolenie
+        var limit: Runnable? = null
+        var rozstrzygniete = false
+        fun zakoncz(jest: Boolean, opis: String) {
+            if (rozstrzygniete) return
+            rozstrzygniete = true
+            limit?.let { handler.removeCallbacks(it) }
+            modelOnDevice[tag] = jest
+            log("model on-device (" + tag + "): " + (if (jest) "JEST" else "BRAK") + " — " + opis)
+            dziennik.dodaj(
+                System.currentTimeMillis(),
+                "model " + tag + ": " + (if (jest) "jest" else "brak"),
+            )
+            val zostaje = przejmij && jest && pok == pokolenie && wantListening && recognizer == null
+            if (zostaje) recognizer = r
+            else try { r.destroy() } catch (_: Throwable) {}
+            dalej()
+        }
+        limit = Runnable { zakoncz(false, "brak odpowiedzi w " + MODEL_MS + " ms") }
+        handler.postDelayed(limit, MODEL_MS)
+        try {
+            r.checkRecognitionSupport(
+                zapytanieOModel(tag),
+                ContextCompat.getMainExecutor(context),
+                object : RecognitionSupportCallback {
+                    override fun onSupportResult(recognitionSupport: RecognitionSupport) {
+                        val jest = modelZainstalowany(tag, recognitionSupport.installedOnDeviceLanguages)
+                        zakoncz(
+                            jest,
+                            "zainstalowane=" + recognitionSupport.installedOnDeviceLanguages +
+                                " obslugiwane=" + recognitionSupport.supportedOnDeviceLanguages +
+                                " w toku=" + recognitionSupport.pendingOnDeviceLanguages +
+                                " online=" + recognitionSupport.onlineLanguages,
+                        )
+                    }
+
+                    override fun onError(error: Int) {
+                        // 11 SERVER_DISCONNECTED tuz po poprzednim zwolnieniu tej uslugi to wyscig
+                        // wiazania (Android 15+), nie odpowiedz o modelu — jedno ponowienie po przerwie.
+                        if (error == SpeechRecognizer.ERROR_SERVER_DISCONNECTED && !ponowienie && !rozstrzygniete) {
+                            rozstrzygniete = true
+                            limit?.let { handler.removeCallbacks(it) }
+                            try { r.destroy() } catch (_: Throwable) {}
+                            log("model on-device (" + tag + "): 11 przy sprawdzaniu — ponawiam po przerwie")
+                            handler.postDelayed({ sprawdzModel(tag, przejmij, ponowienie = true, dalej = dalej) }, ODSTEP_WIAZANIA_MS)
+                            return
+                        }
+                        zakoncz(false, "blad " + nazwaBledu(error))
+                    }
+                },
+            )
+        } catch (t: Throwable) {
+            zakoncz(false, "checkRecognitionSupport rzucil " + t.javaClass.simpleName)
+        }
+    }
+
+    /** Zlecenie, o ktore pytamy: ten sam model i tag co w [buildIntent], bez reszty dodatkow. */
+    private fun zapytanieOModel(tag: String): Intent =
+        Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, tag)
+        }
+
+    /** Czy sonda w tle zostala juz zlecona — raz na zycie obiektu. */
+    private var sondaWTleZlecona = false
+
+    /**
+     * Sonda w tle dla obu tagow gry — zeby dotkniecie paska nie czekalo na odpowiedz. Nie wchodzi
+     * w droge sesji, ktora juz trwa (ta ma wlasne pytanie w [start]).
+     */
+    private fun sprawdzModeleWTle() {
+        if (sondaWTleZlecona || mode != VoiceMode.ON_DEVICE) return
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        sondaWTleZlecona = true
+        val tagi = JEZYKI_GRY.filter { !modelSprawdzony(it) }
+        fun kolejny(i: Int) {
+            if (i >= tagi.size || wantListening || modelSprawdzony(tagi[i])) {
+                if (i < tagi.size && modelSprawdzony(tagi[i])) kolejny(i + 1)
+                return
+            }
+            // Kazde pytanie to osobne wiazanie tej samej uslugi; przerwa chroni przed wyscigiem
+            // odlaczenia (11 SERVER_DISCONNECTED), patrz odtworzRecognizer.
+            sprawdzModel(tagi[i], przejmij = false) { handler.postDelayed({ kolejny(i + 1) }, ODSTEP_WIAZANIA_MS) }
+        }
+        kolejny(0)
     }
 
     private fun mikrofonWyciszony(): Boolean = try {
@@ -1226,6 +1485,9 @@ class VoiceInput(private val context: Context) {
 
     fun stop() {
         log("stop (nasluch byl " + listening + ")")
+        // Kto wylaczyl nasluch? W buildzie debug slad stosu — bez niego "stop" w logu z telefonu
+        // nie mowi, czy to pauza, zejscie w tlo, dotkniecie paska czy koniec drabinki.
+        if (BuildConfig.DEBUG && listening) Log.i(TAG, "stop: wolajacy", Throwable("slad"))
         dziennik.dodaj(System.currentTimeMillis(), "stop")
         wantListening = false
         listening = false
@@ -1284,6 +1546,15 @@ class VoiceInput(private val context: Context) {
         const val MAX_AUDIO_RETRIES = 6
         /** Syntetyczny kod dla watchdoga — poza zakresem kodow SpeechRecognizer (1–15). */
         const val ERROR_WATCHDOG = 99
+
+        /** Ile czekamy na odpowiedz checkRecognitionSupport, zanim uznamy model za brakujacy. */
+        const val MODEL_MS = 1_500L
+        /** Przerwa miedzy zwolnieniem a ponownym wiazaniem TEJ SAMEJ uslugi (wyscig odlaczenia na Androidzie 15+). */
+        const val ODSTEP_WIAZANIA_MS = 400L
+        /** Ile bledow przejsciowych z rzedu wolno SPRAWDZONEMU silnikowi, zanim zejdziemy drabinka. */
+        const val MAX_PRZEJSCIOWE = 3
+        /** Zwloka przed ponowieniem po bledzie przejsciowym — nowe wiazanie potrzebuje chwili. */
+        const val PRZEJSCIOWY_MS = 350L
 
         /**
          * Silnik zglosil gotowosc, ale nie oddal ani jednej probki poziomu dzwieku.

@@ -138,6 +138,16 @@ class SilenceDetector(
         const val SILENCE_DB = -1.5f
         const val MIN_SAMPLES = 5
         const val CYCLES = 2
+
+        /**
+         * Od tego poziomu w cyklu uznajemy, ze do mikrofonu weszla MOWA (a nie tylko "cos"). To inny
+         * prog niz [SILENCE_DB]: tamten odroznia gluchy mikrofon od zywego (0,6 dB nad dnem), a ten
+         * mowe od szumu otoczenia. Na emulatorze z mikrofonem hosta cichy pokoj dawal 1–2 dB i przy
+         * progu -1,5 dB kazdy pusty cykl liczyl sie jako "slyszal mowe": sprawny silnik tracil
+         * szczebel po dwoch cyklach, choc nikt nic nie powiedzial. Slowo wypowiedziane normalnie
+         * daje 6–10 dB.
+         */
+        const val MOWA_DB = 4f
     }
 }
 
@@ -474,6 +484,29 @@ fun zaliczycWypowiedz(
  */
 fun wznowicPoZgodzie(zgoda: Boolean, pauza: Boolean, koniecGry: Boolean): Boolean =
     zgoda && !pauza && !koniecGry
+
+/** Tagi jezyka, o ktore gra pyta silnik mowy: odpowiedzi na planszy sa polskie albo angielskie. */
+val JEZYKI_GRY: List<String> = listOf("pl-PL", "en-US")
+
+/**
+ * Czy lista modeli on-device z RecognitionSupport pokrywa tag, o ktory pytamy.
+ *
+ * Silnik podaje tagi BCP 47, ale nie zawsze w tej samej pisowni co my ("pl-PL", "pl_PL", "pl").
+ * Liczy sie: ten sam tag, sam jezyk bez regionu, a gdy MY pytamy bez regionu — dowolny region
+ * tego jezyka. Inny region ("en-GB" przy pytaniu o "en-US") NIE liczy sie za model: czesc silnikow
+ * odrzuca wtedy pelny tag kodem 13, a szczebel "jezyk bez regionu" i tak to obsluzy pozniej.
+ *
+ * @param zainstalowane RecognitionSupport.installedOnDeviceLanguages (albo supportedOnDeviceLanguages)
+ */
+fun modelZainstalowany(tag: String, zainstalowane: List<String>): Boolean {
+    val t = tag.trim().replace('_', '-').lowercase()
+    if (t.isEmpty()) return false
+    val jezyk = jezykBezRegionu(t).ifEmpty { t }
+    return zainstalowane.any { wpis ->
+        val z = wpis.trim().replace('_', '-').lowercase()
+        z == t || z == jezyk || (t == jezyk && jezykBezRegionu(z) == jezyk)
+    }
+}
 
 /**
  * Tag jezyka bez regionu ("en-US" -> "en"), albo pusty gdy nie ma czego upraszczac.

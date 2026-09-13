@@ -1,5 +1,7 @@
 package com.matura.app.ui
 
+import com.matura.app.learn.FormyLiczby
+import com.matura.app.learn.Podsumowanie
 import com.matura.app.model.UiLanguage
 
 /**
@@ -24,7 +26,9 @@ class Str(private val lang: UiLanguage) {
     val modeMultipleDesc get() = pick("Wybierz poprawne z czterech", "Pick the right one of four")
     val modeTimeAttackDesc get() = pick("Ile zdążysz, zanim czas minie", "How many before the clock runs out")
     val filterAll get() = pick("WSZYSTKIE", "ALL")
-    val yourName get() = pick("Twoja nazwa", "Your name")
+    val yourName get() = pick("Nazwa gracza", "Your name")
+    /** Podpowiedz w polu nazwy i nazwa zapisywana, gdy uczen zostawi pole puste. */
+    val defaultPlayerName get() = pick("Gracz", "Player")
 
     val play get() = pick("GRAJ", "PLAY")
     val sets get() = pick("ZESTAWY", "SETS")
@@ -39,18 +43,18 @@ class Str(private val lang: UiLanguage) {
     val back get() = pick("Wróć", "Back")
 
     val chooseSet get() = pick("Wybierz zestaw", "Choose a set")
-    val chooseTopic get() = pick("Wybierz temat", "Choose a topic")
-    val randomMix get() = pick("LOSOWANIE", "RANDOM MIX")
+    val chooseTopic get() = pick("Wybierz dział", "Choose a topic")
+    val randomMix get() = pick("LOSOWY MIKS", "RANDOM MIX")
     val randomMixDesc
         get() = pick("40 słówek ze wszystkich działów · za każdym razem inne",
             "40 words from every topic · a fresh draw each time")
-    val speakAnswer get() = pick("MÓW ODPOWIEDŹ", "SPEAK THE ANSWER")
+    val speakAnswer get() = pick("POWIEDZ ODPOWIEDŹ", "SPEAK THE ANSWER")
     val listeningNow get() = pick("SŁUCHAM…", "LISTENING…")
     val micDenied get() = pick("Bez zgody na mikrofon tryb głosowy nie zadziała.",
         "Voice mode needs microphone access.")
     // Podpisy pod paskiem glosu, gdy nie ma silnika do zwiazania: ktora droga pojdzie glos.
     // Krotkie — mieszcza sie w jednej linii 12 sp.
-    val voiceDialog get() = pick("okno systemowe", "system dialog")
+    val voiceDialog get() = pick("głos przez okno systemowe", "voice via system dialog")
     val voiceKeyboardHint get() = pick("głos przez klawiaturę telefonu", "voice via phone keyboard")
     // Komunikaty w linii pod przyciskiem: JEDNA linia (pasek ma stala wysokosc, pod nim jest
     // klawiatura gry), wiec do ~45 znakow — tyle miesci sie w 12 sp na ekranie 360 dp.
@@ -60,47 +64,51 @@ class Str(private val lang: UiLanguage) {
     val micDeniedSettings get() = pick(
         "Mikrofon zablokowany — włącz w ustawieniach",
         "Mic blocked — allow it in app settings")
+    /** Silnik zglosil brak zgody (kod w nawiasie) — podstawiane do VoiceInput jak reszta komunikatow. */
+    val voiceNoPermission get() = pick("Brak zgody na mikrofon (%s)", "No microphone permission (%s)")
     val voiceOtherEngine get() = pick("próbuję innego silnika mowy…", "trying another speech engine…")
-    val voiceNoSpeech get() = pick("nie rozpoznaję mowy — wpisz odpowiedź", "speech not recognised — type your answer")
+    val voiceNoSpeech get() = pick("Nie rozpoznaję mowy — wpisz odpowiedź", "Speech not recognised — type your answer")
 
     // KOMUNIKATY O AWARII GLOSU. Trafiaja do VoiceInput przez pola (patrz LaunchedEffect w PlayScreen),
     // bo warstwa mowy nie ma dostepu do Str — jest tworzona poza kompozycja i zyje dluzej niz ekran.
     // Wzorce "%s" wypelnia VoiceInput: nazwa jezyka albo kod bledu i liczba silnikow.
+    // Komunikaty z poleceniem ("— wpisz odpowiedz") zaczynaja sie wielka litera jak reszta instrukcji
+    // pod paskiem ("Mikrofon zawiodl — wpisz odpowiedz"); mala litera zostaje dla stanow ("slucham").
     val voiceNoNetwork get() = pick(
-        "brak internetu dla głosu — wpisz odpowiedź",
-        "no internet for speech — type your answer",
+        "Brak internetu dla głosu — wpisz odpowiedź",
+        "No internet for speech — type your answer",
     )
-    /** "%s" to nazwa jezyka w dopelniaczu ([voiceLangPolish] / [voiceLangEnglish]). */
+    /** "%s" to nazwa jezyka ([voiceLangPolish] / [voiceLangEnglish]); po dwukropku, zeby zmiescic sie w linii. */
     val voiceNoLanguagePack get() = pick(
-        "brak pakietu mowy %s — wpisz odpowiedź",
-        "no %s speech pack — type your answer",
+        "Brak pakietu mowy: %s — wpisz odpowiedź",
+        "No %s speech pack — type your answer",
     )
     /** Gdy tag jezyka jest nieznany — bez nazwy, zamiast zgadywania. */
     val voiceNoPack get() = pick(
-        "brak pakietu mowy — wpisz odpowiedź",
-        "speech pack missing — type your answer",
+        "Brak pakietu mowy — wpisz odpowiedź",
+        "Speech pack missing — type your answer",
     )
     val voiceEngineSilent get() = pick(
-        "silnik mowy nie odpowiada (%s/%s) — wpisz odpowiedź",
-        "speech engine not responding (%s/%s) — type your answer",
+        "Silnik mowy milczy (%s/%s) — wpisz odpowiedź",
+        "Speech engine silent (%s/%s) — type your answer",
     )
     val voiceUnavailable get() = pick(
-        "głos niedostępny (%s/%s) — wpisz odpowiedź",
-        "speech unavailable (%s/%s) — type your answer",
+        "Głos niedostępny (%s/%s) — wpisz odpowiedź",
+        "Speech unavailable (%s/%s) — type your answer",
     )
-    // Po polsku dopelniacz ("brak pakietu mowy polskiego"), po angielsku przydawka ("no Polish speech pack").
-    val voiceLangPolish get() = pick("polskiego", "Polish")
-    val voiceLangEnglish get() = pick("angielskiego", "English")
+    // Po polsku mianownik po dwukropku ("Brak pakietu mowy: polski"), po angielsku przydawka ("no Polish speech pack").
+    val voiceLangPolish get() = pick("polski", "Polish")
+    val voiceLangEnglish get() = pick("angielski", "English")
 
     // ---- Etap 3: trudne slowa i codzienna sesja ----------------------------
     val hardWordsMenu get() = pick("TRUDNE SŁOWA", "HARD WORDS")
     val hardWordsMenuDesc get() = pick("Słowa, przy których się potykasz", "The words you keep missing")
-    val dailyMenu get() = pick("DZISIEJSZY TRENING", "TODAY'S DRILL")
+    val dailyMenu get() = pick("DZISIEJSZE 5 MINUT", "TODAY'S 5 MINUTES")
     val dailyMenuDesc get() = pick("Krótka sesja na dziś", "A short session for today")
-    val hardWords get() = pick("Trudne słowa", "Hard words")
-    val hardWordsCount get() = pick("słów do powtórki", "words to review")
+    val hardWords get() = pick("TRUDNE SŁOWA", "HARD WORDS")
+    val hardWordsCount get() = pick("Słowa do powtórki", "Words to review")
     val hardReasonDue get() = pick("termin powtórki minął", "review overdue")
-    val hardReasonBackToStart get() = pick("pierwsze pudełko po błędzie", "first box after a mistake")
+    val hardReasonBackToStart get() = pick("cofnięte po błędzie", "reset after a mistake")
     val hardReasonMistakes get() = pick("były pomyłki", "answered wrong before")
     val hardReasonHints get() = pick("z podpowiedzią", "needed a hint")
     val hardCountMistakes get() = pick("pomyłki", "mistakes")
@@ -115,12 +123,12 @@ class Str(private val lang: UiLanguage) {
         "Nothing here yet. Play a few rounds — the words you stumble on will show up here.",
     )
     val hardEmptyNothingHard get() = pick(
-        "W tym wyborze nie ma nic do poprawki — wszystko czeka na swój termin.",
-        "Nothing to fix in this selection — everything is waiting for its next review.",
+        "Nic tu nie wymaga poprawki — wszystko czeka na swój termin.",
+        "Nothing here needs fixing — everything is waiting for its next review.",
     )
     val micSilentHint get() = pick(
-        "Mikrofon nic nie słyszy — wyłączony lub zajęty?",
-        "Mic hears nothing — muted or in use elsewhere?")
+        "Mikrofon milczy — wyłączony lub zajęty?",
+        "Mic silent — muted or in use elsewhere?")
     // Okno systemowe zamkniete bez odpowiedzi; kod wyniku ekran dokleja w nawiasie.
     val voiceDialogNoResult get() = pick("Okno zamknięte bez odpowiedzi", "Dialog closed without an answer")
     // Naglowek nakladki z diagnostyka glosu (czcionka pikselowa — bez polskich znakow).
@@ -133,7 +141,7 @@ class Str(private val lang: UiLanguage) {
     // Nazwy konfiguracji w wynikach sa techniczne i te same w obu jezykach (trafiaja do
     // raportu dla programisty); tlumaczymy tylko to, co czyta uzytkownik.
     val voiceTest get() = pick("Test mowy", "Speech test")
-    val voiceTestOpen get() = pick("URUCHOM", "OPEN")
+    val voiceTestOpen get() = pick("OTWÓRZ", "OPEN")
     val voiceTestIntro get() = pick(
         "Powiedz wyraźnie: KOLANO — test sprawdzi po kolei wszystkie silniki mowy w tym telefonie.",
         "Say clearly: KOLANO — the test checks every speech engine in this phone, one by one.")
@@ -146,8 +154,8 @@ class Str(private val lang: UiLanguage) {
     val voiceTestProgress get() = pick("Próba", "Attempt")
     val voiceTestCopy get() = pick("KOPIUJ RAPORT", "COPY REPORT")
     val voiceTestCopied get() = pick(
-        "Raport skopiowany — wklej go w rozmowie.",
-        "Report copied — paste it in the chat.")
+        "Raport skopiowany — wklej go w wiadomości do autora aplikacji.",
+        "Report copied — paste it into a message to the app author.")
     val voiceTestNoMic get() = pick(
         "Bez zgody na mikrofon test nie ma czego sprawdzić. Włącz mikrofon w ustawieniach aplikacji i uruchom go jeszcze raz.",
         "Without microphone access there is nothing to test. Allow the microphone in app settings and run it again.")
@@ -173,8 +181,8 @@ class Str(private val lang: UiLanguage) {
         "Żadna konfiguracja nie rozpoznała słowa — na tym telefonie rozpoznawanie mowy w aplikacji nie działa.",
         "No configuration recognised the word — in-app speech recognition does not work on this phone.")
     val voiceTestMicHeard get() = pick(
-        "Mikrofon działa (silniki słyszały dźwięk), więc brakuje modelu polskiego — sprawdź pakiety języka w aplikacji Google.",
-        "The microphone works (engines heard sound), so the Polish model is missing — check the language packs in the Google app.")
+        "Mikrofon działa (silniki słyszały dźwięk), więc brakuje polskiego pakietu mowy — sprawdź języki rozpoznawania mowy w ustawieniach aplikacji Google.",
+        "The microphone works (engines heard sound), so the Polish speech pack is missing — check the speech recognition languages in the Google app settings.")
     val voiceTestMicSilent get() = pick(
         "Mikrofon nie dał żadnego sygnału — sprawdź przełącznik prywatności mikrofonu i czy nie zajmuje go inna aplikacja.",
         "The microphone gave no signal at all — check the mic privacy toggle and whether another app is holding it.")
@@ -192,6 +200,15 @@ class Str(private val lang: UiLanguage) {
     val voiceTestReady get() = pick("gotowość", "ready")
     val voiceTestNoReady get() = pick("bez gotowości", "no ready signal")
     val voiceTestPartial get() = pick("wyniki częściowe", "partial results")
+    // Model on-device (API 33+): silnik obsługuje język, ale pakiet nie jest pobrany — można to zlecić stąd.
+    val voiceTestDownloadModel get() = pick("POBIERZ MODEL OFFLINE", "DOWNLOAD OFFLINE MODEL")
+    val voiceTestDownloadHint get() = pick(
+        "Ten telefon obsługuje polski offline, ale model nie jest pobrany. Po pobraniu rozpoznawanie działa bez internetu.",
+        "This phone supports offline Polish, but the model is not downloaded. Once it is, recognition works without internet.")
+    val voiceTestDownloadScheduled get() = pick("Pobieranie zlecone — uruchom test jeszcze raz za chwilę.", "Download scheduled — run the test again in a moment.")
+    val voiceTestDownloadProgress get() = pick("Pobieranie modelu: %s%%", "Downloading model: %s%%")
+    val voiceTestDownloadDone get() = pick("Model pobrany — uruchom test jeszcze raz.", "Model downloaded — run the test again.")
+    val voiceTestDownloadFailed get() = pick("Nie udało się pobrać modelu (%s).", "Could not download the model (%s).")
     val speakNow get() = pick("Powiedz odpowiedź", "Say the answer")
     val voicePaused get() = pick("Gra wstrzymana — wznów, aby mówić", "Game paused — resume to speak")
     val voiceOnDevice get() = pick("na urządzeniu", "on-device")
@@ -199,9 +216,8 @@ class Str(private val lang: UiLanguage) {
     val speakPl get() = pick("mów po polsku", "answer in Polish")
     val speakEn get() = pick("mów po angielsku", "answer in English")
     val ownSets get() = pick("Moje zestawy", "My own sets")
-    val setsShort get() = pick("zestawy", "sets")
     val chooseMode get() = pick("Wybierz tryb", "Choose a mode")
-    val classic get() = pick("CLASSIC", "CLASSIC")
+    val classic get() = pick("KLASYCZNY", "CLASSIC")
     val classicDesc
         get() = pick(
             "Wpisuj tłumaczenia, zanim potworki dojdą do działka.",
@@ -212,8 +228,8 @@ class Str(private val lang: UiLanguage) {
     val setTitle get() = pick("Tytuł zestawu", "Set title")
     val terms get() = pick("Hasła", "Terms")
     val definitions get() = pick("Tłumaczenia", "Definitions")
-    val addRow get() = pick("Dodaj wiersz", "Add row")
-    val save get() = pick("Zapisz", "Save")
+    val addRow get() = pick("DODAJ WIERSZ", "ADD ROW")
+    val save get() = pick("ZAPISZ", "SAVE")
     val delete get() = pick("Usuń", "Delete")
     val confirmDelete get() = pick("Na pewno?", "Sure?")
     val deleteHint
@@ -223,8 +239,22 @@ class Str(private val lang: UiLanguage) {
         )
     val swapLanguages get() = pick("Zamień strony", "Swap sides")
     val builtIn get() = pick("wbudowany", "built-in")
-    val entriesLabel get() = pick("haseł", "entries")
-    val playedLabel get() = pick("rozegrań", "plays")
+    /** Nazwa zestawu, gdy uczen zapisze go bez tytulu — w jezyku interfejsu, nie na sztywno. */
+    val untitledSet get() = pick("Bez tytułu", "Untitled")
+    // LICZBA Z NAZWA. Po polsku forma zalezy od liczby (1 haslo, 2-4 hasla, 5+ hasel; 22 hasla!),
+    // wiec sklejanie "$n ${str.entriesLabel}" dawalo "22 hasel". Regule ma juz Podsumowanie.forma.
+    fun entriesCount(n: Int): String = "$n " + pick(
+        Podsumowanie.forma(n, FormyLiczby("hasło", "hasła", "haseł")),
+        if (n == 1) "entry" else "entries",
+    )
+    fun playsCount(n: Int): String = "$n " + pick(
+        Podsumowanie.forma(n, FormyLiczby("rozegranie", "rozegrania", "rozegrań")),
+        if (n == 1) "play" else "plays",
+    )
+    fun setsCount(n: Int): String = "$n " + pick(
+        Podsumowanie.forma(n, FormyLiczby("zestaw", "zestawy", "zestawów")),
+        if (n == 1) "set" else "sets",
+    )
     val commaHint
         get() = pick(
             "Kilka tłumaczeń rozdziel przecinkiem — każde będzie zaliczone.",
@@ -238,7 +268,10 @@ class Str(private val lang: UiLanguage) {
 
     val sound get() = pick("Dźwięk", "Sound")
     val lives get() = pick("Życia", "Lives")
-    val texture get() = pick("Tekstury", "Textures")
+    val texture get() = pick("Tło planszy", "Board background")
+    val textureGrass get() = pick("TRAWA", "GRASS")
+    val textureNight get() = pick("NOC", "NIGHT")
+    val textureSand get() = pick("PIASEK", "SAND")
     val systemKeyboard get() = pick("Klawiatura telefonu", "Phone keyboard")
     val systemKeyboardHint get() = pick(
         "Zamiast klawiatury z gry — z mikrofonem do dyktowania",
@@ -268,8 +301,8 @@ class Str(private val lang: UiLanguage) {
     val score get() = pick("Punkty", "Score")
     val level get() = pick("Poziom", "Level")
     val gameOver get() = pick("KONIEC GRY", "GAME OVER")
-    val playAgain get() = pick("Jeszcze raz", "Play again")
-    val toMenu get() = pick("Do menu", "To menu")
+    val playAgain get() = pick("JESZCZE RAZ", "PLAY AGAIN")
+    val toMenu get() = pick("DO MENU", "TO MENU")
     val pause get() = pick("Pauza", "Pause")
     val resume get() = pick("Wróć do gry", "Resume")
     val killsLabel get() = pick("Pokonane", "Defeated")
@@ -282,11 +315,11 @@ class Str(private val lang: UiLanguage) {
     val locked get() = pick("zablokowane", "locked")
     val emptySetWarning
         get() = pick(
-            "Ten zestaw nie ma hasła z tłumaczeniem — uzupełnij go w SETS.",
-            "This set has no usable rows — fill it in under SETS."
+            "Ten zestaw nie ma hasła z tłumaczeniem. Uzupełnij go w ZESTAWACH.",
+            "This set has no usable rows. Fill it in under SETS."
         )
     val topSet get() = pick("Najpopularniejszy zestaw", "Most played set")
-    val bestRuns get() = pick("Najlepsze przebiegi", "Best runs")
+    val bestRuns get() = pick("Najlepsze gry", "Best games")
 }
 
 
@@ -298,33 +331,28 @@ class Str(private val lang: UiLanguage) {
  */
 private val PRIVACY_PL = """
 MATURA — słówka angielskie · polityka prywatności
-Ostatnia aktualizacja: 4 września 2026
+Ostatnia aktualizacja: 13 września 2026
 
 W SKRÓCIE
-Gra działa na Twoim urządzeniu. Nie ma kont, logowania, reklam ani śledzenia. Aplikacja
-nie ma uprawnienia dostępu do internetu, więc sama nie może niczego wysłać.
+Gra działa na Twoim urządzeniu. Nie ma kont, logowania, reklam ani śledzenia. Aplikacja nie ma uprawnienia dostępu do internetu, więc sama nie może niczego wysłać.
 
 CO ZAPISUJEMY (tylko na urządzeniu)
 • najlepsze wyniki i statystyki gry,
 • ustawienia (życia, tempo, kierunek tłumaczenia, język, dźwięk, klawiatura),
-• zestawy słówek, które sam(a) dodasz.
+• zestawy słówek, które sam(a) dodasz,
+• postęp nauki (które słowa znasz i kiedy wracają do powtórki).
 Te dane leżą w pamięci aplikacji i znikają po jej odinstalowaniu. Nie mamy do nich dostępu.
 
-MIKROFON I TRYB MÓWIENIA
-Tryb mówienia jest opcjonalny — możesz grać, wpisując odpowiedzi z klawiatury. Jeśli go
-włączysz, aplikacja poprosi o zgodę na mikrofon (RECORD_AUDIO).
+MIKROFON I TRYB GŁOSOWY
+Tryb głosowy jest opcjonalny — możesz grać, wpisując odpowiedzi z klawiatury. Jeśli go włączysz, aplikacja poprosi o zgodę na mikrofon (RECORD_AUDIO).
 • Nie nagrywamy dźwięku i nie zapisujemy plików audio.
-• Wypowiedź zamienia na tekst usługa rozpoznawania mowy zainstalowana w Twoim telefonie
-  (najczęściej Google, u niektórych producentów własna). Aplikacja dostaje sam tekst.
-• Najpierw prosimy o rozpoznawanie bez internetu. Gdy silnik telefonu tego odmówi,
-  rozpoznanie może zostać wykonane w usłudze sieciowej producenta — wtedy wypowiedź
-  trafia do niego i podlega JEGO polityce prywatności.
+• Wypowiedź zamienia na tekst usługa rozpoznawania mowy zainstalowana w Twoim telefonie (najczęściej Google, u niektórych producentów własna). Aplikacja dostaje sam tekst.
+• Jeśli telefon ma pobrany model rozpoznawania offline dla danego języka, używamy go i dźwięk nie opuszcza urządzenia. W przeciwnym razie rozpoznanie wykonuje usługa sieciowa dostawcy (najczęściej Google) — wtedy wypowiedź trafia do niego i podlega JEGO polityce prywatności.
 • To samo dotyczy systemowego okna dyktowania i mikrofonu na klawiaturze telefonu.
 • Zgodę na mikrofon cofniesz w Ustawieniach systemu → Aplikacje → MATURA → Uprawnienia.
 
 CZEGO NIE ZBIERAMY
-Imienia, adresu e-mail, lokalizacji, kontaktów, zdjęć, identyfikatorów reklamowych.
-Brak reklam, analityki i bibliotek śledzących.
+Imienia, adresu e-mail, lokalizacji, kontaktów, zdjęć, identyfikatorów reklamowych. Brak reklam, analityki i bibliotek śledzących.
 
 KONTAKT
 kuba1k@gmail.com · https://matura.uk/polityka-prywatnosci
@@ -332,32 +360,28 @@ kuba1k@gmail.com · https://matura.uk/polityka-prywatnosci
 
 private val PRIVACY_EN = """
 MATURA — English vocabulary · privacy policy
-Last updated: 4 September 2026
+Last updated: 13 September 2026
 
 IN SHORT
-The game runs on your device. No accounts, no sign-in, no ads, no tracking. The app has no
-internet permission, so it cannot send anything anywhere by itself.
+The game runs on your device. No accounts, no sign-in, no ads, no tracking. The app has no internet permission, so it cannot send anything anywhere by itself.
 
 WHAT IS STORED (on the device only)
 • best scores and game statistics,
 • settings (lives, speed, translation direction, language, sound, keyboard),
-• word sets you add yourself.
-This data lives in the app storage and is removed when you uninstall the app.
+• word sets you add yourself,
+• learning progress (which words you know and when they come back for review).
+This data lives in the app storage and is removed when you uninstall the app. We have no access to it.
 
-MICROPHONE AND SPEAKING MODE
-Speaking mode is optional — you can always type your answers. If you turn it on, the app
-asks for the microphone permission (RECORD_AUDIO).
+MICROPHONE AND VOICE MODE
+Voice mode is optional — you can always type your answers. If you turn it on, the app asks for the microphone permission (RECORD_AUDIO).
 • We do not record or store any audio.
-• Your speech is turned into text by the speech recognition service installed on your phone
-  (usually Google, sometimes the manufacturer's own). The app only receives the text.
-• We first ask for on-device recognition. If the engine refuses, recognition may happen in
-  the provider's online service — your speech then goes to them under THEIR privacy policy.
+• Your speech is turned into text by the speech recognition service installed on your phone (usually Google, sometimes the manufacturer's own). The app only receives the text.
+• If your phone has an offline recognition model for the language, we use it and the audio never leaves the device. Otherwise recognition happens in the provider's online service (usually Google) — your speech then goes to them under THEIR privacy policy.
 • The same applies to the system dictation dialog and to your keyboard's microphone key.
 • You can revoke the permission in System settings → Apps → MATURA → Permissions.
 
 WHAT WE DO NOT COLLECT
-Name, e-mail, location, contacts, photos, advertising identifiers. No ads, no analytics,
-no tracking libraries.
+Name, e-mail, location, contacts, photos, advertising identifiers. No ads, no analytics, no tracking libraries.
 
 CONTACT
 kuba1k@gmail.com · https://matura.uk/polityka-prywatnosci

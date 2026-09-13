@@ -14,8 +14,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.speech.ModelDownloadListener
 import android.speech.RecognitionListener
 import android.speech.RecognitionService
+import android.speech.RecognitionSupport
+import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
@@ -94,6 +97,12 @@ data class VoiceKonfig(
      * podpowiedzi dlawi silnik.
      */
     val duzyBias: Boolean = false,
+    /**
+     * LANGUAGE_MODEL_WEB_SEARCH zamiast FREE_FORM. Google (issue 280288200) zaleca ten model dla
+     * KROTKICH wypowiedzi: silnik sieciowy gubil jednosylabowe slowa (NO_MATCH) przy FREE_FORM.
+     * Gra prosi o pojedyncze slowa, wiec ta proba mowi, czy na tym telefonie warto przestawic model.
+     */
+    val webSearch: Boolean = false,
 )
 
 /** Co proba zostawila po sobie. Nic wiecej sie nie zapisuje. */
@@ -158,6 +167,50 @@ const val SDK_BIASING = 33
 
 /** Rozpoznawacza nie udalo sie w ogole utworzyc (null albo wyjatek z fabryki). */
 const val KOD_BRAK_SILNIKA = -1
+
+/** Ile tagow z listy trafia do raportu — lista jezykow online ma ponad sto pozycji. */
+const val MAX_TAGOW_RAPORTU = 12
+
+/**
+ * Linia raportu o MODELU on-device dla jezyka testu (odpowiedz checkRecognitionSupport, API 33+).
+ *
+ * To jest linia, ktora rozstrzyga zgloszenie z Motoroli: "BRAK (do pobrania)" przy pl-PL na
+ * telefonie z usluga on-device znaczy, ze milczenie prob on-device to brak pakietu, a nie
+ * mikrofon. Listy sa przyciete — raport ma byc do wklejenia, nie do przewijania.
+ */
+fun opisWsparcia(
+    tag: String,
+    zainstalowane: List<String>,
+    obslugiwane: List<String>,
+    wToku: List<String>,
+    online: List<String>,
+): String {
+    val stan = when {
+        modelZainstalowany(tag, zainstalowane) -> "JEST"
+        modelZainstalowany(tag, wToku) -> "POBIERANY"
+        modelZainstalowany(tag, obslugiwane) -> "BRAK (do pobrania)"
+        else -> "NIEOBSŁUGIWANY"
+    }
+    fun lista(x: List<String>): String = when {
+        x.isEmpty() -> "—"
+        x.size <= MAX_TAGOW_RAPORTU -> x.joinToString(",")
+        else -> x.take(MAX_TAGOW_RAPORTU).joinToString(",") + ",…(" + x.size + ")"
+    }
+    return "model on-device " + tag + ": " + stan +
+        " · zainstalowane: " + lista(zainstalowane) +
+        " · obsługiwane: " + lista(obslugiwane) +
+        " · w toku: " + lista(wToku) +
+        " · online: " + (if (online.isEmpty()) "—" else online.size.toString())
+}
+
+/** Przebieg zlecenia pobrania modelu on-device — ekran tlumaczy na [Str]. */
+sealed class PobieranieModelu {
+    object Brak : PobieranieModelu()
+    object Zlecone : PobieranieModelu()
+    data class WToku(val procent: Int) : PobieranieModelu()
+    object Gotowe : PobieranieModelu()
+    data class Blad(val opis: String) : PobieranieModelu()
+}
 /** startListening rzucilo wyjatkiem — silnik nie przyjal nawet zlecenia. */
 const val KOD_WYJATEK = -2
 
@@ -214,6 +267,17 @@ fun budujKonfiguracje(
             )
         }
         add(VoiceKonfig("default / net-ok", VoiceProbaTyp.DOMYSLNY, offline = false, podpowiedzi = false))
+        // Ta sama droga, inny model jezyka: porownanie sasiednich wierszy mowi, czy krotkie
+        // slowa przechodza lepiej przez WEB_SEARCH (patrz VoiceKonfig.webSearch).
+        add(
+            VoiceKonfig(
+                nazwa = "default / net-ok / web-search",
+                typ = VoiceProbaTyp.DOMYSLNY,
+                offline = false,
+                podpowiedzi = false,
+                webSearch = true,
+            )
+        )
         // Ta sama droga, ale ze slownikiem DOKLADNIE tej dlugosci, ktora wysyla gra. Stoi zaraz
         // za proba bez podpowiedzi, zeby obie dalo sie w raporcie porownac jedna pod druga:
         // roznica miedzy nimi jest odpowiedzia na pytanie "czy to podpowiedzi dlawia silnik".
@@ -457,6 +521,16 @@ class VoiceProbe(private val context: Context) {
      */
     var naglowekPrzebiegu by mutableStateOf("")
         private set
+    /**
+     * Model on-device dla jezyka testu jest OBSLUGIWANY, ale NIE pobrany (checkRecognitionSupport,
+     * API 33+) — ekran pokazuje wtedy przycisk pobrania. Odpowiedz na zgloszenie z Motoroli:
+     * usluga on-device jest, pakietu polskiego nie ma, wiec on-device milczy.
+     */
+    var modelDoPobrania by mutableStateOf(false)
+        private set
+    /** Stan zlecenia pobrania modelu ([pobierzModel]). */
+    var pobieranie by mutableStateOf<PobieranieModelu>(PobieranieModelu.Brak)
+        private set
 
     private val handler = Handler(Looper.getMainLooper())
     private var matryca: List<VoiceKonfig> = emptyList()
@@ -490,7 +564,137 @@ class VoiceProbe(private val context: Context) {
             return
         }
         trwa = true
-        nastepna()
+        modelDoPobrania = false
+        pobieranie = PobieranieModelu.Brak
+        // Pytanie o model PRZED matryca (API 33+, tylko gdy on-device w ogole jest): odpowiedz
+        // trafia do naglowka raportu i rozstrzyga, czy milczenie prob on-device to brak pakietu.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && onDevice()) sprawdzWsparcie { nastepna() }
+        else nastepna()
+    }
+
+    /** Dopisek do naglowka raportu — takze do logcata, bo schowek nie jest pewna droga. */
+    private fun dopiszDoNaglowka(linia: String) {
+        naglowekPrzebiegu = naglowekPrzebiegu + linia + '\n'
+        Log.i(VOICE_TAG, "test " + linia)
+    }
+
+    private fun konfigModelu() = VoiceKonfig("model", VoiceProbaTyp.ON_DEVICE, offline = false, podpowiedzi = false)
+
+    /**
+     * Pyta usluge on-device o model dla [VOICE_TEST_JEZYK]; odpowiedz (albo jej brak po
+     * [WSPARCIE_MS]) idzie do naglowka, a potem rusza matryca. Przerwanie (zwolnij) uniewaznia
+     * to pytanie tak samo jak kazda probe — przez [token].
+     */
+    private fun sprawdzWsparcie(dalej: () -> Unit) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            dalej()
+            return
+        }
+        token += 1
+        val moj = token
+        teraz = "model on-device"
+        val r = utworz(konfigModelu())
+        if (r == null) {
+            dopiszDoNaglowka("model on-device: nie udało się utworzyć rozpoznawacza")
+            dalej()
+            return
+        }
+        rec = r
+        var gotowe = false
+        fun zakoncz(linia: String) {
+            if (gotowe || moj != token) return
+            gotowe = true
+            handler.removeCallbacksAndMessages(null)
+            zwolnijRec()
+            dopiszDoNaglowka(linia)
+            // Pierwsza proba wiaze TE SAMA usluge on-device, ktora wlasnie zwolnilismy. Od Androida 15
+            // system odlacza usluge natychmiast po ostatnim kliencie, a wiazanie tuz po tym konczy sie
+            // 11 SERVER_DISCONNECTED (emulator: 38 ms). Ta sama przerwa co miedzy probami.
+            handler.postDelayed({ dalej() }, PRZERWA_MS)
+        }
+        handler.postDelayed({ zakoncz("model on-device: brak odpowiedzi w " + WSPARCIE_MS + " ms") }, WSPARCIE_MS)
+        try {
+            r.checkRecognitionSupport(
+                intencja(konfigModelu()),
+                ContextCompat.getMainExecutor(context),
+                object : RecognitionSupportCallback {
+                    override fun onSupportResult(recognitionSupport: RecognitionSupport) {
+                        val jest = modelZainstalowany(VOICE_TEST_JEZYK, recognitionSupport.installedOnDeviceLanguages)
+                        modelDoPobrania = !jest &&
+                            modelZainstalowany(VOICE_TEST_JEZYK, recognitionSupport.supportedOnDeviceLanguages)
+                        zakoncz(
+                            opisWsparcia(
+                                VOICE_TEST_JEZYK,
+                                recognitionSupport.installedOnDeviceLanguages,
+                                recognitionSupport.supportedOnDeviceLanguages,
+                                recognitionSupport.pendingOnDeviceLanguages,
+                                recognitionSupport.onlineLanguages,
+                            ),
+                        )
+                    }
+
+                    override fun onError(error: Int) {
+                        zakoncz("model on-device: błąd " + nazwaBledu(error))
+                    }
+                },
+            )
+        } catch (t: Throwable) {
+            zakoncz("model on-device: wyjątek " + t.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * Zleca pobranie modelu on-device dla jezyka testu (API 33+). Postep i wynik przychodza
+     * dopiero na API 34+; na API 33 zostaje samo "zlecono". Nic nie dzieje sie bez dotkniecia
+     * przycisku — pakiet jezyka to spore pobranie i decyzja nalezy do ucznia.
+     */
+    fun pobierzModel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val r = utworz(konfigModelu())
+        if (r == null) {
+            pobieranie = PobieranieModelu.Blad("brak rozpoznawacza")
+            return
+        }
+        val i = intencja(konfigModelu())
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                pobieranie = PobieranieModelu.Zlecone
+                r.triggerModelDownload(
+                    i,
+                    ContextCompat.getMainExecutor(context),
+                    object : ModelDownloadListener {
+                        override fun onProgress(completedPercent: Int) {
+                            pobieranie = PobieranieModelu.WToku(completedPercent)
+                        }
+                        override fun onSuccess() {
+                            pobieranie = PobieranieModelu.Gotowe
+                            modelDoPobrania = false
+                            zniszcz(r)
+                        }
+                        override fun onScheduled() {
+                            pobieranie = PobieranieModelu.Zlecone
+                        }
+                        override fun onError(error: Int) {
+                            pobieranie = PobieranieModelu.Blad(nazwaBledu(error))
+                            zniszcz(r)
+                        }
+                    },
+                )
+            } else {
+                r.triggerModelDownload(i)
+                pobieranie = PobieranieModelu.Zlecone
+                // API 33 nie daje zwrotki; wiazanie zwalniamy po chwili, gdy zlecenie juz poszlo.
+                handler.postDelayed({ zniszcz(r) }, 5_000L)
+            }
+            Log.i(VOICE_TAG, "test pobranie modelu " + VOICE_TEST_JEZYK + " zlecone")
+        } catch (t: Throwable) {
+            pobieranie = PobieranieModelu.Blad(t.javaClass.simpleName)
+            zniszcz(r)
+        }
+    }
+
+    private fun zniszcz(r: SpeechRecognizer) {
+        try { r.destroy() } catch (_: Throwable) {}
     }
 
     /** Przerywa przebieg i oddaje mikrofon. Bezpieczne do wolania wielokrotnie. */
@@ -682,7 +886,10 @@ class VoiceProbe(private val context: Context) {
 
     private fun intencja(k: VoiceKonfig): Intent =
         Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(
+                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
+                if (k.webSearch) RecognizerIntent.LANGUAGE_MODEL_WEB_SEARCH else RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
+            )
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, VOICE_TEST_JEZYK)
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
@@ -757,6 +964,8 @@ class VoiceProbe(private val context: Context) {
         const val PONOWIENIE_MIN_MS = 1_200L
         /** Straznik przed karuzela ERROR_RECOGNIZER_BUSY. */
         const val MAX_PONOWIEN = 12
+        /** Ile czekamy na odpowiedz o model on-device, zanim ruszy matryca. */
+        const val WSPARCIE_MS = 2_000L
     }
 }
 
@@ -944,6 +1153,26 @@ fun VoiceTestScreen(
 
                 if (wyniki.isNotEmpty()) Spacer(Modifier.height(16.dp))
                 wyniki.forEach { w -> WynikWiersz(w, teksty) }
+
+                // MODEL DO POBRANIA: usluga on-device obsluguje polski, ale pakietu nie ma.
+                // To jedyna naprawa, ktora uczen moze zrobic sam, wiec stoi tuz pod wynikami.
+                if (probe.modelDoPobrania && !probe.trwa) {
+                    Spacer(Modifier.height(12.dp))
+                    InfoCard(str.voiceTestDownloadHint)
+                    Spacer(Modifier.height(8.dp))
+                    GhostButton(str.voiceTestDownloadModel) { probe.pobierzModel() }
+                }
+                val stanPobierania = when (val p = probe.pobieranie) {
+                    PobieranieModelu.Brak -> ""
+                    PobieranieModelu.Zlecone -> str.voiceTestDownloadScheduled
+                    is PobieranieModelu.WToku -> str.voiceTestDownloadProgress.format(p.procent)
+                    PobieranieModelu.Gotowe -> str.voiceTestDownloadDone
+                    is PobieranieModelu.Blad -> str.voiceTestDownloadFailed.format(p.opis)
+                }
+                if (stanPobierania.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(stanPobierania, color = Palette.Accent, fontSize = 12.sp)
+                }
 
                 if (gotowe) {
                     Spacer(Modifier.height(14.dp))

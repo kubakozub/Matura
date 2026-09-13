@@ -389,7 +389,7 @@ class SesjaStr(private val lang: UiLanguage) {
         )
     val sessionStepContextDesc
         get() = pick(
-            "Słowo w zdaniu, a nie w oderwaniu od niczego.",
+            "Słowo w zdaniu, a nie w oderwaniu od kontekstu.",
             "The word inside a sentence, not on its own.",
         )
     val sessionStepSummaryDesc
@@ -435,8 +435,8 @@ class SesjaStr(private val lang: UiLanguage) {
         )
     val sessionTomorrowCount
         get() = pick(
-            "Jutro wraca %s z nich.",
-            "%s of them come back tomorrow.",
+            "Jutro na powtórkę: %s z nich.",
+            "Due tomorrow: %s of them.",
         )
 
     fun nazwaKroku(rodzaj: RodzajKroku): String = when (rodzaj) {

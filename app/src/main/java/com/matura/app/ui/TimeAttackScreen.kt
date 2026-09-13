@@ -528,7 +528,7 @@ private fun TimeAttackHud(
             Spacer(Modifier.width(6.dp))
             PixelText("$seconds", color = clockColor, glyphHeight = 18.dp)
             Spacer(Modifier.width(3.dp))
-            PixelText(t("S", "S", lang), color = Palette.Dim, glyphHeight = 9.dp)
+            PixelText("s", color = Palette.Dim, glyphHeight = 9.dp)
 
             Spacer(Modifier.weight(1f))
 
@@ -754,7 +754,7 @@ private fun ResultScreen(
                 .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
             StatRow(
-                label = t("Poprawne", "Correct", lang),
+                label = t("Poprawne odpowiedzi", "Correct answers", lang),
                 value = "$correct",
                 icon = pixel(R.drawable.checkmark),
             )

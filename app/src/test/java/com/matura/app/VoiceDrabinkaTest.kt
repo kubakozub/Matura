@@ -374,17 +374,21 @@ class VoiceInputPrzebiegTest {
         val i = requireNotNull(cien(ostatni()).lastRecognizerIntent)
         assertNotNull("start() musi zlozyc zlecenie rozpoznawania", i)
         assertEquals("pl-PL", i.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
-        assertTrue("pierwsze podejscie prosi o rozpoznanie bez sieci",
+        // Od 0.9.16 silnik domyslny dostaje zlecenie w najprostszej postaci. Wymuszony offline
+        // na telefonie bez pobranego pakietu konczyl sie odmowa albo cisza (pierwszy szczebel byl
+        // najbardziej zawodny z calej drabinki), a slownik zestawu jest udokumentowany tylko dla
+        // on-device — tam idzie, gdy model jest potwierdzony (VoiceModelOnDeviceTest).
+        assertFalse("silnik domyslny NIE dostaje wymuszonego offline",
             i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
-        assertTrue("pierwsze podejscie niesie slownik zestawu",
-            i.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS)?.isNotEmpty() == true)
+        assertTrue("slownik zestawu idzie tylko do on-device",
+            i.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS).isNullOrEmpty())
     }
 
     /**
      * SEDNO. Kod 13 (brak pakietu jezyka) ma zejsc drabinka nizej, a nie skonczyc komunikatem:
-     * leci DRUGIE zlecenie, tym razem bez wymuszonego offline i bez podpowiedzi slownikowych —
-     * czyli bez dwoch rzeczy, ktore silnik bez pakietu odrzuca najpierw. Do 0.9.10 szczebel
-     * "zdejmij offline" tylko przestawial flage, wiec podpowiedzi jechaly dalej.
+     * leci DRUGIE zlecenie — bez wymuszonego offline i bez podpowiedzi slownikowych (na silniku
+     * domyslnym od 0.9.16 nie ma ich juz w ogole) i z tagiem bez regionu, bo to pierwszy szczebel
+     * po kodzie 12/13.
      */
     @Test
     fun brakPakietuJezyka_ponawia_bezOfflineIbezPodpowiedzi() {
@@ -408,29 +412,29 @@ class VoiceInputPrzebiegTest {
     fun kod12_takzeSchodziDrabinka() {
         start()
         val pierwszy = ostatni()
+        val zlecenie1 = cien(pierwszy).lastRecognizerIntent
         blad(pierwszy, SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED)
         assertEquals(0, wyczerpane)
-        assertNotSame(pierwszy, ostatni())
+        assertNotSame("po kodzie 12 leci nowe zlecenie", zlecenie1, cien(ostatni()).lastRecognizerIntent)
+        assertEquals("pl", cien(ostatni()).lastRecognizerIntent?.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
     }
 
     /**
-     * Komunikat dopiero na KONCU drabinki. Przy jednej usludze na "urzadzeniu" szczeble sa trzy:
-     * zdejmij offline, sprobuj jezyka BEZ REGIONU (pl-PL -> pl) i zwiaz sie z usluga po nazwie.
-     * Dopiero CZWARTY kod 13 konczy drabinke — i dopiero wtedy decyzja trafia do ekranu (okno
-     * systemowe / klawiatura), zamiast zostac cisza.
+     * Komunikat dopiero na KONCU drabinki. Przy jednej usludze na "urzadzeniu" szczeble sa dwa:
+     * sprobuj jezyka BEZ REGIONU (pl-PL -> pl) i zwiaz sie z usluga po nazwie. Dopiero TRZECI
+     * kod 13 konczy drabinke — i dopiero wtedy decyzja trafia do ekranu (okno systemowe /
+     * klawiatura), zamiast zostac cisza.
      *
-     * Szczebel jezykowy doszedl razem z ta poprawka: silnik, ktory ma model podpisany samym "pl"
-     * albo innym regionem angielskiego, odrzuca pelny tag kodem 13, chociaz jezyk rozpoznaje.
+     * Do 0.9.15 byl jeszcze szczebel "zdejmij wymuszony offline"; od 0.9.16 silnik domyslny nigdy
+     * offline nie wymusza (patrz start_sklada_zlecenie_zJezykiemOdpowiedzi), wiec nie ma czego zdejmowac.
      */
     @Test
     fun dopieroKoniecDrabinki_oddajeDecyzjeEkranowi() {
         start()
         blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
-        assertEquals("po pierwszym kodzie drabinka jeszcze schodzi", 0, wyczerpane)
+        assertEquals("po pierwszym kodzie drabinka jeszcze schodzi — jezyk bez regionu", 0, wyczerpane)
         blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
-        assertEquals("po drugim tez — zostal jeszcze jezyk bez regionu", 0, wyczerpane)
-        blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
-        assertEquals("po trzecim tez — jest jeszcze usluga do zwiazania", 0, wyczerpane)
+        assertEquals("po drugim tez — jest jeszcze usluga do zwiazania", 0, wyczerpane)
         blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
         assertEquals("po wyczerpaniu drabinki ekran musi dostac sygnal", 1, wyczerpane)
         assertFalse("nasluch nie moze zostac zapalony", voice.listening)
@@ -447,10 +451,6 @@ class VoiceInputPrzebiegTest {
     fun brakModeluJezyka_probujeTagBezRegionu() {
         start()
         assertEquals("pl-PL", cien(ostatni()).lastRecognizerIntent?.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
-        // Szczebel 1: zdejmij wymuszony offline — tag jezyka jeszcze sie nie zmienia.
-        blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
-        assertEquals("pl-PL", cien(ostatni()).lastRecognizerIntent?.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
-        // Szczebel 2: dopiero teraz upraszczamy tag.
         blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
         assertEquals(
             "po odrzuceniu pelnego tagu ma poleciec sam jezyk",
@@ -468,6 +468,8 @@ class VoiceInputPrzebiegTest {
     fun spoznionyBladPoprzedniegoSilnika_nieZjadaSzczebla() {
         start()
         val pierwszy = ostatni()
+        // Dwa kody 13: pierwszy zmienia tylko tag (ten sam rozpoznawacz), drugi wiaze usluge po nazwie.
+        blad(pierwszy, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
         blad(pierwszy, SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
         val drugi = ostatni()
         assertNotSame(pierwszy, drugi)
@@ -728,28 +730,28 @@ class VoiceInputPrzebiegTest {
     }
 
     /**
-     * Po eskalacji podpowiedzi slownikowe znikaja (useEngine) — ale NOWE wlaczenie nasluchu musi
-     * zaczynac od pelnego zlecenia. Do 0.9.11 bezBiasingu nie wracalo juz nigdy: po jednej wpadce
-     * w dowolnej rundzie slownik zestawu znikal do konca zycia ekranu gry.
+     * Do 0.9.15 ten test pilnowal, ze nowe wlaczenie nasluchu znow niesie slownik zestawu. Od 0.9.16
+     * slownik idzie WYLACZNIE do on-device z potwierdzonym modelem (VoiceModelOnDeviceTest), wiec
+     * na silniku domyslnym nie ma czego przywracac. Zostaje sedno: po eskalacji i wylaczeniu nowe
+     * wlaczenie zaczyna od PELNEGO tagu jezyka, a nie od uproszczonego przez poprzednia sesje.
      */
     @Test
-    fun poEskalacji_noweWlaczenie_znowuNiesiePodpowiedzi() {
+    fun poEskalacji_noweWlaczenie_zaczynaOdPelnegoTagu() {
         start()
         blad(ostatni(), SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
-        assertTrue(
-            "kontrola: po eskalacji zlecenie idzie bez podpowiedzi",
-            cien(ostatni()).lastRecognizerIntent
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS).isNullOrEmpty(),
+        assertEquals(
+            "kontrola: po kodzie 13 tag jest uproszczony",
+            "pl",
+            cien(ostatni()).lastRecognizerIntent?.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE),
         )
 
         voice.stop()
         start()
 
         val zlecenie = requireNotNull(cien(ostatni()).lastRecognizerIntent)
-        assertTrue(
-            "nowa sesja zaczyna od pelnego zlecenia",
-            zlecenie.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS)?.isNotEmpty() == true,
-        )
+        assertEquals("nowa sesja zaczyna od pelnego tagu", "pl-PL", zlecenie.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
+        assertTrue("i nadal bez slownika na silniku domyslnym",
+            zlecenie.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS).isNullOrEmpty())
     }
 
     /** stop() i release() bez wczesniejszego startu nie moga sie wywrocic. */

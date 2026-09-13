@@ -80,7 +80,7 @@ class VoiceTestMatrixTest {
         assertTrue(m.none { it.typ == VoiceProbaTyp.ON_DEVICE })
         // Zostaja dwie proby silnika domyslnego; proba z pelnym slownikiem tez wymaga API 33,
         // bo nizej EXTRA_BIASING_STRINGS nikt nie czyta.
-        assertEquals(2, m.size)
+        assertEquals(3, m.size)
         assertTrue("bez API 33 nie ma po co wysylac podpowiedzi", m.none { it.podpowiedzi })
     }
 
@@ -117,7 +117,7 @@ class VoiceTestMatrixTest {
     fun silnikDomyslny_offline_potemSiec_potemPelnySlownik() {
         val m = budujKonfiguracje(sdk = 34, onDevice = false, uslugaDomyslna = true, uslugi = emptyList())
         val domyslne = m.filter { it.typ == VoiceProbaTyp.DOMYSLNY }
-        assertEquals(4, domyslne.size)
+        assertEquals(5, domyslne.size)
         assertTrue("najpierw offline", domyslne[0].offline)
         // SEDNO: tak startuje GRA na telefonie bez on-device — offline + pelny slownik zestawu.
         // Bez tej proby raport moglby uznac sciezke gry za sprawna, chociaz to ona zawodzi.
@@ -128,10 +128,14 @@ class VoiceTestMatrixTest {
         // slowami nie umiala rozstrzygnac, czy to wlasnie dluga lista dlawi silnik. Proba stoi
         // TUZ za identyczna proba bez podpowiedzi — roznica miedzy nimi jest odpowiedzia.
         assertTrue("proba porownawcza idzie bez podpowiedzi", !domyslne[2].podpowiedzi)
-        assertTrue("ostatnia niesie slownik dlugosci gry", domyslne[3].duzyBias && domyslne[3].podpowiedzi)
-        assertTrue("i ta sama droga co porownanie (siec dozwolona)", !domyslne[3].offline)
+        // Google zaleca WEB_SEARCH dla krotkich wypowiedzi — proba stoi tuz za FREE_FORM, zeby
+        // roznica miedzy sasiednimi wierszami raportu byla odpowiedzia.
+        assertTrue("czwarta to ten sam silnik z modelem WEB_SEARCH", domyslne[3].webSearch && !domyslne[3].offline)
+        assertTrue("reszta prob zostaje przy FREE_FORM", domyslne.count { it.webSearch } == 1)
+        assertTrue("ostatnia niesie slownik dlugosci gry", domyslne[4].duzyBias && domyslne[4].podpowiedzi)
+        assertTrue("i ta sama droga co porownanie (siec dozwolona)", !domyslne[4].offline)
         assertEquals("nazwa ma mowic, ile podpowiedzi poszlo",
-            "default / net-ok / bias" + MAX_BIASING_WORDS, domyslne[3].nazwa)
+            "default / net-ok / bias" + MAX_BIASING_WORDS, domyslne[4].nazwa)
     }
 
     @Test
@@ -192,6 +196,7 @@ class VoiceTestMatrixTest {
                 "default / offline",
                 "default / offline / bias" + MAX_BIASING_WORDS,
                 "default / net-ok",
+                "default / net-ok / web-search",
                 "default / net-ok / bias" + MAX_BIASING_WORDS,
                 "service / com.google.android.googlequicksearchbox",
                 "service / com.motorola.speech",

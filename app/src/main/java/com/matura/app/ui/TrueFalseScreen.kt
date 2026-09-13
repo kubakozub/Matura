@@ -724,7 +724,7 @@ private fun Feedback(
                 // a nie tylko punktacja.
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    "${t("Poprawnie", "Correct", lang)}: ${q.correct}",
+                    "${t("Poprawna odpowiedź", "Correct answer", lang)}: ${q.correct}",
                     color = Palette.Muted,
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
@@ -807,7 +807,7 @@ private fun TfGameOver(
                 .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
             StatRow(t("Poziom", "Level", lang), "$level", icon = pixel(R.drawable.icon_star))
-            StatRow(t("Trafne odpowiedzi", "Correct answers", lang), "$correctCount", icon = pixel(R.drawable.icon_target))
+            StatRow(t("Poprawne odpowiedzi", "Correct answers", lang), "$correctCount", icon = pixel(R.drawable.icon_target))
             StatRow(t("Najdłuższa seria", "Best streak", lang), "$bestStreak", icon = pixel(R.drawable.icon_trophy))
         }
 
@@ -835,7 +835,7 @@ private fun NotEnoughEntries(str: Str, lang: UiLanguage, onExit: () -> Unit) {
             InfoCard(
                 t(
                     "Ten tryb podmienia tłumaczenia między hasłami, więc potrzebuje co najmniej dwóch " +
-                        "wypełnionych wierszy. Uzupełnij zestaw w ZESTAWY i wróć.",
+                        "wypełnionych wierszy. Uzupełnij zestaw w ZESTAWACH i wróć.",
                     "This mode swaps translations between entries, so it needs at least two complete rows. " +
                         "Fill the set in under SETS and come back.",
                     lang,

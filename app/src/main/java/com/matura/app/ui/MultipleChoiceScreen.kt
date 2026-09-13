@@ -333,10 +333,10 @@ private fun NotEnoughEntries(
             Spacer(Modifier.height(16.dp))
             InfoCard(
                 t(
-                    "MULTIPLE CHOICE potrzebuje co najmniej $MIN_ENTRIES haseł z tłumaczeniem — " +
+                    "Ten tryb potrzebuje co najmniej $MIN_ENTRIES haseł z tłumaczeniem — " +
                         "trzy z nich robią za błędne odpowiedzi. Ten zestaw ma ich $have. " +
                         "Dopisz brakujące wiersze w ZESTAWACH i wróć.",
-                    "MULTIPLE CHOICE needs at least $MIN_ENTRIES complete rows — three of them " +
+                    "This mode needs at least $MIN_ENTRIES complete rows — three of them " +
                         "become the wrong answers. This set has $have. Add the missing rows " +
                         "under SETS and come back.",
                     lang,
@@ -704,7 +704,7 @@ private fun McHud(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 PixelImage(pixel(R.drawable.icon_target), Modifier.size(15.dp))
                 Spacer(Modifier.width(6.dp))
-                PixelText(t("POZ", "LVL", lang) + " $level", color = Palette.Cyan, glyphHeight = 9.dp)
+                PixelText("LVL $level", color = Palette.Cyan, glyphHeight = 9.dp)
             }
         }
     }
@@ -957,7 +957,7 @@ private fun McGameOver(
         ) {
             StatRow(
                 label = t("Tryb", "Mode", lang),
-                value = "MULTIPLE CHOICE",
+                value = str.modeMultiple,
                 icon = pixel(R.drawable.mode_multiple),
             )
             StatRow(
@@ -972,7 +972,7 @@ private fun McGameOver(
                 icon = pixel(R.drawable.icon_target),
             )
             StatRow(
-                label = t("Trafienia", "Correct answers", lang),
+                label = t("Poprawne odpowiedzi", "Correct answers", lang),
                 value = "$hits",
                 icon = pixel(R.drawable.checkmark),
             )

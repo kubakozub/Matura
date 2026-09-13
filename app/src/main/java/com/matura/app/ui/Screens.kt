@@ -106,12 +106,12 @@ fun StartScreen(str: Str, profile: Profile, onPlayAnonymously: (String) -> Unit)
         Column(Modifier.fillMaxWidth()) {
             Text(str.yourName, color = Palette.Muted, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))
-            FieldInput(name, { name = it }, placeholder = "Gracz", modifier = Modifier.fillMaxWidth())
+            FieldInput(name, { name = it }, placeholder = str.defaultPlayerName, modifier = Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(20.dp))
 
         PrimaryButton(str.playAnonymously, modifier = Modifier.fillMaxWidth()) {
-            onPlayAnonymously(name.ifBlank { "Gracz" })
+            onPlayAnonymously(name.ifBlank { str.defaultPlayerName })
         }
         Spacer(Modifier.height(16.dp))
         InfoCard(str.offlineNote)
@@ -245,7 +245,7 @@ fun SetPickScreen(
                 itemsIndexed(groups, key = { _, it -> it.first }) { i, (name, list) ->
                     MenuButton(
                         label = if (name == str.ownSets) name else "${i + 1}. $name",
-                        subtitle = "${list.size} ${str.setsShort} · ${list.sumOf { it.entries.size }} ${str.entriesLabel}",
+                        subtitle = "${str.setsCount(list.size)} · ${str.entriesCount(list.sumOf { it.entries.size })}",
                         icon = pixel(topicIcon(name)),
                         onClick = { folder = name },
                     )
@@ -254,7 +254,7 @@ fun SetPickScreen(
                 items(open, key = { it.id }) { set ->
                     MenuButton(
                         label = set.shortTitle,
-                        subtitle = "${set.entries.size} ${str.entriesLabel} · ${set.termLanguage} > ${set.definitionLanguage}",
+                        subtitle = "${str.entriesCount(set.entries.size)} · ${set.termLanguage} → ${set.definitionLanguage}",
                         icon = star,
                         trailing = if (set.builtIn) str.builtIn else null,
                         onClick = { onPick(set) },
@@ -349,7 +349,7 @@ fun SetsScreen(
                             }
                             Spacer(Modifier.height(5.dp))
                             Text(
-                                "${set.entries.size} ${str.entriesLabel} · ${set.timesPlayed} ${str.playedLabel} · ${set.termLanguage} > ${set.definitionLanguage}",
+                                "${str.entriesCount(set.entries.size)} · ${str.playsCount(set.timesPlayed)} · ${set.termLanguage} → ${set.definitionLanguage}",
                                 color = Palette.Muted,
                                 fontSize = 11.sp,
                             )
@@ -454,7 +454,9 @@ fun SetEditorScreen(
                             }
                             .padding(horizontal = 9.dp, vertical = 9.dp)
                     ) {
-                        PixelText("<>", color = Palette.Bone, glyphHeight = 11.dp)
+                        // Zwykla czcionka: bitmapowa nie ma "<" ani ">" (podstawia "/"), wiec przycisk
+                        // zamiany stron czytal sie jako "//".
+                        Text("⇄", color = Palette.Bone, fontSize = 20.sp)
                     }
                     Column(Modifier.weight(1f)) {
                         PixelText(str.definitions, color = Palette.Accent, glyphHeight = 9.dp)
@@ -514,7 +516,7 @@ fun SetEditorScreen(
                         onSave(
                             WordSet(
                                 id = existing?.id ?: "user-${System.currentTimeMillis()}",
-                                title = title.ifBlank { "Bez tytułu" },
+                                title = title.ifBlank { str.untitledSet },
                                 termLanguage = termLang.ifBlank { "?" },
                                 definitionLanguage = defLang.ifBlank { "?" },
                                 entries = entries,
@@ -562,9 +564,9 @@ fun OptionsScreen(
                         Texture.entries.forEach { t ->
                             ChoiceChip(
                                 label = when (t) {
-                                    Texture.CLASSIC -> "GRASS"
-                                    Texture.NIGHT -> "NIGHT"
-                                    Texture.DESERT -> "SAND"
+                                    Texture.CLASSIC -> str.textureGrass
+                                    Texture.NIGHT -> str.textureNight
+                                    Texture.DESERT -> str.textureSand
                                 },
                                 selected = options.texture == t,
                             ) { onChange(options.copy(texture = t)) }

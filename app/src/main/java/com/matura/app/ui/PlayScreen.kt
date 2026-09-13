@@ -400,7 +400,8 @@ fun PlayScreen(
         // czekamy na koncowy, zeby nie strzelac w polowie slowa.
         if (!isFinal && result.best.score < 0.9) return
         if (!result.accepted) {
-            if (isFinal) voiceMsg = "\u201E" + alternatives.first().trim() + "\u201D"
+            // Cudzyslow otwierajacy zalezy od jezyka interfejsu: polski „, angielski “; zamykajacy jest wspolny.
+            if (isFinal) voiceMsg = t("\u201E", "\u201C", lang) + alternatives.first().trim() + "\u201D"
             return
         }
         val answer = result.best.answer ?: return
@@ -445,6 +446,7 @@ fun PlayScreen(
         voice.tekstGlosNiedostepny = str.voiceUnavailable
         voice.tekstJezykPolski = str.voiceLangPolish
         voice.tekstJezykAngielski = str.voiceLangEnglish
+        voice.tekstBrakZgody = str.voiceNoPermission
     }
 
     // Jezyk silnika ustala sie RAZ, przy starcie nasluchu — a w trybie losowym plansza zmienia
