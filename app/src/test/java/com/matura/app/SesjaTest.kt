@@ -382,6 +382,36 @@ class SesjaTest {
     }
 
     @Test
+    fun `po przerobieniu calej trasy licznik i podsumowanie nie gubia tego, co uczen zrobil`() {
+        // Plan powstaje na nowo z harmonogramu przy kazdym wejsciu na ekran, a slowo
+        // odpowiedziane poprawnie nie jest juz zalegle i z planu wypada. Liczac z samego planu,
+        // uczen po przerobieniu calej trasy zobaczylby "3 / 0" i podsumowanie bez terminu
+        // nastepnej powtorki — mimo ze to jego odpowiedzi ten termin wlasnie ustawily.
+        val zalegle = slowa(3)
+        var progress = postepy(zalegle, box = 1, dueDay = DZIS - 1)
+        val plan = Sesja.zaplanuj(progress, zalegle, KIERUNEK, DZIS)
+        var stan = Sesja.rozpocznij(plan, Zegar(0L))
+        for (id in plan.slownictwo) {
+            progress = odpowiedz(progress, id, DZIS)
+            stan = Sesja.zaliczOdpowiedz(stan, plan, id, Outcome.POPRAWNA)
+        }
+
+        val poPowrocie = Sesja.zaplanuj(progress, zalegle, KIERUNEK, DZIS)
+        assertTrue("slowa zrobione nie moga wrocic do trasy", poPowrocie.pusty)
+
+        val postep = Sesja.postep(stan, poPowrocie)
+        assertEquals(3, postep.celeZrobione)
+        assertEquals(3, postep.celeRazem)
+
+        val pods = Sesja.podsumuj(poPowrocie, stan, progress, DZIS)
+        assertEquals(3, pods.powtorzone)
+        assertEquals(3, pods.zaplanowane)
+        // Awans z pudelka 1 do 2 daje odstep trzech dni — termin bierze sie z Srs.
+        assertEquals(Srs.intervalDays(2), pods.nastepnaPowtorkaZaDni)
+        assertEquals(0, pods.naJutro)
+    }
+
+    @Test
     fun `podsumowanie pustej sesji nie zapowiada powtorki, ktorej nie ma`() {
         val zestaw = slowa(4)
         val progress = postepy(zestaw, box = 3, dueDay = DZIS + 7)

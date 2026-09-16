@@ -200,17 +200,28 @@ data class Profile(
     val bestStreak: Int = 0,
 )
 
-/** Badge definitions, awarded from [Profile] counters. Pure data, no Android types. */
+/**
+ * Badge definitions, awarded from [Profile] counters. Pure data, no Android types.
+ *
+ * NAZWY STALYCH SA CZESCIA ZAPISU I NIE WOLNO ICH ZMIENIAC — po nich rozpoznajemy odznake.
+ * Zmieniac wolno wylacznie cztery teksty w nawiasie, bo to one ida na ekran OSIAGNIECIA.
+ *
+ * Teksty przeszly na lagodniejsze slownictwo w 0.9.18, z tego samego powodu, dla ktorego
+ * zrobil to HUD w 0.9.9 (commit 140f33e: "Zabicia" -> "Pokonane"): ekran OSIAGNIECIA trafia
+ * na zrzuty do sklepu i do materialow dla szkol, a gra idzie do licealistow. Tamta zmiana
+ * ominela ten enum, wiec obok HUD-u z napisem "Pokonane" staly dalej "Pierwsza krew"
+ * i "Zabij 100 potworkow".
+ */
 enum class Achievement(
     val titlePl: String,
     val titleEn: String,
     val descPl: String,
     val descEn: String,
 ) {
-    FIRST_BLOOD("Pierwsza krew", "First blood", "Zabij pierwszego potworka", "Kill your first monster"),
+    FIRST_BLOOD("Pierwszy celny strzał", "First hit", "Pokonaj pierwszego potworka", "Defeat your first monster"),
     ROOKIE("Rekrut", "Rookie", "Rozegraj 5 gier", "Play 5 games"),
     VETERAN("Weteran", "Veteran", "Rozegraj 25 gier", "Play 25 games"),
-    SHARPSHOOTER("Strzelec wyborowy", "Sharpshooter", "Zabij 100 potworków", "Kill 100 monsters"),
+    SHARPSHOOTER("Strzelec wyborowy", "Sharpshooter", "Pokonaj 100 potworków", "Defeat 100 monsters"),
     COMBO_X3("Seria x3", "Combo x3", "Osiągnij mnożnik x3", "Reach the x3 multiplier"),
     COMBO_X5("Seria x5", "Combo x5", "Osiągnij mnożnik x5", "Reach the x5 multiplier"),
     SCORE_500("Pięćset", "Five hundred", "Zdobądź 500 punktów w jednej grze", "Score 500 in a single game"),

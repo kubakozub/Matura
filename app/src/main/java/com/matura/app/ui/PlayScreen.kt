@@ -857,7 +857,8 @@ fun PlayScreen(
             listening = voice.listening,
             mode = voice.mode,
             message = podpisPaska,
-            onDiagnostyka = { pokazDiagnostyke() },
+            // Tylko w debug: w wydaniu null, zeby gest w ogole nie istnial (patrz VoiceBar).
+            onDiagnostyka = if (BuildConfig.DEBUG) ({ pokazDiagnostyke() }) else null,
             str = str,
             onToggle = { toggleVoice() },
             dialogAvailable = voice.oknoDostepne,
@@ -904,6 +905,7 @@ fun PlayScreen(
             )
         } else {
             GameKeyboard(
+                opisy = opisyKlawiszy(str),
                 // Pierwszy klawisz konczy pauze zalozona przez awarie mikrofonu — uczen przeszedl
                 // wlasnie na klawiature, wiec przerwa spelnila swoja role. Pauzy WLASNEJ (przycisk
                 // u gory, zejscie w tle) to nie rusza: tam czekamy na swiadome wznowienie.
@@ -956,7 +958,7 @@ private fun AnswerBar(typed: String, cursor: Int, font: PixelFont) {
                     font = font,
                 )
             }
-            PixelText("_", color = Palette.AccentDim, outline = null, glyphHeight = gh, font = font)
+            PixelText("_", opis = null, color = Palette.AccentDim, outline = null, glyphHeight = gh, font = font)
             if (safe < typed.length) {
                 PixelText(
                     typed.substring(safe),

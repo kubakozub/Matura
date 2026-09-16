@@ -13,6 +13,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.imageResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -192,6 +194,12 @@ fun pixelScaleFor(glyphHeight: Dp): Float {
  * [maxWidthDp] enables word wrapping; without it the text is a single line. Long prose
  * still reads better in the system font, so this is meant for labels, headings and
  * anything short enough to control.
+ *
+ * @param opis nazwa dla czytnika ekranu. Domyslnie sam [text], bo napis rysowany po Canvas
+ *   nie trafia do semantyki i bez tego TalkBack czytal z przyciskow MENU samo "przycisk" —
+ *   6 z 8 pozycji nie mialo ZADNEJ nazwy, a ostatnia nieopisana pozycja to WYJSCIE.
+ *   `null` znaczy "glif czysto dekoracyjny, etykiete niesie rodzic" i sluzy do tego, zeby
+ *   czytnik nie odczytywal tej samej rzeczy dwa razy.
  */
 @Composable
 fun PixelText(
@@ -202,6 +210,7 @@ fun PixelText(
     glyphHeight: Dp = 11.dp,
     mono: Boolean = false,
     maxWidthDp: Dp? = null,
+    opis: String? = text,
     font: PixelFont = rememberPixelFont(),
 ) {
     val scale = pixelScaleFor(glyphHeight)
@@ -216,7 +225,13 @@ fun PixelText(
     val w = with(density) { (widthPx + scale * 2).toDp() }
     val h = with(density) { heightPx.toDp() }
 
-    Canvas(modifier.then(Modifier.size(w, h))) {
+    // Semantyka siedzi w JEDNYM miejscu, a nie przy kazdym z 92 wywolan: klikalny rodzic
+    // (przycisk menu, klawisz, plakietka) scala semantyke dzieci, wiec opis napisu staje sie
+    // nazwa przycisku. Dopisywanie go recznie przy kazdym wywolaniu skonczylo sie tym, ze
+    // przez czternascie wersji nie dopisal go nikt.
+    val semantyka = if (opis != null) Modifier.semantics { contentDescription = opis } else Modifier
+
+    Canvas(modifier.then(semantyka).then(Modifier.size(w, h))) {
         lines.forEachIndexed { i, line ->
             drawPixelText(
                 font = font,

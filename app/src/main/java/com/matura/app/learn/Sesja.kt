@@ -162,7 +162,7 @@ data class PodsumowanieSesji(
     val powtorzone: Int,
     val nowe: Int,
 
-    /** Ile slow bylo w planie na dzis. */
+    /** Ile slow objela dzisiejsza trasa: zrobione plus te, ktore jeszcze na nia czekaja. */
     val zaplanowane: Int,
 
     /**
@@ -411,11 +411,23 @@ object Sesja {
     fun biezacy(stan: StanSesji, plan: PlanSesji): KrokSesji? =
         if (stan.zakonczona) null else plan.kroki.getOrNull(stan.krok)
 
+    /**
+     * Slownictwo CALEJ dzisiejszej trasy: to, co jeszcze przed uczniem, PLUS to, co juz zrobil.
+     *
+     * Suma, a nie sam plan, bo plan powstaje na nowo z harmonogramu przy kazdym wejsciu na ekran
+     * sesji, a slowo odpowiedziane poprawnie nie jest juz zalegle i z planu wypada. Licznik
+     * liczony z samego planu pokazywalby po przerobieniu calej trasy "5 / 0", a podsumowanie
+     * nie mialoby z czego wziac terminu nastepnej powtorki — mimo ze to wlasnie odpowiedzi
+     * ucznia ten termin ustawily.
+     */
+    private fun slownictwoTrasy(plan: PlanSesji, stan: StanSesji): List<String> =
+        (plan.slownictwo + stan.zrobione).distinct()
+
     fun postep(stan: StanSesji, plan: PlanSesji): PostepSesji = PostepSesji(
         krokNumer = (stan.krok + 1).coerceAtMost(plan.kroki.size),
         krokow = plan.kroki.size,
         celeZrobione = stan.zrobione.size,
-        celeRazem = plan.slownictwo.size,
+        celeRazem = slownictwoTrasy(plan, stan).size,
     )
 
     /** Ile sekund trwa sesja. Ujemna roznica (zegar cofniety) to zero, a nie liczba ujemna. */
@@ -449,11 +461,12 @@ object Sesja {
         progress: Map<String, WordProgress>,
         dzien: Int,
     ): PodsumowanieSesji {
-        val terminy = plan.slownictwo.map { Srs.progressOf(progress, it, plan.kierunek).dueDay }
+        val slownictwo = slownictwoTrasy(plan, stan)
+        val terminy = slownictwo.map { Srs.progressOf(progress, it, plan.kierunek).dueDay }
         return PodsumowanieSesji(
             powtorzone = stan.zrobionePowtorki.size,
             nowe = stan.zrobioneNowe.size,
-            zaplanowane = plan.slownictwo.size,
+            zaplanowane = slownictwo.size,
             nastepnaPowtorkaZaDni = terminy.filter { it > dzien }.minOrNull()?.minus(dzien),
             naJutro = terminy.count { it <= dzien + 1 },
         )

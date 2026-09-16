@@ -54,7 +54,7 @@ object EntryId {
     const val UNIT_SEPARATOR = '\u001F'
 
     /**
-     * Korekty tlumaczen: brzmienie SPRZED poprawki -> sens zamrozony w manifescie.
+     * Korekty katalogu: tresc wpisu SPRZED poprawki -> tresc zamrozona w manifescie.
      *
      * Etap 1 poprawil trzy tlumaczenia wezsze albo wprost inne niz angielski oryginal (regula
      * "najwyzej dwa slowa" wymuszala blad merytoryczny). Na dysku ucznia lezy jeszcze STARE
@@ -62,9 +62,18 @@ object EntryId {
      * Bez tej tablicy migracja policzylaby dla takiego wpisu inny skrot niz katalog i to samo
      * slowo mialoby dwa identyfikatory na dwoch telefonach.
      *
-     * Tablica jest odbiciem pola "aliasy" z data/entry-ids.json; generator identyfikatorow
-     * (_matura-apk-tools/generuj_identyfikatory.py) sprawdza, czy oba miejsca sie zgadzaja,
-     * i przerywa, gdy manifest zna alias, ktorego tutaj nie ma.
+     * Czwarta pozycja jest INNEJ KLASY i dlatego ma tu osobny akapit: 0.9.7 (vc24) poprawilo
+     * literowke w HASLE ANGIELSKIM ("accomodation" -> "accommodation"), a w sklepie stoi
+     * vc21, wiec na kazdym aktualizowanym telefonie lezy blad. Klucz tresci obejmuje oba
+     * pola, wiec odwzorowanie dziala tak samo dla poprawki hasla jak dla poprawki sensu —
+     * i to wlasnie ono pozwala migracji (Repository.odswiezZestawyWbudowane) rozpoznac, ze
+     * postep zapisany pod wb9c46bd1016c nalezy do katalogowego wcd41e3fc08c9. Bez tego wpisu
+     * odswiezenie katalogu zerwaloby uczniowi nauke tego slowa.
+     *
+     * Tablica jest odbiciem pol "aliasy" (dawne sensy) i "aliasyHasla" (dawne brzmienia hasla)
+     * z data/entry-ids.json; generator identyfikatorow (_matura-apk-tools/generuj_identyfikatory.py)
+     * sprawdza, czy oba miejsca sie zgadzaja, i przerywa, gdy manifest zna alias, ktorego
+     * tutaj nie ma.
      */
     private val ALIASY: Map<String, String> = mapOf(
         contentKey("schoolmate", "rówieśnik") to
@@ -73,6 +82,8 @@ object EntryId {
             contentKey("boarding school", "szkoła z internatem"),
         contentKey("single ticket", "bilet jednorazowy") to
             contentKey("single ticket", "bilet w jedną stronę"),
+        contentKey("accomodation", "zakwaterowanie") to
+            contentKey("accommodation", "zakwaterowanie"),
     )
 
     /**

@@ -2,6 +2,7 @@ package com.matura.app
 
 import com.matura.app.data.BuiltInSets
 import com.matura.app.data.Repository
+import com.matura.app.game.Matching
 import com.matura.app.learn.Attempt
 import com.matura.app.learn.EntryId
 import com.matura.app.learn.Outcome
@@ -15,6 +16,7 @@ import com.matura.app.model.UiLanguage
 import com.matura.app.model.WordProgress
 import com.matura.app.model.WordSet
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -23,66 +25,78 @@ import org.junit.rules.TemporaryFolder
 import java.io.File
 
 /**
- * Migracja zapisu do schematu 2 (trwale identyfikatory wpisow + mapa postepu).
+ * Aktualizacja zapisu ze sklepowego 0.9.4 (vc21) do biezacego wydania.
  *
  * Sprawdzana jest przede wszystkim ta czesc, ktora latwo zepsuc bez zadnego widocznego objawu:
  * ze nic nie ginie, ze drugie uruchomienie niczego nie zmienia i ze aplikacja NIE wymysla
  * opanowania slow, ktorego uczen nigdy nie pokazal.
+ *
+ * DLACZEGO FIKSTURA JEST PLIKIEM, A NIE DWOMA WIERSZAMI W KODZIE: poprzednia wersja tego testu
+ * miala "stary zapis" z jednym zestawem wbudowanym o dwoch wpisach, i to akurat takich, ktorych
+ * klasa zmiany (korekta TLUMACZENIA) byla juz obsluzona tablica aliasow. Testy byly wiec zielone
+ * przy calkowicie zepsutej sciezce aktualizacji: zapis trzyma wlasna kopie katalogu, ktorej nikt
+ * nie odswiezal, wiec uczen po aktualizacji zostawal z literowka "accomodation" i z trzema
+ * starymi tlumaczeniami. Widac to dopiero na PELNYM katalogu (102 zestawy, 2084 hasla), bo
+ * rozbiezne sa 4 wpisy z 2084.
+ *
+ * SKAD FIKSTURA: app/src/test/resources/zapis-0.9.4-vc21.json to prawdziwy ksztalt pliku z
+ * telefonu z wersji sklepowej, odtworzony z katalogu z commita bc4396b (0.9.3/vc20). Sam vc21
+ * nie ma wlasnego commita, ale miedzy vc20 a vc24 katalog zmienil sie DOKLADNIE raz (36579fb
+ * poprawil "accomodation" -> "accommodation"), wiec vc20 niesie tresc, ktora ma na dysku uczen
+ * ze sklepu. Zapis nie ma pola schemaVersion, wpisy nie maja identyfikatorow, a Options nie ma
+ * pola systemKeyboard (weszlo dopiero w 0.9.7/vc24) — to jest caly sens tej fikstury: ksztalt
+ * sprzed wersjonowania, a nie dzisiejszy zapis z usunietymi polami.
  */
 class MigracjaTest {
 
     @get:Rule
     val katalog = TemporaryFolder()
 
+    private companion object {
+        const val FIKSTURA = "zapis-0.9.4-vc21.json"
+
+        /** Zestaw, w ktorym siedzi literowka sprzed 0.9.7: "Miejsce zamieszkania · Wynajem". */
+        const val ZESTAW_Z_LITEROWKA = "v026"
+
+        /**
+         * Identyfikator, ktory dla pary ("accomodation", "zakwaterowanie") liczyl kod PRZED
+         * dopisaniem aliasu hasla. Wartosc jest historyczna i dlatego wpisana wprost: dzisiejsze
+         * EntryId.builtIn juz jej nie zwroci, a zapis testera z tamtej wersji ma ja na dysku.
+         */
+        const val ID_SPRZED_ALIASU = "wb9c46bd1016c"
+    }
+
     private fun plik(nazwa: String) = File(katalog.root, nazwa)
 
-    /**
-     * Zapis sprzed wersjonowania: bez pola schemaVersion, bez identyfikatorow wpisow i z
-     * WLASNA kopia zestawu wbudowanego — w brzmieniu SPRZED korekty tlumaczen z Etapu 1
-     * ("rówieśnik"), bo tak wyglada plik na telefonie, ktory nie dostal jeszcze nowej wersji.
-     */
-    private val staryZapis = """
-        {
-          "profile": {
-            "name": "Stary", "anonymous": false, "gamesPlayed": 12,
-            "totalKills": 140, "bestScore": 1500, "bestStreak": 9
-          },
-          "options": {
-            "lives": 5, "soundEnabled": false, "texture": "NIGHT",
-            "direction": "DEF_TO_TERM", "uiLanguage": "EN", "speed": "SLOW",
-            "systemKeyboard": true
-          },
-          "sets": [
-            {
-              "id": "v000",
-              "title": "Człowiek · Charakter: dojrzałość",
-              "builtIn": true,
-              "timesPlayed": 6,
-              "entries": [
-                {"term": "schoolmate", "definition": "rówieśnik"},
-                {"term": "mature", "definition": "dojrzały"}
-              ]
-            },
-            {
-              "id": "user-1",
-              "title": "Moje słówka",
-              "createdAt": 1700000000000,
-              "entries": [
-                {"term": "dog", "definition": "pies"},
-                {"term": "cat", "definition": "kot"}
-              ]
-            }
-          ],
-          "scores": [
-            {
-              "playerName": "Stary", "setTitle": "Moje słówka", "score": 1500,
-              "level": 7, "bestStreak": 9, "kills": 80, "playedAt": 1700000000000
-            }
-          ]
-        }
-    """.trimIndent()
+    /** Zapis w ksztalcie 0.9.4 (vc21) — patrz KDoc klasy. */
+    private val staryZapis: String = requireNotNull(
+        javaClass.classLoader?.getResourceAsStream(FIKSTURA),
+    ) { "brak fikstury $FIKSTURA na sciezce testow" }.use { it.readBytes().decodeToString() }
 
     private fun zapiszStary() = plik(Repository.FILE_NAME).writeText(staryZapis)
+
+    private fun katalogPoId() = BuiltInSets.all().associateBy { it.id }
+
+    @Test
+    fun `fikstura naprawde jest zapisem sprzed wersjonowania, z pelnym katalogiem`() {
+        // Test o tescie: gdyby fikstura zjechala do dzisiejszego ksztaltu (identyfikatory,
+        // schemaVersion, biezaca tresc katalogu), wszystkie testy nizej przechodzilyby z powodu,
+        // ktory nie ma nic wspolnego z aktualizacja.
+        assertFalse("fikstura ma pole schemaVersion", staryZapis.contains("schemaVersion"))
+        assertFalse("fikstura ma pole systemKeyboard", staryZapis.contains("systemKeyboard"))
+        assertFalse("fikstura ma juz identyfikatory wpisow", staryZapis.contains("\"id\":\"w"))
+        assertTrue("fikstura nie ma literowki sprzed 0.9.7", staryZapis.contains("accomodation"))
+
+        zapiszStary()
+        val surowe = Repository(katalog.root).load()
+        assertEquals(BuiltInSets.all().size, surowe.sets.count { s -> s.builtIn })
+        assertEquals(
+            BuiltInSets.all().sumOf { s -> s.entries.size },
+            surowe.sets.filter { s -> s.builtIn }.sumOf { s -> s.entries.size },
+        )
+    }
+
+    // --- co zostaje ucznia ------------------------------------------------------------------
 
     @Test
     fun `stary zapis zachowuje profil, ustawienia, wyniki i wlasne zestawy`() {
@@ -97,15 +111,24 @@ class MigracjaTest {
         assertEquals(Texture.NIGHT, dane.options.texture)
         assertEquals(Direction.DEF_TO_TERM, dane.options.direction)
         assertEquals(UiLanguage.EN, dane.options.uiLanguage)
-        assertTrue("ustawienie klawiatury systemowej przepadlo", dane.options.systemKeyboard)
         assertEquals(1, dane.scores.size)
         assertEquals(1500, dane.scores.first().score)
 
         val wlasny = dane.sets.first { !it.builtIn }
         assertEquals("Moje słówka", wlasny.title)
-        assertEquals(listOf("dog", "cat"), wlasny.entries.map { it.term })
-        assertEquals(6, dane.sets.first { it.builtIn }.timesPlayed)
+        assertEquals(listOf("dog", "cat", "accommodation"), wlasny.entries.map { it.term })
+        assertEquals(3, wlasny.timesPlayed)
+        // Licznik rozgrywek nalezy do ucznia, a nie do katalogu - odswiezenie tresci go nie tyka.
+        assertEquals(6, dane.sets.first { it.id == BuiltInSets.all().first().id }.timesPlayed)
         assertEquals(Repository.SCHEMA_VERSION, dane.schemaVersion)
+    }
+
+    @Test
+    fun `pole nieznane staremu zapisowi dostaje wartosc domyslna, a nie wywala odczytu`() {
+        // systemKeyboard weszlo w 0.9.7 (vc24), wiec w pliku ze sklepu go NIE MA.
+        zapiszStary()
+
+        assertFalse(Repository(katalog.root).load().options.systemKeyboard)
     }
 
     @Test
@@ -114,27 +137,208 @@ class MigracjaTest {
 
         val dane = Repository(katalog.root).load()
 
-        for (e in dane.sets.first { it.builtIn }.entries) {
-            assertTrue("'${e.term}' bez identyfikatora katalogowego", EntryId.isBuiltIn(e.id))
+        for (set in dane.sets.filter { it.builtIn }) {
+            for (e in set.entries) {
+                assertTrue("'${e.term}' bez identyfikatora katalogowego", EntryId.isBuiltIn(e.id))
+            }
         }
         for (e in dane.sets.first { !it.builtIn }.entries) {
             assertTrue("'${e.term}' bez identyfikatora wlasnego", EntryId.isUser(e.id))
         }
     }
 
+    // --- (a) slownictwo jest biezace --------------------------------------------------------
+
     @Test
-    fun `wpis w brzmieniu sprzed korekty tlumaczenia dostaje identyfikator z katalogu`() {
-        // To jest cala stawka aliasow: bez nich to samo slowo mialoby inny identyfikator na
-        // telefonie z zapisem sprzed korekty niz w swiezo zainstalowanej aplikacji.
+    fun `tresc zestawow wbudowanych po aktualizacji rowna sie katalogowi`() {
+        // Bez tej asercji zadna przyszla korekta slownictwa nie mialaby straznika: przeszlaby
+        // cicho obok wszystkich, ktorzy aktualizuja, bo zapis ma wlasna kopie katalogu.
         zapiszStary()
-        val zKatalogu = BuiltInSets.all().flatMap { it.entries }.first { it.term == "schoolmate" }
 
-        val zMigracji = Repository(katalog.root).load()
-            .sets.first { it.builtIn }.entries.first { it.term == "schoolmate" }
+        val dane = Repository(katalog.root).load()
 
-        assertEquals("rówieśnik", zMigracji.definition)
-        assertEquals(zKatalogu.id, zMigracji.id)
+        val katalogi = katalogPoId()
+        for (set in dane.sets.filter { it.builtIn }) {
+            val biezacy = katalogi.getValue(set.id)
+            assertEquals("tytul zestawu ${set.id}", biezacy.title, set.title)
+            assertEquals("tresc zestawu ${set.id}", biezacy.entries, set.entries)
+        }
     }
+
+    @Test
+    fun `literowka w hasle angielskim znika z zapisu, a poprawna pisownia jest zaliczana`() {
+        zapiszStary()
+
+        val dane = Repository(katalog.root).load()
+
+        val wpis = dane.sets.first { it.id == ZESTAW_Z_LITEROWKA }.entries
+            .first { it.definition == "zakwaterowanie" }
+        assertEquals("accommodation", wpis.term)
+        assertTrue(
+            "literowka zostala gdziekolwiek w zapisie",
+            dane.sets.flatMap { it.entries }.none { it.term == "accomodation" },
+        )
+        // Kierunek ZNACZENIE -> HASLO: przed poprawka uczen musial wpisac blad, zeby zaliczyc.
+        assertTrue(Matching.isExactMatch("accommodation", Matching.acceptedAnswers(wpis.term)))
+    }
+
+    @Test
+    fun `poprawione tlumaczenia docieraja do ucznia, ktory aktualizuje`() {
+        zapiszStary()
+
+        val dane = Repository(katalog.root).load()
+        val wpisy = dane.sets.filter { it.builtIn }.flatMap { it.entries }
+
+        for (haslo in listOf("schoolmate", "boarding school", "single ticket")) {
+            val zZapisu = wpisy.first { it.term == haslo }
+            val zKatalogu = BuiltInSets.all().flatMap { it.entries }.first { it.term == haslo }
+            assertEquals(zKatalogu.definition, zZapisu.definition)
+            // Skutek dla ucznia: poprawne znaczenie przestaje byc bledna odpowiedzia.
+            assertTrue(
+                "'${zKatalogu.definition}' nadal odrzucane",
+                Matching.isExactMatch(
+                    zKatalogu.definition.substringBefore(","),
+                    Matching.acceptedAnswers(zZapisu.definition),
+                ),
+            )
+        }
+    }
+
+    // --- (b) zestawy wlasne sa nietkniete ---------------------------------------------------
+
+    @Test
+    fun `aktualizacja nie dotyka ani jednego zestawu wlasnego`() {
+        zapiszStary()
+
+        val dane = Repository(katalog.root).load()
+        val wlasny = dane.sets.first { !it.builtIn }
+
+        assertEquals("Moje słówka", wlasny.title)
+        assertEquals(
+            listOf("dog" to "pies", "cat" to "kot", "accommodation" to "zakwaterowanie"),
+            wlasny.entries.map { it.term to it.definition },
+        )
+        assertEquals(1700000000000L, wlasny.createdAt)
+        // Wpis wlasny o tresci IDENTYCZNEJ z katalogowym nie moze dostac identyfikatora
+        // katalogowego - inaczej dzielilby postep ze slowem, ktorego uczen nie wpisywal.
+        val blizniak = wlasny.entries.first { it.term == "accommodation" }
+        assertTrue(EntryId.isUser(blizniak.id))
+        assertNotEquals(
+            BuiltInSets.all().flatMap { it.entries }.first { it.term == "accommodation" }.id,
+            blizniak.id,
+        )
+    }
+
+    @Test
+    fun `zestaw wbudowany, ktorego nie ma juz w katalogu, zostaje nietkniety`() {
+        // Kasowanie jest nieodwracalne, a nadmiarowy zestaw nikomu nie szkodzi.
+        val osierocony = WordSet(
+            id = "v999",
+            title = "Dzial zdjety z katalogu",
+            builtIn = true,
+            entries = listOf(Entry("ghost", "duch", "w0123456789ab")),
+        )
+        val dane = SaveData(schemaVersion = 2, sets = BuiltInSets.all() + osierocony)
+        assertTrue(Repository(katalog.root).save(dane))
+
+        val po = Repository(katalog.root).load()
+
+        assertEquals(osierocony, po.sets.first { it.id == "v999" })
+    }
+
+    // --- (c) postep nauki nadal wskazuje te same slowa --------------------------------------
+
+    @Test
+    fun `postep spod identyfikatora sprzed korekty hasla laduje pod katalogowym`() {
+        // Zapis testera ze schematu 2: wpis ma STARA tresc i policzony z niej identyfikator.
+        // Odswiezenie katalogu zmienia tresc, a wraz z nia identyfikator - bez przeprowadzki
+        // postepu cala nauka tego slowa zostalaby pod kluczem, ktorego zaden ekran nie odczyta.
+        val zKatalogu = BuiltInSets.all().first { it.id == ZESTAW_Z_LITEROWKA }
+        val stareV026 = zKatalogu.copy(
+            entries = listOf(Entry("accomodation", "zakwaterowanie", ID_SPRZED_ALIASU)) +
+                zKatalogu.entries.drop(1),
+        )
+        val klucz = Srs.key(ID_SPRZED_ALIASU, Direction.DEF_TO_TERM)
+        val dane = SaveData(
+            schemaVersion = 2,
+            sets = BuiltInSets.all().map { if (it.id == ZESTAW_Z_LITEROWKA) stareV026 else it },
+            progress = mapOf(klucz to WordProgress(box = 2, dueDay = 19_900, mistakes = 3)),
+        )
+        assertTrue(Repository(katalog.root).save(dane))
+
+        val po = Repository(katalog.root).load()
+
+        val wpis = po.sets.first { it.id == ZESTAW_Z_LITEROWKA }.entries.first()
+        assertEquals("accommodation", wpis.term)
+        assertEquals(zKatalogu.entries.first().id, wpis.id)
+        // To jest cala stawka: pudelko, termin i liczba pomylek wskazuja na TO SAMO slowo.
+        val przeniesiony = Srs.progressOf(po.progress, wpis.id, Direction.DEF_TO_TERM)
+        assertEquals(2, przeniesiony.box)
+        assertEquals(19_900, przeniesiony.dueDay)
+        assertEquals(3, przeniesiony.mistakes)
+        // Starego klucza nie kasujemy - mapy postepu nie sprzatamy nigdy (patrz SaveData).
+        assertEquals(WordProgress(box = 2, dueDay = 19_900, mistakes = 3), po.progress[klucz])
+    }
+
+    @Test
+    fun `postep slowa, ktorego tresc sie nie zmienila, przezywa aktualizacje bez ruchu`() {
+        val slowo = BuiltInSets.all().first().entries.first()
+        val klucz = Srs.key(slowo.id, Direction.TERM_TO_DEF)
+        val dane = SaveData(
+            schemaVersion = 2,
+            sets = BuiltInSets.all(),
+            progress = mapOf(klucz to WordProgress(box = 3, dueDay = 19_950)),
+        )
+        assertTrue(Repository(katalog.root).save(dane))
+
+        val po = Repository(katalog.root).load()
+
+        assertEquals(1, po.progress.size)
+        assertEquals(3, Srs.progressOf(po.progress, slowo.id, Direction.TERM_TO_DEF).box)
+    }
+
+    @Test
+    fun `swiezsza historia pod identyfikatorem katalogowym wygrywa ze starsza`() {
+        // Uczen cwiczyl to slowo w "Losowaniu", ktore czyta swiezy katalog, wiec pod
+        // identyfikatorem katalogowym cos juz jest. Przeprowadzka nie ma prawa tego nadpisac.
+        val zKatalogu = BuiltInSets.all().first { it.id == ZESTAW_Z_LITEROWKA }
+        val stareV026 = zKatalogu.copy(
+            entries = listOf(Entry("accomodation", "zakwaterowanie", ID_SPRZED_ALIASU)) +
+                zKatalogu.entries.drop(1),
+        )
+        val idKatalogowe = zKatalogu.entries.first().id
+        val dane = SaveData(
+            schemaVersion = 2,
+            sets = BuiltInSets.all().map { if (it.id == ZESTAW_Z_LITEROWKA) stareV026 else it },
+            progress = mapOf(
+                Srs.key(ID_SPRZED_ALIASU, Direction.TERM_TO_DEF) to WordProgress(box = 1),
+                Srs.key(idKatalogowe, Direction.TERM_TO_DEF) to WordProgress(box = 3, dueDay = 19_990),
+            ),
+        )
+        assertTrue(Repository(katalog.root).save(dane))
+
+        val po = Repository(katalog.root).load()
+
+        assertEquals(3, Srs.progressOf(po.progress, idKatalogowe, Direction.TERM_TO_DEF).box)
+        assertEquals(19_990, Srs.progressOf(po.progress, idKatalogowe, Direction.TERM_TO_DEF).dueDay)
+    }
+
+    @Test
+    fun `kazdy wpis wbudowany po aktualizacji ma identyfikator z katalogu`() {
+        // Sierota (identyfikator spoza katalogu) znaczy, ze postep tego slowa liczy sie osobno
+        // w dziale tematycznym i osobno w "Losowaniu" - dwie prawdy o jednym slowie.
+        zapiszStary()
+
+        val dane = Repository(katalog.root).load()
+
+        val zKatalogu = BuiltInSets.all().flatMap { it.entries }.map { it.id }.toHashSet()
+        val sieroty = dane.sets.filter { it.builtIn }
+            .flatMap { it.entries }
+            .filter { it.id !in zKatalogu }
+        assertTrue("identyfikatory spoza katalogu: ${sieroty.map { it.term }}", sieroty.isEmpty())
+    }
+
+    // --- niezmienniki migracji --------------------------------------------------------------
 
     @Test
     fun `drugie uruchomienie niczego nie zmienia`() {
@@ -219,6 +423,18 @@ class MigracjaTest {
         )
 
         assertTrue("nic sie nie zmienilo, wiec nie ma czego zapisywac", !plik(Repository.FILE_NAME).exists())
+    }
+
+    @Test
+    fun `sesja z zapisu nie ginie przy aktualizacji`() {
+        // Przerwana sesja jest zwyklym polem dokumentu; krok migracji dotyka zestawow i postepu,
+        // wiec gdyby skladal SaveData od zera, trasa dnia przepadlaby przy pierwszym starcie.
+        zapiszStary()
+        val repo = Repository(katalog.root)
+        val stan = com.matura.app.learn.StanSesji(dzien = 19_875, krok = 1)
+        assertTrue(repo.setSesja(stan))
+
+        assertEquals(stan, Repository(katalog.root).load().sesja)
     }
 
     @Test

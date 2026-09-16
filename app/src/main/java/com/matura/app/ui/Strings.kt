@@ -1,5 +1,6 @@
 package com.matura.app.ui
 
+import com.matura.app.BuildConfig
 import com.matura.app.learn.FormyLiczby
 import com.matura.app.learn.Podsumowanie
 import com.matura.app.model.UiLanguage
@@ -11,7 +12,19 @@ import com.matura.app.model.UiLanguage
 class Str(private val lang: UiLanguage) {
     private fun pick(pl: String, en: String) = if (lang == UiLanguage.PL) pl else en
 
-    val appTagline get() = pick("Verbum + Game", "Verbum + Game")
+    /**
+     * Haslo pod logo na ekranie startowym.
+     *
+     * Do 0.9.18 stalo tu "Verbum + Game" — haslo reklamowe nazwy VERBUME, ktora aplikacja
+     * porzucila przy zmianie pakietu na com.matura.app (README). Uczen widzial wiec pod logo
+     * MATURA nazwe, ktorej nie ma ani w sklepie, ani w aplikacji, a napis trafia na zrzuty
+     * ekranu w Google Play.
+     *
+     * DLUGOSC: rysuje to PixelText bez zawijania (Screens.kt, StartScreen), przy glyphHeight
+     * 9 dp jeden znak zajmuje do ok. 9 dp, a na ekranie 320 dp zostaje po marginesach 276 dp.
+     * Stad prog ok. 28 znakow na wariant — dluzsze haslo wyjdzie poza ekran zamiast sie zawinac.
+     */
+    val appTagline get() = pick("Słówka na maturę podstawową", "Polish matura vocabulary")
     val playAnonymously get() = pick("GRAJ ANONIMOWO", "PLAY ANONYMOUSLY")
     val offlineNote
         get() = pick(
@@ -35,7 +48,11 @@ class Str(private val lang: UiLanguage) {
     val privacy get() = pick("Prywatność", "Privacy")
     val privacyOpen get() = pick("Otwórz pełną wersję na matura.uk", "Open the full version on matura.uk")
     val privacyShow get() = pick("POKAŻ", "SHOW")
-    val privacyBody get() = pick(PRIVACY_PL, PRIVACY_EN)
+    val privacyBody
+        get() = pick(
+            politykaPl(TEST_MIKROFONU_OSIAGALNY),
+            politykaEn(TEST_MIKROFONU_OSIAGALNY),
+        )
     val options get() = pick("OPCJE", "OPTIONS")
     val achievements get() = pick("OSIĄGNIĘCIA", "ACHIEVEMENTS")
     val scores get() = pick("WYNIKI", "SCORES")
@@ -193,6 +210,16 @@ class Str(private val lang: UiLanguage) {
     // Nazwy konfiguracji w wynikach sa techniczne i te same w obu jezykach (trafiaja do
     // raportu dla programisty); tlumaczymy tylko to, co czyta uzytkownik.
     val voiceTest get() = pick("Test mowy", "Speech test")
+
+    // ---- ETYKIETY KLAWISZY DLA CZYTNIKA EKRANU -------------------------------
+    // Klawiatura gry rysuje klawisze ze sprite'ow, wiec bez tych napisow TalkBack czytal
+    // "przycisk" na wszystkich 31 klawiszach. Litery biora nazwe ze swojego PixelText;
+    // te piec nie ma zadnego tekstu, wiec nazwe trzeba podac wprost.
+    val keyBackspace get() = pick("Skasuj znak", "Backspace")
+    val keyEnter get() = pick("Zatwierdź", "Enter")
+    val keySpace get() = pick("Spacja", "Space")
+    val keyCursorLeft get() = pick("Kursor w lewo", "Cursor left")
+    val keyCursorRight get() = pick("Kursor w prawo", "Cursor right")
     val voiceTestOpen get() = pick("OTWÓRZ", "OPEN")
     val voiceTestIntro get() = pick(
         "Powiedz wyraźnie: KOLANO — test sprawdzi po kolei wszystkie silniki mowy w tym telefonie.",
@@ -396,10 +423,24 @@ class Str(private val lang: UiLanguage) {
     val dirTermToDef get() = pick("hasło → tłumaczenie", "term → definition")
     val dirDefToTerm get() = pick("tłumaczenie → hasło", "definition → term")
     val dirRandom get() = pick("losowo", "random")
+    /**
+     * Notka pod przelacznikiem Dzwiek w OPCJACH.
+     *
+     * Do 0.9.18 mowila "nie ma plikow audio". Bylo to prawda, zanim doszla wymowa: paczka
+     * wiezie dzis 1955 nagran .ogg w assets/audio (odtwarza je Pronunciation), a uczen slyszy
+     * je przyciskiem glosnika w TRUDNYCH SLOWACH. Notka przeczyla wiec temu, co aplikacja
+     * przed chwila zrobila. Zdanie o lektorze systemowym jest tu, bo dla hasla spoza naszych
+     * nagran Pronunciation schodzi na TextToSpeech telefonu — czyli tekst hasla trafia do
+     * INNEJ aplikacji, i uczen ma prawo o tym wiedziec z ekranu, ktory tlumaczy ten przelacznik.
+     */
     val soundNote
         get() = pick(
-            "Dźwięk gra prostymi tonami generowanymi na urządzeniu — nie ma plików audio.",
-            "Sound uses simple tones generated on the device — there are no audio assets."
+            "Efekty gry to proste tony generowane na urządzeniu. Wymowa haseł pochodzi z nagrań " +
+                "dołączonych do aplikacji — nic nie jest pobierane z sieci. Hasło spoza tych " +
+                "nagrań przeczyta lektor systemowy Twojego telefonu.",
+            "Game effects are simple tones generated on the device. Word pronunciation comes " +
+                "from recordings bundled with the app — nothing is downloaded. A word without " +
+                "a recording is read out by your phone's system text-to-speech."
         )
 
     val score get() = pick("Punkty", "Score")
@@ -428,12 +469,70 @@ class Str(private val lang: UiLanguage) {
 
 
 /**
+ * Czy W TYM WARIANCIE BUILDU uczen ma jak otworzyc OPCJE → Test mikrofonu.
+ *
+ * Wartosc musi isc krok w krok za bramka `if (BuildConfig.DEBUG)` na liscie OPCJI
+ * (Screens.kt): to jedyna droga do RawMicTestScreen, a ten ekran jest JEDYNYM miejscem
+ * w aplikacji, ktore zapisuje plik audio (RawMicTest.zapiszWav -> filesDir). Gdy droga
+ * znika, znika tez jedyny wyjatek od zdania "nie zapisujemy zadnych plikow audio".
+ *
+ * Powod istnienia flagi: w 0.9.18 ekrany diagnostyczne schowano za DEBUG, a polityka dalej
+ * opisywala uczniowi nagranie i pozycje w menu, ktorych jego paczka ze sklepu nie ma.
+ * Tekst i bramka musza zmieniac sie RAZEM, wiec tekst pyta dokladnie o to, co bramka.
+ */
+private val TEST_MIKROFONU_OSIAGALNY: Boolean get() = BuildConfig.DEBUG
+
+/**
  * Polityka prywatnosci wbudowana w aplikacje. Google Play wymaga, zeby byla dostepna
  * NIE tylko jako link w Konsoli, ale takze w samej aplikacji — a ze aplikacja nie ma
  * uprawnienia do internetu, tekst musi byc lokalny. Pelna wersja (i data aktualizacji)
  * zyje pod https://matura.uk/polityka-prywatnosci i otwiera ja przegladarka.
+ *
+ * FUNKCJA, a nie stala: jedno zdanie tej polityki zalezy od wariantu buildu (patrz
+ * [TEST_MIKROFONU_OSIAGALNY]), a flaga jest PARAMETREM, zeby test mogl sprawdzic OBA
+ * warianty bez udawania BuildConfig.
+ *
+ * Tekst sklejamy z trzech kawalkow, zamiast wstawiac zmienna do jednego `trimIndent()`:
+ * interpolacja dzieje sie PRZED trimIndent(), wiec wieloliniowa wstawka wyrownana do lewej
+ * wyzerowalaby wspolne wciecie i rozjechalaby caly dokument.
+ *
+ * @param testMikrofonuOsiagalny czy w tym buildzie istnieje pozycja OPCJE → Test mikrofonu
  */
-private val PRIVACY_PL = """
+internal fun politykaPl(testMikrofonuOsiagalny: Boolean): String =
+    POLITYKA_PL_GLOWA + "\n" + punktAudioPl(testMikrofonuOsiagalny) + "\n" + POLITYKA_PL_OGON
+
+/** Wersja angielska tej samej polityki — patrz [politykaPl]. */
+internal fun politykaEn(testMikrofonuOsiagalny: Boolean): String =
+    POLITYKA_EN_GLOWA + "\n" + punktAudioEn(testMikrofonuOsiagalny) + "\n" + POLITYKA_EN_OGON
+
+/**
+ * Punkt o zapisywaniu dzwieku. W wersji sklepowej jest MOCNIEJSZY niz dawny tekst z wyjatkiem,
+ * bo mowi prawde o calej paczce: bez ekranu Test mikrofonu zaden plik audio nie powstaje nigdy.
+ */
+private fun punktAudioPl(testMikrofonuOsiagalny: Boolean): String =
+    if (testMikrofonuOsiagalny) {
+        """
+        • W czasie gry nie nagrywamy dźwięku i nie zapisujemy plików audio — wypowiedź idzie prosto do usługi rozpoznawania mowy.
+        • JEDYNY wyjątek to OPCJE → Test mikrofonu, uruchamiany ręcznie: żeby pokazać, czy mikrofon w ogóle działa, zapisuje on kilkusekundowe nagranie do prywatnej pamięci aplikacji i pozwala je odsłuchać. Plik jest nadpisywany przy każdym teście, znika dopiero po odinstalowaniu aplikacji i nigdzie nie jest wysyłany — aplikacja nie ma dostępu do internetu.
+        """.trimIndent()
+    } else {
+        "• Nie nagrywamy dźwięku i nie zapisujemy żadnych plików audio — ani w czasie gry, ani poza nią. " +
+            "Wypowiedź idzie prosto do usługi rozpoznawania mowy."
+    }
+
+/** Patrz [punktAudioPl]. */
+private fun punktAudioEn(testMikrofonuOsiagalny: Boolean): String =
+    if (testMikrofonuOsiagalny) {
+        """
+        • During play we do not record or store any audio — your speech goes straight to the speech recognition service.
+        • The ONLY exception is OPTIONS → Microphone test, which you start yourself: to show whether the microphone works at all, it saves a few seconds of audio to the app's private storage and lets you play it back. The file is overwritten by the next test, disappears only when you uninstall the app, and is never sent anywhere — the app has no internet access.
+        """.trimIndent()
+    } else {
+        "• We do not record or store any audio at all — neither during play nor outside it. " +
+            "Your speech goes straight to the speech recognition service."
+    }
+
+private val POLITYKA_PL_GLOWA = """
 MATURA — słówka angielskie · polityka prywatności
 Ostatnia aktualizacja: 16 września 2026
 
@@ -441,29 +540,37 @@ W SKRÓCIE
 Gra działa na Twoim urządzeniu. Nie ma kont, logowania, reklam ani śledzenia. Aplikacja nie ma uprawnienia dostępu do internetu, więc sama nie może niczego wysłać.
 
 CO ZAPISUJEMY (tylko na urządzeniu)
+• nazwę gracza, którą wpisujesz na starcie — pokazuje się przy Twoich wynikach,
 • najlepsze wyniki i statystyki gry,
 • ustawienia (życia, tempo, kierunek tłumaczenia, język, dźwięk, klawiatura),
 • zestawy słówek, które sam(a) dodasz,
-• postęp nauki (które słowa znasz i kiedy wracają do powtórki).
+• postęp nauki (które słowa znasz i kiedy wracają do powtórki),
+• przerwaną sesję „Dzisiejsze 5 minut”, żeby dało się ją wznowić.
 Te dane leżą w pamięci aplikacji i znikają po jej odinstalowaniu. Nie mamy do nich dostępu.
+
+DŹWIĘK I WYMOWA
+Efekty gry to proste tony liczone na urządzeniu. Wymowa haseł pochodzi z nagrań dołączonych do aplikacji — nic nie jest pobierane z sieci. Hasła, których w tych nagraniach nie ma (na przykład z Twoich własnych zestawów), czyta lektor systemowy telefonu: dostaje on sam tekst hasła i to on decyduje, jak go wypowie.
 
 MIKROFON I TRYB GŁOSOWY
 Tryb głosowy jest opcjonalny — możesz grać, wpisując odpowiedzi z klawiatury. Jeśli go włączysz, aplikacja poprosi o zgodę na mikrofon (RECORD_AUDIO).
-• W czasie gry nie nagrywamy dźwięku i nie zapisujemy plików audio — wypowiedź idzie prosto do usługi rozpoznawania mowy.
-• JEDYNY wyjątek to OPCJE → Test mikrofonu, uruchamiany ręcznie: żeby pokazać, czy mikrofon w ogóle działa, zapisuje on kilkusekundowe nagranie do prywatnej pamięci aplikacji i pozwala je odsłuchać. Plik jest nadpisywany przy każdym teście, znika po odinstalowaniu aplikacji i nigdzie nie jest wysyłany — aplikacja nie ma dostępu do internetu.
+""".trimIndent().trimEnd()
+
+private val POLITYKA_PL_OGON = """
 • Wypowiedź zamienia na tekst usługa rozpoznawania mowy zainstalowana w Twoim telefonie (najczęściej Google, u niektórych producentów własna). Aplikacja dostaje sam tekst.
-• Jeśli telefon ma pobrany model rozpoznawania offline dla danego języka, używamy go i dźwięk nie opuszcza urządzenia. W przeciwnym razie rozpoznanie wykonuje usługa sieciowa dostawcy (najczęściej Google) — wtedy wypowiedź trafia do niego i podlega JEGO polityce prywatności.
+• To ta usługa, a nie my, decyduje, GDZIE rozpozna Twoją wypowiedź: na urządzeniu albo w swojej usłudze sieciowej. W tym drugim przypadku wypowiedź trafia do dostawcy (najczęściej Google) i podlega JEGO polityce prywatności. Nie obiecujemy więc, że dźwięk nie opuści telefonu — nie mamy nad tym kontroli.
+• O rozpoznanie bez internetu prosimy tylko wtedy, gdy telefon potwierdzi pobrany model danego języka, a zapytać o to da się dopiero na Androidzie 13 i nowszym. Na starszych wersjach systemu takiej prośby nie wysyłamy w ogóle.
+• Nawet wysłana prośba jest tylko prośbą: gdy silnik jej nie przyjmie albo zamilknie, ponawiamy rozpoznanie bez niej — i wtedy może ono pójść przez sieć.
 • To samo dotyczy systemowego okna dyktowania i mikrofonu na klawiaturze telefonu.
 • Zgodę na mikrofon cofniesz w Ustawieniach systemu → Aplikacje → MATURA → Uprawnienia.
 
 CZEGO NIE ZBIERAMY
-Imienia, adresu e-mail, lokalizacji, kontaktów, zdjęć, identyfikatorów reklamowych. Brak reklam, analityki i bibliotek śledzących.
+Adresu e-mail, lokalizacji, kontaktów, zdjęć, identyfikatorów reklamowych. Brak reklam, analityki i bibliotek śledzących. Nazwa gracza, którą wpisujesz, zostaje na telefonie — nigdzie jej nie wysyłamy i nie musi być Twoim prawdziwym imieniem.
 
 KONTAKT
 kuba1k@gmail.com · https://matura.uk/polityka-prywatnosci
-""".trimIndent()
+""".trimIndent().trimStart()
 
-private val PRIVACY_EN = """
+private val POLITYKA_EN_GLOWA = """
 MATURA — English vocabulary · privacy policy
 Last updated: 16 September 2026
 
@@ -471,24 +578,32 @@ IN SHORT
 The game runs on your device. No accounts, no sign-in, no ads, no tracking. The app has no internet permission, so it cannot send anything anywhere by itself.
 
 WHAT IS STORED (on the device only)
+• the player name you type at the start — it shows next to your scores,
 • best scores and game statistics,
 • settings (lives, speed, translation direction, language, sound, keyboard),
 • word sets you add yourself,
-• learning progress (which words you know and when they come back for review).
+• learning progress (which words you know and when they come back for review),
+• an interrupted “Today's 5 minutes” session, so that it can be resumed.
 This data lives in the app storage and is removed when you uninstall the app. We have no access to it.
+
+SOUND AND PRONUNCIATION
+Game effects are simple tones computed on the device. Word pronunciation comes from recordings bundled with the app — nothing is downloaded. Words that are not in those recordings (for example from your own sets) are read out by your phone's system text-to-speech: it receives the word itself and decides how to say it.
 
 MICROPHONE AND VOICE MODE
 Voice mode is optional — you can always type your answers. If you turn it on, the app asks for the microphone permission (RECORD_AUDIO).
-• During play we do not record or store any audio — your speech goes straight to the speech recognition service.
-• The ONLY exception is OPTIONS → Microphone test, which you start yourself: to show whether the microphone works at all, it saves a few seconds of audio to the app's private storage and lets you play it back. The file is overwritten by the next test, disappears when you uninstall the app, and is never sent anywhere — the app has no internet access.
+""".trimIndent().trimEnd()
+
+private val POLITYKA_EN_OGON = """
 • Your speech is turned into text by the speech recognition service installed on your phone (usually Google, sometimes the manufacturer's own). The app only receives the text.
-• If your phone has an offline recognition model for the language, we use it and the audio never leaves the device. Otherwise recognition happens in the provider's online service (usually Google) — your speech then goes to them under THEIR privacy policy.
+• That service, not us, decides WHERE your speech is recognised: on the device or in its own online service. In the latter case your speech goes to the provider (usually Google) under THEIR privacy policy. So we do not promise that the audio never leaves your phone — that is not ours to control.
+• We ask for recognition without the internet only when the phone confirms a downloaded model for that language, and that question can only be asked on Android 13 and newer. On older systems we never send the request at all.
+• Even when sent, the request is only a request: if the engine refuses it or goes silent, we retry recognition without it — and then it may go over the network.
 • The same applies to the system dictation dialog and to your keyboard's microphone key.
 • You can revoke the permission in System settings → Apps → MATURA → Permissions.
 
 WHAT WE DO NOT COLLECT
-Name, e-mail, location, contacts, photos, advertising identifiers. No ads, no analytics, no tracking libraries.
+E-mail address, location, contacts, photos, advertising identifiers. No ads, no analytics, no tracking libraries. The player name you type stays on the phone — we never send it anywhere, and it does not have to be your real name.
 
 CONTACT
 kuba1k@gmail.com · https://matura.uk/polityka-prywatnosci
-""".trimIndent()
+""".trimIndent().trimStart()

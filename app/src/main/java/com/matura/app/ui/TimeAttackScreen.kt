@@ -328,6 +328,7 @@ fun TimeAttackScreen(
         SkipBar(lang = lang, onSkip = { skip() })
 
         GameKeyboard(
+            opisy = opisyKlawiszy(str),
             onChar = { c ->
                 if (typed.length < MAX_INPUT) {
                     val safe = cursor.coerceIn(0, typed.length)

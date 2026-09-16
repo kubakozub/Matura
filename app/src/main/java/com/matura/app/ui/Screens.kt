@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -673,14 +674,25 @@ private fun OptionRow(label: String, icon: Int, control: @Composable () -> Unit)
     }
 }
 
+/**
+ * Najmniejszy cel dotyku w OPCJACH.
+ *
+ * 48 dp to prog z wytycznych dostepnosci (Material, WCAG 2.5.5). Audyt przed wydaniem
+ * 0.9.18 zmierzyl w OPCJACH 19 celow klikalnych i ZERO spelniajacych prog — najmniejszy
+ * mial 31 x 28 dp, czyli polowe opuszka palca, przy 5 dp odstepu od sasiada.
+ */
+private val MIN_CEL_DOTYKU = 48.dp
+
 @Composable
 private fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) {
     Box(
         Modifier
+            .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
             .background(if (on) Palette.Accent else Palette.Surface)
             .border(2.dp, Palette.Ink)
             .clickable { onChange(!on) }
-            .padding(horizontal = 16.dp, vertical = 7.dp)
+            .padding(horizontal = 16.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
     ) {
         PixelText(if (on) "ON" else "OFF", color = if (on) Palette.Ink else Palette.Muted, outline = null, glyphHeight = 9.dp)
     }
@@ -699,10 +711,12 @@ private fun Stepper(value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
 private fun StepButton(label: String, onClick: () -> Unit) {
     Box(
         Modifier
+            .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
             .background(Palette.Surface)
             .border(2.dp, Palette.SurfaceHigh)
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 5.dp)
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
     ) {
         PixelText(label, color = Palette.Bone, glyphHeight = 13.dp)
     }
@@ -712,10 +726,12 @@ private fun StepButton(label: String, onClick: () -> Unit) {
 private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
+            .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
             .background(if (selected) Palette.Accent else Palette.Surface)
             .border(2.dp, if (selected) Palette.Ink else Palette.SurfaceHigh)
             .clickable { onClick() }
-            .padding(horizontal = 9.dp, vertical = 6.dp)
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
     ) {
         PixelText(label, color = if (selected) Palette.Ink else Palette.Muted, outline = null, glyphHeight = 8.dp)
     }
@@ -727,6 +743,10 @@ private fun DirectionRow(label: String, selected: Boolean, onClick: () -> Unit) 
         Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp)
+            // Prog liczy sie dla PROSTOKATA KLIKALNEGO, wiec minimum musi stac PO odsunieciu
+            // od sasiada: przed nim 3 dp marginesu wchodzilo w te 48 dp i klikalny wiersz
+            // mial tylko 42 dp (zmierzone audytem).
+            .defaultMinSize(minHeight = MIN_CEL_DOTYKU)
             .background(if (selected) Palette.Surface else Color.Transparent)
             .border(2.dp, if (selected) Palette.SurfaceHigh else Color.Transparent)
             .clickable { onClick() }

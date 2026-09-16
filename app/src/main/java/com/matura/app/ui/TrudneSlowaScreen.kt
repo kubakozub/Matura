@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -220,14 +221,18 @@ private fun KartaTrudnegoSlowa(
                 }
                 Spacer(Modifier.width(10.dp))
                 // Ikona jest mala, ale cel dotykowy nie: 20 dp obrazka + 2x13 dp wypelnienia
-                // to 46 dp, czyli tyle, ile ma najmniejszy klawisz w tej aplikacji.
+                // to 46 dp, a [MIN_CEL_DOTYKU] dociaga brakujace 2 dp. Rownanie z klawiszem
+                // gry (44 dp) juz nie wystarcza: audyt celow dotykowych pokazal, ze na tym
+                // ekranie ZADEN cel nie osiagal 48 dp wymaganych przez wytyczne.
                 Box(
                     Modifier
+                        .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
                         .background(Palette.Ink)
                         .border(2.dp, Palette.SurfaceHigh)
                         .clickable { onWymowa() }
                         .semantics { contentDescription = teksty.wymowa }
-                        .padding(13.dp)
+                        .padding(13.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
                     PixelImage(pixel(R.drawable.icon_sound_on), Modifier.size(20.dp))
                 }
@@ -236,14 +241,19 @@ private fun KartaTrudnegoSlowa(
             Spacer(Modifier.height(10.dp))
             Pill(tekstPowodu(slowo.powod, teksty), kolorPowodu(slowo.powod))
 
+            // Palette.Dim daje na Palette.Surface kontrast 2,78:1 — ponizej progu WCAG AA
+            // nawet dla duzego tekstu (3:1), a te dwie linijki ida przy 11 sp. Uczen w sali
+            // ze sloncem w oknie nie odczytal z karty ANI powodu, ANI zestawu, z ktorego
+            // slowo pochodzi, czyli dokladnie tego, po co ten ekran powstal. Palette.Muted
+            // na tym samym tle to 4,77:1, czyli AA bez ruszania palety.
             val opis = szczegoly(slowo, teksty)
             if (opis.isNotEmpty()) {
                 Spacer(Modifier.height(7.dp))
-                Text(opis, color = Palette.Dim, fontSize = 11.sp, lineHeight = 15.sp)
+                Text(opis, color = Palette.Muted, fontSize = 11.sp, lineHeight = 15.sp)
             }
 
             Spacer(Modifier.height(3.dp))
-            Text(zrodlo(slowo), color = Palette.Dim, fontSize = 11.sp)
+            Text(zrodlo(slowo), color = Palette.Muted, fontSize = 11.sp)
 
             Spacer(Modifier.height(11.dp))
             GhostButton(teksty.cwicz) { onCwicz() }
@@ -251,16 +261,33 @@ private fun KartaTrudnegoSlowa(
     }
 }
 
+/**
+ * Najmniejszy cel dotyku w aplikacji.
+ *
+ * 48 dp to prog z wytycznych dostepnosci (Material, WCAG 2.5.5) i mniej wiecej szerokosc
+ * opuszka doroslego palca. Wartosc stoi tu jako stala, bo zmierzony audyt pokazal na nowych
+ * ekranach i w OPCJACH 0 z 19 celow spelniajacych prog — jedna liczba w jednym miejscu jest
+ * trudniejsza do przeoczenia przy nastepnym ekranie niz 48.dp przepisane siedem razy.
+ */
+private val MIN_CEL_DOTYKU = 48.dp
+
 @Composable
 private fun ChipFiltra(label: String, selected: Boolean, onClick: () -> Unit) {
     // Etykiety maja w sobie strzalki ("haslo -> tlumaczenie") i polskie znaki, ktorych paczka
     // pikselowa nie ma w komplecie, wiec tu — inaczej niz w chipach OPCJI — idzie font systemu.
+    //
+    // Chip mial ok. 35 dp wysokosci, a to GLOWNA nawigacja tego ekranu: przelacznik kierunku
+    // i pasek czternastu dzialow. Uczen z drzeniem rak trafial w sasiedni dzial albo w luke
+    // miedzy chipami. defaultMinSize doklada brakujace piksele do celu dotyku; napis zostaje
+    // tej samej wielkosci, tylko ramka chipa robi sie wyzsza.
     Box(
         Modifier
+            .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
             .background(if (selected) Palette.Accent else Palette.Surface)
             .border(2.dp, if (selected) Palette.Ink else Palette.SurfaceHigh)
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        contentAlignment = Alignment.Center,
     ) {
         Text(
             label,

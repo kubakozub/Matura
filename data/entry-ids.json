@@ -8070,7 +8070,10 @@
     "wcd41e3fc08c9": {
       "term": "accommodation",
       "sens": "zakwaterowanie",
-      "aliasy": []
+      "aliasy": [],
+      "aliasyHasla": [
+        "accomodation"
+      ]
     },
     "wcd8cfbf8ba1e": {
       "term": "unsociable",

@@ -140,16 +140,59 @@ class Repository(private val dir: File) {
      * Zapisuje wynik jednej proby. Czas wchodzi PARAMETREM, bo caly harmonogram ma byc
      * testowalny na granicy doby — patrz [Srs].
      *
+     * @param sladWSesji co ta odpowiedz znaczy dla trwajacej dziennej sesji; null, gdy runda
+     *   nie zostala uruchomiona z sesji. Slad idzie TYM SAMYM zapisem co postep, bo osobne
+     *   wywolanie [setSesja] podwajaloby liczbe zapisow calego dokumentu po kazdej odpowiedzi.
+     *   Regula, co sie liczy, zostaje w [com.matura.app.learn.Sesja] — tutaj wchodzi wynikiem.
+     *
      * @return to, co [save]; true takze wtedy, gdy proba niczego nie zmienila (przerwana proba,
      *   kolejne trafienie tego samego dnia) — wtedy nie ma po co ruszac dysku.
      */
     @Synchronized
-    fun recordAttempt(attempt: Attempt, nowMs: Long): Boolean {
+    fun recordAttempt(
+        attempt: Attempt,
+        nowMs: Long,
+        sladWSesji: ((com.matura.app.learn.StanSesji) -> com.matura.app.learn.StanSesji)? = null,
+    ): Boolean {
         val przed = load()
         val po = Srs.applyTo(przed.progress, attempt, Srs.dayOf(nowMs))
-        // applyTo oddaje TE SAMA mape, gdy stan sie nie zmienil - stad porownanie tozsamosci.
-        if (po === przed.progress) return true
-        return save(przed.copy(progress = po))
+        val sesjaPrzed = przed.sesja
+        val sesjaPo =
+            if (sesjaPrzed != null && sladWSesji != null) sladWSesji(sesjaPrzed) else sesjaPrzed
+        // StanSesji porownujemy WARTOSCIA, bo Sesja oddaje kopie takze wtedy, gdy nic sie nie
+        // zmienilo (data class copy zawsze tworzy nowy obiekt) - tozsamosc dawalaby tu zapis
+        // po kazdej odpowiedzi.
+        if (bezZmianyPozaKsiegowa(przed.progress, po, attempt) && sesjaPo == sesjaPrzed) return true
+        return save(przed.copy(progress = po, sesja = sesjaPo))
+    }
+
+    /**
+     * Czy proba zmienila w harmonogramie cokolwiek poza polami KSIEGOWYMI, czyli
+     * [WordProgress.lastTask] i [WordProgress.lastAttemptId].
+     *
+     * Po co to jest: obietnica "kolejne trafienie tego samego dnia nie rusza dysku" nie
+     * dzialala ani razu. Ekrany gry skladaja znacznik proby z zegara ("$entryId#$nowMs"), wiec
+     * nawet gdy harmonogram oddawal stan co do bitu ten sam, sam znacznik czynil mape nowa i
+     * caly dokument (kilkaset kilobajtow z fsync) szedl na dysk w srodku rundy. A wlasnie tak
+     * wyglada typowa runda: to samo slowo wraca kilka razy, a po awansie nic juz nie zmienia.
+     *
+     * Pominiecie zapisu jest bezpieczne, bo oba pola sa ksiegowe: [WordProgress.lastAttemptId]
+     * strzeze przed dwukrotnym przetworzeniem TEJ SAMEJ proby, a proba, ktora niczego nie
+     * zmienila, przetworzona drugi raz znowu niczego nie zmieni.
+     *
+     * [Srs.applyTo] rusza wylacznie klucz tej jednej proby, wiec wystarczy porownac ten klucz.
+     */
+    private fun bezZmianyPozaKsiegowa(
+        przed: Map<String, WordProgress>,
+        po: Map<String, WordProgress>,
+        attempt: Attempt,
+    ): Boolean {
+        if (po === przed) return true
+        if (attempt.entryId.isBlank() || attempt.direction == Direction.RANDOM) return false
+        val klucz = Srs.key(attempt.entryId, attempt.direction)
+        val stary = przed[klucz] ?: WordProgress()
+        val nowy = po[klucz] ?: WordProgress()
+        return nowy.copy(lastTask = stary.lastTask, lastAttemptId = stary.lastAttemptId) == stary
     }
 
     fun deleteSet(id: String) = update { d -> d.copy(sets = d.sets.filterNot { it.id == id && !it.builtIn }) }
@@ -195,7 +238,98 @@ class Repository(private val dir: File) {
         if (data.schemaVersion >= SCHEMA_VERSION) return data
         var out = data
         if (out.schemaVersion < 2) out = nadajIdentyfikatoryWpisom(out)
+        if (out.schemaVersion < 3) out = odswiezZestawyWbudowane(out)
         return out.copy(schemaVersion = SCHEMA_VERSION)
+    }
+
+    /**
+     * Krok 2 -> 3: zestawy wbudowane wracaja do tresci z KATALOGU.
+     *
+     * Awaria, ktora to wymusila: zapis trzyma wlasna kopie zestawow wbudowanych, a [load]
+     * dokleja katalog tylko wtedy, gdy w zapisie nie ma ani jednego zestawu wbudowanego. Po
+     * pierwszym zapisie (wystarczy podanie imienia na ekranie startowym) warunek nigdy wiecej
+     * nie jest spelniony, wiec ZADNA poprawka slownictwa nie docierala do kogos, kto juz ma
+     * aplikacje. Uczen aktualizujacy ze sklepowego 0.9.4 (vc21) zostawal z literowka w hasle
+     * angielskim ("accomodation") i z trzema wezszymi tlumaczeniami, a poprawna pisownia byla
+     * u niego oceniana jako blad — aplikacja do matury uczyla bledu.
+     *
+     * Regula: dopasowanie po [WordSet.id], podmiana tytulu, jezykow i wpisow; z zapisu zostaje
+     * to, co nalezy do UCZNIA, a nie do katalogu (licznik rozgrywek, data utworzenia).
+     * Zestawow wlasnych (builtIn = false) krok nie dotyka w ogole, tak samo jak zestawu
+     * wbudowanego o identyfikatorze, ktorego w dzisiejszym katalogu nie ma — usuniecie jest
+     * nieodwracalne, a nadmiarowy zestaw nikomu nie szkodzi.
+     *
+     * Kazda przyszla korekta katalogu wymaga NASTEPNEGO kroku (4, 5, ...): numer schematu jest
+     * jedynym stemplem, po ktorym widac, ze zapis nie widzial jeszcze nowego slownictwa.
+     *
+     * SWIADOMY KOSZT: ekran ZESTAWY pozwala otworzyc w edytorze takze zestaw wbudowany, wiec
+     * uczen, ktory poprawil w nim wiersz przed aktualizacja, dostanie z powrotem brzmienie
+     * katalogowe. Krok biegnie RAZ (potem zapis ma juz wersje 3), wiec poprawki zrobione po
+     * aktualizacji zostaja. Rozroznienie "tresc stara" od "tresc poprawiona przez ucznia"
+     * wymaga znacznika we wpisie, ktorego model dzis nie ma; do czasu, gdy bedzie, pierwszenstwo
+     * ma dostarczenie poprawnego slownictwa, bo z bledna pisownia uczen idzie na mature.
+     */
+    private fun odswiezZestawyWbudowane(data: SaveData): SaveData {
+        val katalog = SampleData.builtInSets().associateBy { it.id }
+        if (katalog.isEmpty()) return data
+
+        val poTresci = katalogPoTresci()
+        val idKatalogu = poTresci.values.toHashSet()
+        val przeprowadzki = HashMap<String, String>()
+
+        val sets = data.sets.map { set ->
+            if (!set.builtIn) return@map set
+            val biezacy = katalog[set.id] ?: return@map set
+            for (e in set.entries) {
+                if (e.id.isBlank()) continue
+                // Tresc wpisu mowi, ktorym slowem on JEST (aliasy przepuszczaja znane korekty);
+                // jesli lezy pod innym identyfikatorem, postep trzeba przeprowadzic razem z nim.
+                val nalezyDo = poTresci[EntryId.contentKey(e.term, e.definition)]
+                    ?: EntryId.builtIn(e.term, e.definition)
+                if (nalezyDo != e.id && nalezyDo in idKatalogu) {
+                    przeprowadzki.putIfAbsent(e.id, nalezyDo)
+                }
+            }
+            set.copy(
+                title = biezacy.title,
+                termLanguage = biezacy.termLanguage,
+                definitionLanguage = biezacy.definitionLanguage,
+                entries = biezacy.entries,
+            )
+        }
+        return data.copy(sets = sets, progress = przeniesPostep(data.progress, przeprowadzki))
+    }
+
+    /**
+     * Postep spod identyfikatora sprzed korekty laduje TAKZE pod identyfikatorem katalogowym.
+     *
+     * Bez tego kroku odswiezenie katalogu bylo by dla ucznia gorsze niz sama literowka:
+     * podmiana tresci zmienia identyfikator wpisu (liczy sie go z tresci), wiec cala nauka
+     * tego slowa zostalaby pod kluczem, ktorego zaden ekran juz nie odczyta.
+     *
+     * Dwie zasady, obie na "nie gubimy":
+     *  - starego klucza NIE kasujemy (tak samo jak reszty mapy — patrz [SaveData.progress]);
+     *  - gdy pod nowym kluczem cos juz jest, zostaje to, co tam bylo. Uczen mogl w miedzyczasie
+     *    cwiczyc to slowo z losowania, ktore czyta swiezy katalog, a swiezsza historia nie moze
+     *    przegrac ze starsza.
+     */
+    private fun przeniesPostep(
+        progress: Map<String, WordProgress>,
+        przeprowadzki: Map<String, String>,
+    ): Map<String, WordProgress> {
+        if (przeprowadzki.isEmpty() || progress.isEmpty()) return progress
+        val out = HashMap(progress)
+        for ((stary, nowy) in przeprowadzki) {
+            // RANDOM to ustawienie, nie kierunek — Srs.key by go odrzucil.
+            for (kierunek in listOf(Direction.TERM_TO_DEF, Direction.DEF_TO_TERM)) {
+                val zKlucz = Srs.key(stary, kierunek)
+                val doKlucz = Srs.key(nowy, kierunek)
+                val stan = progress[zKlucz] ?: continue
+                if (out.containsKey(doKlucz)) continue
+                out[doKlucz] = stan
+            }
+        }
+        return out
     }
 
     /**
@@ -364,8 +498,13 @@ class Repository(private val dir: File) {
          *
          * 1 -> 2: kazdy wpis ma trwaly identyfikator (Entry.id), a zapis ma mape postepu
          * per slowo (SaveData.progress).
+         *
+         * 2 -> 3: zestawy wbudowane w zapisie wracaja do tresci z katalogu, a postep zapisany
+         * pod identyfikatorem sprzed korekty przeprowadza sie pod katalogowy. Numer podnosi
+         * KAZDA korekta slownictwa, bo inaczej poprawka nie ma jak dotrzec do telefonu, ktory
+         * ma juz wlasna kopie katalogu na dysku.
          */
-        const val SCHEMA_VERSION = 2
+        const val SCHEMA_VERSION = 3
     }
 }
 

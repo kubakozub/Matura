@@ -239,10 +239,14 @@ private fun PasekPostepu(t: SesjaStr, plan: PlanSesji, stan: StanSesji, postep: 
 
 @Composable
 private fun WierszKroku(t: SesjaStr, krok: KrokSesji, zrobiony: Boolean, biezacy: Boolean) {
+    // Krok jeszcze nieprzerobiony mial nazwe w Palette.Dim: na tle Palette.Surface z alfa
+    // 0.45 nad tlem strony (efektywnie #131624) to 3,03:1, czyli ponizej progu WCAG AA dla
+    // tekstu (4,5:1). Palette.Muted daje na tym samym tle 5,19:1. Wygaszenia nie tracimy:
+    // roznice "zrobiony / biezacy / przed nami" niesie ikona (checkmark, cel albo jej brak),
+    // grubosc ramki i alfa tla — a nie sam kolor liter.
     val ink = when {
         biezacy -> Palette.Bone
-        zrobiony -> Palette.Muted
-        else -> Palette.Dim
+        else -> Palette.Muted
     }
     Box(
         Modifier
@@ -377,15 +381,24 @@ class SesjaStr(private val lang: UiLanguage) {
     val sessionStepContext get() = pick("SŁOWO W ZDANIU", "WORD IN CONTEXT")
     val sessionStepSummary get() = pick("PODSUMOWANIE", "SUMMARY")
 
+    /**
+     * OPISY KROKOW MUSZA ZGADZAC SIE Z App.kt: krok POWTORKA i krok GRA uruchamiaja DOKLADNIE
+     * to samo — runde KLASYCZNA na tym samym slownictwie (jedna galaz `push(Screen.Play(...))`),
+     * a jedyna roznica jest liczba zyc (spokojny krok dostaje ich dziewiec).
+     *
+     * Do 0.9.18 stalo tu "spokojnie i bez zyc" oraz "tym razem w grze", czyli obietnica dwoch
+     * roznych mechanik i rundy bez zyc. Uczen dostawal zwykla strzelanke z sercami w HUD,
+     * a po dziewieciu przegapionych potworkach — czaszke z napisem KONIEC GRY.
+     */
     val sessionStepReviewDesc
         get() = pick(
-            "Słowa zaplanowane na dziś, spokojnie i bez żyć.",
-            "The words due today, calmly and with no lives at stake.",
+            "Słowa zaplanowane na dziś, spokojnie — runda z zapasem dziewięciu żyć.",
+            "The words due today, taken calmly — a round with nine lives to spare.",
         )
     val sessionStepGameDesc
         get() = pick(
-            "To samo słownictwo raz jeszcze, tym razem w grze.",
-            "The same vocabulary once more, this time in the game.",
+            "To samo słownictwo jeszcze raz, w kolejnej rundzie gry.",
+            "The same vocabulary once more, in another game round.",
         )
     val sessionStepContextDesc
         get() = pick(
@@ -398,7 +411,17 @@ class SesjaStr(private val lang: UiLanguage) {
             "What you covered and when these words come back.",
         )
 
-    val sessionCalm get() = pick("BEZ ŻYĆ", "NO LIVES")
+    /**
+     * Plakietka przy spokojnej rundzie gry. Mowi LICZBE, bo tyle wlasnie robi kod: App.kt daje
+     * spokojnej rundzie `lives = maxOf(options.lives, 9)`, a suwak zyc w OPCJACH konczy sie na
+     * dziewieciu — wiec spokojna runda ma ich zawsze dokladnie dziewiec.
+     *
+     * Do 0.9.18 pisalo tu "BEZ ZYC", chociaz runda miala serca w HUD i konczyla sie ekranem
+     * KONIEC GRY po utracie ostatniego zycia (GameEngine ustawia gameOver przy lives <= 0).
+     * Napis ma isc za kodem: to wydanie ma byc bezpieczne, wiec zmieniamy plakietke, a nie
+     * zachowanie silnika tuz przed wysylka.
+     */
+    val sessionCalm get() = pick("9 ŻYĆ", "9 LIVES")
     val sessionStart get() = pick("ZACZYNAM", "START")
     val sessionContinue get() = pick("DALEJ", "NEXT")
     val sessionFinish get() = pick("KONIEC NA DZIŚ", "DONE FOR TODAY")

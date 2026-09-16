@@ -2017,7 +2017,12 @@ fun VoiceBar(
     message: String,
     str: Str,
     onToggle: () -> Unit,
-    onDiagnostyka: () -> Unit = {},
+    /**
+     * Dlugie przytrzymanie = pelna diagnostyka glosu. NULL znaczy "nie ma takiego gestu" i tak
+     * jest podawane w wydaniu: gest, ktory istnieje, poblyskuje wibracja i NIC nie robi, jest
+     * gorszy od jego braku, bo przy okazji polyka zwykle dotkniecie i nie wlacza nasluchu.
+     */
+    onDiagnostyka: (() -> Unit)? = null,
     dialogAvailable: Boolean = false,
     hasEngine: Boolean = mode != VoiceMode.UNAVAILABLE,
 ) {
@@ -2040,6 +2045,9 @@ fun VoiceBar(
                 .border(3.dp, Palette.Ink)
                 // Dlugie przytrzymanie = pelna diagnostyka glosu. Ukryte przed uczniem,
                 // dostepne od reki, gdy trzeba ustalic, czemu mikrofon milczy na danym telefonie.
+                // W wydaniu onDiagnostyka jest NULL i combinedClickable nie przejmuje gestu:
+                // dlugie przytrzymanie degraduje sie wtedy do zwyklego dotkniecia i wlacza
+                // nasluch, zamiast zabrac uczniowi dotkniecie w zamian za nic.
                 .combinedClickable(onLongClick = onDiagnostyka) { onToggle() },
             contentAlignment = androidx.compose.ui.Alignment.Center,
         ) {

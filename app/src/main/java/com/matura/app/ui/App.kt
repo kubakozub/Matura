@@ -81,6 +81,13 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
     // Runda uruchomiona z codziennej sesji jest SPOKOJNA: brief wymaga wariantu bez utraty zyc
     // przy nauce nowych slow. Flaga zyje tu, bo tylko App sklada opcje dla ekranu gry.
     var rundaSpokojna by remember { mutableStateOf(false) }
+    // Plan sesji, z ktorej wyszla biezaca runda; null dla rundy uruchomionej skadinad.
+    //
+    // Zyje tu, a nie na ekranie sesji, bo ekran sesji jest w tym momencie ZDJETY ZE STOSU
+    // (runda konczy sie powrotem do MENU). Bez tego dzienna sesja nie dostawala z rundy ani
+    // jednej odpowiedzi: pasek postepu stal na zerze przez cala sesje, a podsumowanie
+    // pokazywalo "Powtorzone: 0 · Nowe: 0" po przerobieniu calej trasy.
+    var planSesji by remember { mutableStateOf<com.matura.app.learn.PlanSesji?>(null) }
 
     BackHandler(enabled = stack.size > 1) { pop() }
 
@@ -113,9 +120,9 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
             Screen.Menu -> MenuScreen(
                 str = str,
                 profile = data.profile,
-                onDaily = { rundaSpokojna = false; push(Screen.DzisiejszaSesja) },
+                onDaily = { rundaSpokojna = false; planSesji = null; push(Screen.DzisiejszaSesja) },
                 onHardWords = { push(Screen.TrudneSlowa) },
-                onPlay = { rundaSpokojna = false; push(Screen.SetPick) },
+                onPlay = { rundaSpokojna = false; planSesji = null; push(Screen.SetPick) },
                 onSets = { push(Screen.Sets) },
                 onOptions = { push(Screen.Options) },
                 onAchievements = { push(Screen.Achievements) },
@@ -149,7 +156,13 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 } else {
                     // Wszystkie tryby maja ta sama sygnature ekranu; tryb doklejamy
                     // do rekordu tutaj, wiec same ekrany nie musza go znac.
-                    val exit: () -> Unit = { stack = listOf(Screen.Menu) }
+                    // Wyjscie w POLOWIE rundy tez musi przeladowac dane: odpowiedzi poszly juz
+                    // do zapisu (postep i slad w dziennej sesji), a ekran sesji czyta je wprost
+                    // z `data`. Bez tego uczen, ktory wyszedl z rundy przyciskiem, wracal do
+                    // sesji z licznikiem sprzed rundy. Odswiezenie jest tu bezpieczne, bo gra
+                    // wlasnie sie konczy (stos wraca do MENU) - w TRAKCIE rundy byloby zabojcze,
+                    // patrz komentarz przy zapiszProbe.
+                    val exit: () -> Unit = { refresh(); stack = listOf(Screen.Menu) }
                     // JEDNO wejscie zapisu proby dla wszystkich czterech trybow. Ekrany dostaja
                     // zwykla lambde, wiec zadne z nich nie siega do repozytorium samo i kazde
                     // zostaje testowalne bez Androida.
@@ -158,8 +171,20 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                     // rundy podmienialoby `data.options` i mape postepu, a te sa kluczami remember
                     // w ekranach gry — czyli kazda poprawna odpowiedz kasowalaby trwajaca gre.
                     // Ekran wyniku i tak czyta swiezy stan, bo finish() wola refresh().
+                    //
+                    // Runda z dziennej sesji domyka petle TU: Attempt niesie juz i identyfikator
+                    // wpisu, i wynik, a stan sesji lezy w zapisie (ekran sesji jest zdjety ze
+                    // stosu). Slad idzie tym samym zapisem co postep — osobne setSesja
+                    // podwajaloby zapis calego dokumentu po kazdej odpowiedzi.
                     val zapiszProbe: (Attempt) -> Unit = { proba ->
-                        repo.recordAttempt(proba, System.currentTimeMillis())
+                        val plan = planSesji
+                        repo.recordAttempt(
+                            proba,
+                            System.currentTimeMillis(),
+                            if (plan == null) null else { stan ->
+                                Sesja.zaliczOdpowiedz(stan, plan, proba.entryId, proba.outcome)
+                            },
+                        )
                     }
                     // Dzien harmonogramu ustalamy RAZ, przy wejsciu do rundy. Gdyby liczyl sie na
                     // biezaco, przekroczenie polnocy UTC w trakcie gry przestawiloby plan rundy.
@@ -238,11 +263,17 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                         mix.copy(entries = (listOf(trudne.entry) + mix.entries).distinct().take(20))
                     }
                     rundaSpokojna = true
+                    // Cwiczenie trudnego slowa to NIE jest krok sesji - inaczej odpowiedzi
+                    // z niego doliczalyby sie do dzisiejszej trasy.
+                    planSesji = null
                     push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
                 },
                 onCwiczWszystkie = { lista ->
                     mixSet = BuiltInSets.randomMix().copy(entries = lista.map { it.entry }.take(20))
                     rundaSpokojna = true
+                    // Cwiczenie trudnego slowa to NIE jest krok sesji - inaczej odpowiedzi
+                    // z niego doliczalyby sie do dzisiejszej trasy.
+                    planSesji = null
                     push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
                 },
             )
@@ -279,6 +310,9 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                             val wpisy = data.sets.flatMap { it.entries }.filter { it.id in cele }
                             mixSet = BuiltInSets.randomMix().copy(entries = wpisy.take(20))
                             rundaSpokojna = krok.spokojny
+                            // Plan idzie razem z runda: bez niego zapiszProbe nie wie, ktore slowo
+                            // bylo powtorka, a ktore nowe, i sesja nie policzy niczego.
+                            planSesji = plan
                             repo.setSesja(stanSesji)
                             push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
                         } else {

@@ -3,8 +3,12 @@ package com.matura.app
 import com.matura.app.data.BuiltInSets
 import com.matura.app.data.Repository
 import com.matura.app.learn.Attempt
+import com.matura.app.learn.Clock
 import com.matura.app.learn.EntryId
 import com.matura.app.learn.Outcome
+import com.matura.app.learn.PlanSesji
+import com.matura.app.learn.Sesja
+import com.matura.app.learn.StanSesji
 import com.matura.app.learn.Srs
 import com.matura.app.learn.Stage
 import com.matura.app.model.Direction
@@ -20,6 +24,7 @@ import com.matura.app.model.WordSet
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -159,6 +164,35 @@ class PostepIntegracjaTest {
     }
 
     @Test
+    fun `kolejne trafienie tego samego dnia nie rusza pliku`() {
+        // Obietnica z KDoc-a recordAttempt, ktora nie dzialala ani razu: ekrany gry skladaja
+        // znacznik proby z zegara, wiec nawet niczego niezmieniajaca odpowiedz robila z mapy
+        // postepu nowy obiekt i caly dokument szedl na dysk z fsync — w srodku rundy, po
+        // kazdym trafieniu. A wlasnie tak wyglada zwykla runda: slowa wracaja po kilka razy.
+        val repo = Repository(katalog.root)
+        assertTrue(repo.recordAttempt(proba(id = "p1"), poludnie(DZIS)))
+        val przed = plik(Repository.FILE_NAME).readText()
+
+        repeat(5) { nr ->
+            assertTrue(repo.recordAttempt(proba(id = "znowu-$nr"), poludnie(DZIS)))
+        }
+
+        assertEquals(
+            "kolejne trafienie tego samego dnia przepisalo caly dokument",
+            przed,
+            plik(Repository.FILE_NAME).readText(),
+        )
+        val stan = poRestarcie().progressOf(slowo.id, Direction.TERM_TO_DEF)
+        assertEquals(Srs.FIRST_BOX, stan.box)
+        assertEquals(DZIS + 1, stan.dueDay)
+
+        // Kontrola pozytywna: proba, ktora NAPRAWDE cos zmienia, dalej laduje na dysku.
+        assertTrue(repo.recordAttempt(proba(outcome = Outcome.BLEDNA, id = "zle"), poludnie(DZIS)))
+        assertNotEquals(przed, plik(Repository.FILE_NAME).readText())
+        assertEquals(1, poRestarcie().progressOf(slowo.id, Direction.TERM_TO_DEF).mistakes)
+    }
+
+    @Test
     fun `przerwana proba nie rusza pliku i nie kasuje postepu`() {
         val repo = Repository(katalog.root)
         assertTrue(repo.recordAttempt(proba(id = "p1"), poludnie(DZIS)))
@@ -173,6 +207,71 @@ class PostepIntegracjaTest {
         assertEquals(Srs.FIRST_BOX, stan.box)
         // Nie zuzyla tez znacznika jednorazowosci — proba, ktora sie nie odbyla, nie jest proba.
         assertEquals("p1", stan.lastAttemptId)
+    }
+
+    // --- dzienna sesja: od odpowiedzi do paska postepu --------------------------------------
+
+    /** Zapis proby TAK, jak sklada ja App.kt dla rundy uruchomionej z dziennej sesji. */
+    private fun odpowiedzWSesji(
+        repo: Repository,
+        plan: PlanSesji,
+        entryId: String,
+        outcome: Outcome,
+        znacznik: String,
+    ): Boolean = repo.recordAttempt(
+        proba(entryId = entryId, outcome = outcome, id = znacznik),
+        poludnie(DZIS),
+    ) { stan -> Sesja.zaliczOdpowiedz(stan, plan, entryId, outcome) }
+
+    @Test
+    fun `dzienna sesja notuje odpowiedzi z rundy - pasek i podsumowanie zgadzaja sie z praca ucznia`() {
+        // Petla byla otwarta: runda z sesji konczyla sie powrotem do MENU i nie oddawala sesji
+        // ANI JEDNEJ odpowiedzi, wiec pasek stal na "0 / 5" przez cala sesje, a karta
+        // podsumowania mowila "Powtorzone: 0 · Nowe: 0" po przerobieniu calej trasy.
+        val repo = Repository(katalog.root)
+        val slownik = BuiltInSets.all().first().entries.take(8).map { it.id }
+        val plan = Sesja.zaplanuj(repo.load().progress, slownik, Direction.TERM_TO_DEF, DZIS)
+        assertEquals(Sesja.MAKS_NOWYCH, plan.nowe.size)
+        assertTrue(repo.setSesja(Sesja.rozpocznij(plan, Clock { poludnie(DZIS) })))
+
+        val trasa = plan.slownictwo
+        assertTrue(odpowiedzWSesji(repo, plan, trasa[0], Outcome.POPRAWNA, "s1"))
+        assertTrue(odpowiedzWSesji(repo, plan, trasa[1], Outcome.BLEDNA, "s2"))
+        assertTrue(odpowiedzWSesji(repo, plan, trasa[2], Outcome.POPRAWNA, "s3"))
+        // To samo slowo drugi raz w rundzie to ta sama praca, a nie druga.
+        assertTrue(odpowiedzWSesji(repo, plan, trasa[0], Outcome.POPRAWNA, "s4"))
+        // Proba przerwana (awaria silnika mowy, wyjscie z ekranu) sie nie odbyla.
+        assertTrue(odpowiedzWSesji(repo, plan, trasa[3], Outcome.PRZERWANA, "s5"))
+
+        val dane = poRestarcie().load()
+        val stan = requireNotNull(dane.sesja) { "sesja zniknela z zapisu" }
+        assertEquals(listOf(trasa[0], trasa[1], trasa[2]), stan.zrobione)
+
+        // Uczen wraca na ekran sesji: plan liczy sie od nowa z harmonogramu, a stan z zapisu.
+        val poPowrocie = Sesja.zaplanuj(dane.progress, slownik, Direction.TERM_TO_DEF, DZIS)
+        val wznowiony = Sesja.wznow(stan, poPowrocie, Clock { poludnie(DZIS) })
+        val postep = Sesja.postep(wznowiony, poPowrocie)
+        assertEquals(3, postep.celeZrobione)
+        assertTrue("pasek nie moze pokazywac wiecej zrobionych niz calych", postep.celeRazem >= 3)
+
+        val pods = Sesja.podsumuj(poPowrocie, wznowiony, dane.progress, DZIS)
+        assertEquals(3, pods.nowe)
+        assertEquals(0, pods.powtorzone)
+        // Nauka poszla osobno, do harmonogramu - i to ona ustawia termin nastepnej powtorki.
+        assertEquals(Srs.FIRST_BOX, poRestarcie().progressOf(trasa[0], Direction.TERM_TO_DEF).box)
+        assertEquals(1, pods.nastepnaPowtorkaZaDni)
+    }
+
+    @Test
+    fun `odpowiedz spoza sesji nie dopisuje sie do dzisiejszej trasy`() {
+        val repo = Repository(katalog.root)
+        val stan = StanSesji(dzien = DZIS, krok = 1)
+        assertTrue(repo.setSesja(stan))
+
+        // Zwykla gra z MENU: App.kt nie podaje planu, wiec sesja nie dostaje sladu.
+        assertTrue(repo.recordAttempt(proba(id = "z-menu"), poludnie(DZIS)))
+
+        assertEquals(stan, poRestarcie().load().sesja)
     }
 
     // --- postep obok reszty dokumentu ------------------------------------------------------

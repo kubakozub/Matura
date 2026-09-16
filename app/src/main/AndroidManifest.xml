@@ -6,6 +6,14 @@
          jest nigdzie zapisywane ani wysylane przez aplikacje. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- Bez tego wpisu sama deklaracja RECORD_AUDIO robi z mikrofonu sprzet WYMAGANY
+         (aapt2 dump badging: uses-implied-feature ... reason='requested
+         android.permission.RECORD_AUDIO permission') i Google Play ukrywa aplikacje przed
+         urzadzeniami, ktore mikrofonu nie zglaszaja. Tryb glosowy jest w tej grze w pelni
+         opcjonalny — odpowiedzi wpisuje sie z klawiatury — wiec filtr odbieral aplikacje
+         uczniom bez powodu. To ta sama klasa filtrowania, co abiFilters w app/build.gradle.kts. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
     <!-- Bez tego Android 11+ nie pokazuje aplikacji zadnej uslugi rozpoznawania mowy. -->
     <queries>
         <intent>

@@ -20,7 +20,44 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+
+/**
+ * Nazwy klawiszy dla czytnika ekranu.
+ *
+ * Litery czyta sie same (glif idzie przez PixelText, a ten od 0.9.18 wnosi wlasna
+ * semantyke), ale backspace, enter, spacja i strzalki maja glif WYPALONY w bitmapie
+ * sprite'a, a PixelImage ustawia contentDescription = null. Te piec klawiszy nie ma wiec
+ * skad wziac nazwy i musi ja dostac parametrem — inaczej caly dolny i trzeci rzad to dla
+ * TalkBacka "przycisk, przycisk, przycisk".
+ *
+ * Nazwy ida przez [Str], jak kazdy tekst widziany przez ucznia — inaczej uczen z angielskim
+ * interfejsem slyszalby klawisze po polsku. Wolajacy sklada je funkcja [opisyKlawiszy].
+ */
+data class OpisyKlawiszy(
+    val backspace: String,
+    val enter: String,
+    val spacja: String,
+    val kursorWLewo: String,
+    val kursorWPrawo: String,
+) {
+    companion object {
+        /** Patrz UWAGA w KDoc klasy: do czasu wpisow w Strings.kt. */
+        /**
+         * Awaryjny komplet na wypadek wywolania bez [Str] (podglady Compose, testy).
+         * Ekrany gry podaja wersje z [opisyKlawiszy], czyli w jezyku interfejsu.
+         */
+        val DOMYSLNE = OpisyKlawiszy(
+            backspace = "Backspace",
+            enter = "Enter",
+            spacja = "Spacja",
+            kursorWLewo = "Kursor w lewo",
+            kursorWPrawo = "Kursor w prawo",
+        )
+    }
+}
 
 /**
  * Klawiatura gry — JEDNA rodzina sprite'ów dla wszystkich klawiszy.
@@ -41,6 +78,7 @@ fun GameKeyboard(
     onLeft: () -> Unit,
     onRight: () -> Unit,
     modifier: Modifier = Modifier,
+    opisy: OpisyKlawiszy = OpisyKlawiszy.DOMYSLNE,
 ) {
     val cap = pixel(com.matura.app.R.drawable.key_cap)
     val capPressed = pixel(com.matura.app.R.drawable.key_cap_pressed)
@@ -73,15 +111,23 @@ fun GameKeyboard(
             Box(Modifier.weight(0.5f))
         }
         Row(Modifier.fillMaxWidth().height(46.dp)) {
-            SpriteKey(backspace, backspacePressed, weight = 1.6f, onClick = onBackspace)
+            SpriteKey(backspace, backspacePressed, weight = 1.6f, opis = opisy.backspace, onClick = onBackspace)
             "ZXCVBNM".forEach { LetterKey(it, cap, capPressed, onChar) }
-            SpriteKey(enter, enterPressed, weight = 1.6f, onClick = onEnter)
+            SpriteKey(enter, enterPressed, weight = 1.6f, opis = opisy.enter, onClick = onEnter)
         }
         // Dolny pasek: SPACJA na całą szerokość (poza strzałkami). Wagi 93:28 odpowiadają
         // proporcjom sprite'ów, więc piksele nie są rozciągane nierówno.
         Row(Modifier.fillMaxWidth().height(SPACE_ROW_HEIGHT)) {
-            SpriteKey(space, spacePressed, weight = 93f, onClick = onSpace)
-            ArrowKey(arrows, arrowsPressed, weight = 28f, onLeft = onLeft, onRight = onRight)
+            SpriteKey(space, spacePressed, weight = 93f, opis = opisy.spacja, onClick = onSpace)
+            ArrowKey(
+                arrows,
+                arrowsPressed,
+                weight = 28f,
+                opisLewo = opisy.kursorWLewo,
+                opisPrawo = opisy.kursorWPrawo,
+                onLeft = onLeft,
+                onRight = onRight,
+            )
         }
     }
 }
@@ -123,12 +169,18 @@ private fun RowScope.LetterKey(
     }
 }
 
-/** Klawisz funkcyjny — glif jest już wypalony w sprite'cie. */
+/**
+ * Klawisz funkcyjny — glif jest już wypalony w sprite'cie.
+ *
+ * @param opis nazwa dla czytnika ekranu; sprite nie niesie zadnego tekstu, wiec bez niej
+ *   klawisz jest niemy (patrz [OpisyKlawiszy]).
+ */
 @Composable
 private fun RowScope.SpriteKey(
     sprite: ImageBitmap,
     spritePressed: ImageBitmap,
     weight: Float,
+    opis: String,
     onClick: () -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -138,7 +190,8 @@ private fun RowScope.SpriteKey(
             .weight(weight)
             .fillMaxHeight()
             .padding(1.dp)
-            .clickable(interactionSource = interaction, indication = null) { onClick() },
+            .clickable(interactionSource = interaction, indication = null) { onClick() }
+            .semantics { contentDescription = opis },
         contentAlignment = Alignment.Center,
     ) {
         PixelImage(if (pressed) spritePressed else sprite, Modifier.fillMaxSize())
@@ -154,6 +207,8 @@ private fun RowScope.ArrowKey(
     sprite: ImageBitmap,
     spritePressed: ImageBitmap,
     weight: Float,
+    opisLewo: String,
+    opisPrawo: String,
     onLeft: () -> Unit,
     onRight: () -> Unit,
 ) {
@@ -173,13 +228,24 @@ private fun RowScope.ArrowKey(
                     .weight(1f)
                     .fillMaxHeight()
                     .clickable(interactionSource = interaction, indication = null) { onLeft() }
+                    .semantics { contentDescription = opisLewo }
             )
             Box(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
                     .clickable(interactionSource = interaction, indication = null) { onRight() }
+                    .semantics { contentDescription = opisPrawo }
             )
         }
     }
 }
+
+/** Etykiety klawiszy w jezyku interfejsu — jedno miejsce dla wszystkich ekranow z klawiatura. */
+fun opisyKlawiszy(str: Str) = OpisyKlawiszy(
+    backspace = str.keyBackspace,
+    enter = str.keyEnter,
+    spacja = str.keySpace,
+    kursorWLewo = str.keyCursorLeft,
+    kursorWPrawo = str.keyCursorRight,
+)
