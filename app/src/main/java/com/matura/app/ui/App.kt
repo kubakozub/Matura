@@ -41,6 +41,15 @@ sealed interface Screen {
     data object Scores : Screen
     data object Privacy : Screen
     data object VoiceTest : Screen
+
+    /**
+     * Test SUROWEGO mikrofonu — AudioRecord z pominieciem calej warstwy rozpoznawania mowy.
+     *
+     * Osobny ekran, a nie czesc [VoiceTest], bo odpowiada na INNE pytanie: tamten mierzy silniki,
+     * ten mierzy, czy do aplikacji w ogole dochodzi dzwiek. Gdy kazdy silnik milczy, bez tej
+     * odpowiedzi nie da sie odroznic zepsutego silnika od mikrofonu oddajacego same zera.
+     */
+    data object RawMic : Screen
     data object TrudneSlowa : Screen
     data object DzisiejszaSesja : Screen
 }
@@ -313,11 +322,13 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
             // Ekran diagnostyczny: przechodzi cala matryce silnikow mowy i mowi, ktora
             // konfiguracja dziala na TYM telefonie. Wchodzi sie z OPCJI.
             Screen.VoiceTest -> VoiceTestScreen(str = str, onBack = { pop() })
+            Screen.RawMic -> RawMicTestScreen(str = str, onBack = { pop() })
 
             Screen.Options -> OptionsScreen(
                 str = str,
                 onPrivacy = { push(Screen.Privacy) },
                 onVoiceTest = { push(Screen.VoiceTest) },
+                onRawMic = { push(Screen.RawMic) },
                 options = data.options,
                 onBack = { pop() },
                 onChange = { o: Options -> repo.setOptions(o); refresh() },

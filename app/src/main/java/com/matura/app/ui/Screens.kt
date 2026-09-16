@@ -539,6 +539,7 @@ fun SetEditorScreen(
 fun OptionsScreen(
     onPrivacy: () -> Unit = {},
     onVoiceTest: () -> Unit = {},
+    onRawMic: () -> Unit = {},
     str: Str,
     options: Options,
     onBack: () -> Unit,
@@ -621,6 +622,14 @@ fun OptionsScreen(
                 // gry, tylko narzedzie do jednego pytania — czemu mikrofon milczy na tym telefonie.
                 OptionRow(str.voiceTest, icon = R.drawable.icon_target) {
                     GhostButton(str.voiceTestOpen) { onVoiceTest() }
+                }
+
+                // Test surowego mikrofonu stoi TUZ POD testem mowy, bo odpowiada na pytanie,
+                // ktore tamten zadaje dopiero wtedy, gdy zadna konfiguracja nic nie rozpoznala:
+                // czy do aplikacji w ogole wchodzi dzwiek. Bez tej odpowiedzi raport z testu mowy
+                // nie odroznia zepsutego silnika od mikrofonu oddajacego same zera.
+                OptionRow(str.rawMic, icon = R.drawable.icon_target) {
+                    GhostButton(str.rawMicOpen) { onRawMic() }
                 }
                 Spacer(Modifier.height(16.dp))
                 InfoCard(str.speedNote)

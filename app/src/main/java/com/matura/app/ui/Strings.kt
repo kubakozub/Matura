@@ -209,6 +209,48 @@ class Str(private val lang: UiLanguage) {
     val voiceTestDownloadProgress get() = pick("Pobieranie modelu: %s%%", "Downloading model: %s%%")
     val voiceTestDownloadDone get() = pick("Model pobrany — uruchom test jeszcze raz.", "Model downloaded — run the test again.")
     val voiceTestDownloadFailed get() = pick("Nie udało się pobrać modelu (%s).", "Could not download the model (%s).")
+
+    // ---- TEST MIKROFONU (surowy) — patrz RawMicTest.kt ----------------------
+    val rawMic get() = pick("Test mikrofonu", "Microphone test")
+    val rawMicOpen get() = pick("OTWÓRZ", "OPEN")
+    val rawMicWhere get() = pick("Surowy test mikrofonu: OPCJE → Test mikrofonu", "Raw microphone test: OPTIONS → Microphone test")
+    val rawMicIntro get() = pick(
+        "Ten test pomija rozpoznawanie mowy. Nagrywa po dwie sekundy z każdego wejścia mikrofonu i liczy, co naprawdę dotarło do aplikacji.",
+        "This test skips speech recognition entirely. It records two seconds from every microphone input and measures what actually reached the app.",
+    )
+    val rawMicSpeak get() = pick(
+        "Mów normalnie przez cały czas trwania testu — na przykład licz: raz, dwa, trzy.",
+        "Keep talking for the whole test — counting out loud works fine.",
+    )
+    val rawMicPlay get() = pick("ODSŁUCHAJ NAGRANIE", "PLAY THE RECORDING")
+    val rawMicPlayHint get() = pick(
+        "Nagranie zostaje w pamięci aplikacji i jest nadpisywane przy każdym teście. Nic nie wychodzi z telefonu.",
+        "The recording stays in the app's private storage and is overwritten by the next test. Nothing leaves the phone.",
+    )
+    val rawMicVerdictHears get() = pick(
+        "Mikrofon fizycznie działa: do aplikacji dochodzi dźwięk. Winna jest warstwa rozpoznawania mowy, nie mikrofon.",
+        "The microphone physically works: audio reaches the app. The fault is in the speech layer, not the microphone.",
+    )
+    val rawMicVerdictZeros get() = pick(
+        "Dźwięk NIE dochodzi: system oddaje aplikacji same zera. Żaden silnik mowy nie ma czego rozpoznać.",
+        "No audio reaches the app: the stream is all zeros. No speech engine could recognise anything.",
+    )
+    val rawMicVerdictNoFrames get() = pick(
+        "Strumień ruszył, ale nie oddał ani jednej próbki — tor audio stoi.",
+        "Capture started but not a single frame came back — the audio path is stalled.",
+    )
+    val rawMicVerdictNoInit get() = pick(
+        "Nie udało się otworzyć mikrofonu z żadnego źródła — coś go trzyma albo sprzęt nie odpowiada.",
+        "The microphone could not be opened from any source — something holds it, or the hardware does not answer.",
+    )
+    val rawMicVerdictNone get() = pick("Brak pomiaru.", "No measurement.")
+    val rawMicSilencedBySystem get() = pick(
+        "System potwierdza wyciszenie (isClientSilenced): przełącznik prywatności mikrofonu albo inna aplikacja z wyższym priorytetem.",
+        "The system confirms silencing (isClientSilenced): the microphone privacy toggle, or another app with higher priority.",
+    )
+    val rawMicQuiet get() = pick("cicho, ale nie zero", "quiet, but not zero")
+    val rawMicError get() = pick("błąd", "error")
+    val rawMicNoInit get() = pick("nie udało się otworzyć", "could not open")
     val speakNow get() = pick("Powiedz odpowiedź", "Say the answer")
     val voicePaused get() = pick("Gra wstrzymana — wznów, aby mówić", "Game paused — resume to speak")
     val voiceOnDevice get() = pick("na urządzeniu", "on-device")
