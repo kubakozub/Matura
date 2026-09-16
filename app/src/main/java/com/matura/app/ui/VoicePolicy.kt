@@ -88,8 +88,11 @@ object VoicePolicy {
  * jeszcze nie zaczal mowic) nie straszyl komunikatem. Wymagamy tez kilku probek RMS: silnik,
  * ktory w ogole nie raportuje poziomu (bywa), nie moze uchodzic za wyciszony mikrofon.
  *
- * Stanu przelacznika prywatnosci nie da sie odczytac wprost: publiczne API SensorPrivacyManager
- * ma tylko supportsSensorToggle(), a isSensorPrivacyEnabled() jest @SystemApi. Stad heurystyka.
+ * SensorPrivacyManager nie odpowie: publicznie ma tylko supportsSensorToggle(), a
+ * isSensorPrivacyEnabled() jest @SystemApi. Od 0.9.17 o sam przelacznik pytamy inna droga —
+ * przez AppOps ([przelacznikPrywatnosciZAppOps], API 29+) — ale ta heurystyka zostaje i ma po
+ * co zostac: dziala od API 24 i lapie takze mikrofon zajety przez inna aplikacje, czego AppOps
+ * nie pokazuje wcale.
  */
 class SilenceDetector(
     private val thresholdDb: Float = SILENCE_DB,
@@ -411,11 +414,27 @@ class Wznowienie {
  * paska: bez niego zgloszenie "przycisk dziala, nic sie nie dzieje" nie niesie zadnej informacji.
  * Nie zapisuje tresci wypowiedzi — tylko rodzaj zdarzenia, kod bledu i czas wzgledny.
  */
-class VoiceLog(private val limit: Int = 14) {
+class VoiceLog(private val limit: Int = LIMIT_WPISOW) {
     private val wpisy = ArrayDeque<String>()
     private var start = 0L
 
     fun reset(teraz: Long) { wpisy.clear(); start = teraz }
+
+    /**
+     * Granica miedzy proba a proba — historia ZOSTAJE.
+     *
+     * Do 0.9.16 start() wolal tu reset(), wiec kazde ponowne dotkniecie paska kasowalo dokladnie
+     * ten slad, po ktory uczen otwieral diagnostyke: probe, ktora wlasnie zawiodla. A dotkniecie
+     * paska po nieudanej probie jest odruchem, nie wyjatkiem. Zegar wpisow rebasujemy na nowa
+     * sesje, zeby czasy dalej znaczyly "ile od startu TEJ proby", a nie od wlaczenia ekranu.
+     */
+    fun nowaSesja(teraz: Long, separator: String = SEPARATOR_SESJI) {
+        if (wpisy.isNotEmpty()) {
+            wpisy.addLast(separator)
+            while (wpisy.size > limit) wpisy.removeFirst()
+        }
+        start = teraz
+    }
 
     fun dodaj(teraz: Long, co: String) {
         if (start == 0L) start = teraz
@@ -425,6 +444,22 @@ class VoiceLog(private val limit: Int = 14) {
     }
 
     fun tekst(): String = if (wpisy.isEmpty()) "—" else wpisy.joinToString("\n")
+
+    companion object {
+        /**
+         * Ile wpisow miesci dziennik.
+         *
+         * Bylo 14 i starczalo, dopoki dziennik trzymal JEDNA probe. Od 0.9.17 jest ciagly (nowa
+         * proba dokleja sie za separatorem), a doszly do niego restarty nasluchu, zajety silnik,
+         * bledy nagrywania i uzbrojenie straznika dzwieku — przy 14 wpisach nieudana proba
+         * wypadalaby z gory, zanim uczen zdazylby przytrzymac pasek. 40 mniej wiecej odpowiada
+         * dwom pelnym probom z cala ich historia.
+         */
+        const val LIMIT_WPISOW = 40
+
+        /** Widoczna granica miedzy probami w nakladce diagnostycznej. */
+        const val SEPARATOR_SESJI = "— nowa sesja —"
+    }
 }
 
 /**
@@ -539,4 +574,207 @@ fun jezykDoKomunikatu(tag: String, polski: String, angielski: String): String = 
     tag.startsWith("pl", ignoreCase = true) -> polski
     tag.startsWith("en", ignoreCase = true) -> angielski
     else -> ""
+}
+
+// ---- LIMITY CZASU SCIEZKI GLOSOWEJ ----------------------------------------------------
+//
+// Progi stoja TU, a nie w prywatnym companion object VoiceInput, z jednego powodu: kazdy z nich
+// powstal po konkretnej awarii z telefonu, a dopoki byly prywatne, zaden test nie mogl nawet
+// zapytac, czy okno startu w ogole ma jakikolwiek limit. Tyle wystarczylo, zeby galaz sprawdzania
+// modelu on-device chodzila bez wlasnego limitu przez cztery wersje.
+
+/**
+ * Ile czekamy na PIERWSZE zdarzenie od silnika po startListening (watchdog).
+ *
+ * Szesc sekund: silnik zwiazywany na zimno (pierwsze wiazanie uslugi po starcie telefonu) melduje
+ * gotowosc w okolicach 2 s, a na obciazonym urzadzeniu widziano 4 s. Krocej zrywaloby sesje,
+ * ktore jeszcze wstaja; dluzej to wieczne "SŁUCHAM…" bez ani jednego zdarzenia.
+ */
+const val VOICE_WATCHDOG_MS = 6_000L
+
+/**
+ * Ile czekamy na odpowiedz checkRecognitionSupport, zanim uznamy model za brakujacy.
+ *
+ * Usluga, ktora odpowiada, robi to w 40-120 ms (emulator); poltorej sekundy to zapas na zimne
+ * wiazanie. Brak odpowiedzi liczy sie jako "brak modelu": lepiej zaczac od silnika domyslnego
+ * niz od tego, ktory wlasnie pokazal, ze potrafi milczec.
+ */
+const val VOICE_MODEL_MS = 1_500L
+
+/**
+ * Ile czekamy po gotowosci silnika na PIERWSZY znak, ze dzwiek wchodzi.
+ *
+ * Bylo 2500 ms i to byla za dluga chwila: uzytkownik motoroli edge 50 neo przerwal probe po 2,1 s,
+ * czyli 0,6 s PRZED jedynym straznikiem, ktory mial te awarie zlapac. Straznik, ktorego nikt nie
+ * doczeka, nie istnieje. 1200 ms wystarcza, bo czekamy na PROBKE POZIOMU, a nie na slowo: sprawny
+ * silnik raportuje poziom kilkadziesiat razy na sekunde, zanim gracz zdazy otworzyc usta.
+ */
+const val VOICE_DZWIEK_MS = 1_200L
+
+/**
+ * Twardy limit na okno miedzy start() a faktycznym startListening.
+ *
+ * Gdy start() pyta najpierw o model on-device, na odpowiedz idzie [VOICE_MODEL_MS], a dopiero
+ * potem rusza wiazanie silnika — wiec okno musi pomiescic OBIE rzeczy. Suma, a nie wieksza
+ * z dwoch: to sa etapy jeden po drugim, nie warianty tego samego etapu.
+ *
+ * @param sprawdzamModel czy przed startem leci pytanie o model on-device (API 33+, tryb ON_DEVICE)
+ */
+fun limitOknaStartu(
+    sprawdzamModel: Boolean,
+    modelMs: Long = VOICE_MODEL_MS,
+    watchdogMs: Long = VOICE_WATCHDOG_MS,
+): Long = if (sprawdzamModel) modelMs + watchdogMs else watchdogMs
+
+/**
+ * Czy straznik uzbrojony w pokoleniu [pokStraznika] ma jeszcze prawo glosu.
+ *
+ * Ta sama zasada co w sluchaczu silnika — i z tego samego powodu. Straznicy (watchdog, straznik
+ * cyklu, straznik dzwieku) byli do 0.9.16 bezpokoleniowi, a start() na zywej sesji podbija
+ * pokolenie i NIE czysci kolejki handlera. Straznik zamowiony przez poprzednia sesje budzil sie
+ * wiec w nowej i degradowal silnik, ktory nie mial jeszcze kiedy zawiesc: z ekranu wygladalo to
+ * jak "pasek sam schodzi na inny silnik zaraz po wlaczeniu".
+ */
+fun straznikAktualny(pokStraznika: Int, pokolenie: Int, chceNasluchu: Boolean): Boolean =
+    chceNasluchu && pokStraznika == pokolenie
+
+/**
+ * Nastepny szczebel listy KONKRETNYCH uslug rozpoznawania, z pominieciem pakietow, ktore juz
+ * w tej sesji zawiodly.
+ *
+ * Bez czarnej listy drabinka potrafila wrocic do tej samej uslugi inna droga: bywa ona
+ * zarejestrowana pod kilkoma komponentami tego samego pakietu, a [VoiceInput.refresh] przestawia
+ * kolejnosc listy. Pakiet, ktory raz zamilkl albo odmowil, nie ma dostawac drugiej szansy w tym
+ * samym przebiegu — kazda taka proba to kolejne sekundy z zapalonym paskiem i bez dzwieku.
+ *
+ * @param pakiety nazwy pakietow uslug, w kolejnosci drabinki
+ * @param biezacy indeks uslugi, na ktorej stoimy (-1 = silnik domyslny, przed lista)
+ * @return indeks nastepnej uslugi do sprobowania albo -1, gdy nie ma juz zadnej
+ */
+fun nastepnyIndeksSilnika(pakiety: List<String>, biezacy: Int, czarnaLista: Set<String>): Int {
+    var i = maxOf(biezacy, -1) + 1
+    while (i < pakiety.size) {
+        if (pakiety[i] !in czarnaLista) return i
+        i += 1
+    }
+    return -1
+}
+
+/**
+ * Indeks uslugi z DANEGO pakietu, jesli jeszcze jej nie skreslilismy; -1 gdy nie ma czego probowac.
+ *
+ * Potrzebny dla jawnego szczebla [PAKIET_MOWY_GOOGLE]: trybu on-device nie da sie przeadresowac
+ * (system podstawia wlasna usluge — patrz komentarz przy drabince w [VoiceInput]), wiec jedyna
+ * droga do silnika Google prowadzi przez wiazanie po nazwie komponentu.
+ */
+fun indeksPakietu(pakiety: List<String>, pakiet: String, czarnaLista: Set<String>): Int =
+    if (pakiet in czarnaLista) -1 else pakiety.indexOf(pakiet)
+
+/**
+ * Usluga rozpoznawania od Google przeznaczona dla aplikacji trzecich ("Speech Services by Google").
+ *
+ * Na telefonie ze zgloszenia (motorola edge 50 neo, Android 16) NIE MA aplikacji Google
+ * (com.google.android.googlequicksearchbox), a mimo to sa trzy uslugi rozpoznawania — i to jest
+ * jedyna z nich, ktora jest komponentem Google i da sie z nia zwiazac po nazwie.
+ */
+const val PAKIET_MOWY_GOOGLE = "com.google.android.tts"
+
+// ---- MIKROFON: TRZY NIEZALEZNE BLOKADY ------------------------------------------------
+
+/** AppOpsManager.MODE_IGNORED — operacja cicho odrzucana; dla OP_RECORD_AUDIO to przelacznik prywatnosci. */
+const val APPOPS_MODE_IGNORED = 1
+
+/**
+ * Czy odpowiedz AppOps na OP_RECORD_AUDIO znaczy "mikrofon sciety przelacznikiem prywatnosci".
+ *
+ * Przelacznik prywatnosci mikrofonu (Android 12+) jest w AOSP zrobiony jako GLOBALNE ograniczenie
+ * AppOps na OP_RECORD_AUDIO, wiec publiczne unsafeCheckOpNoThrow zwraca wtedy MODE_IGNORED.
+ * MODE_ERRORED (2) to co innego — twarda odmowa uprawnienia — i tego z przelacznikiem nie mylimy,
+ * bo od zgody jest osobne pytanie ([StanMikrofonu.zgoda]).
+ *
+ * @param tryb wynik AppOpsManager.unsafeCheckOpNoThrow; null = API < 29 (metoda jest od 29)
+ *        albo wyjatek — wtedy odpowiedz brzmi "nie wiadomo", a nie "nie"
+ */
+fun przelacznikPrywatnosciZAppOps(tryb: Int?): Boolean? = when (tryb) {
+    null -> null
+    APPOPS_MODE_IGNORED -> true
+    else -> false
+}
+
+/**
+ * Trzy niezalezne powody, dla ktorych do silnika moze nie wchodzic dzwiek.
+ *
+ * Do 0.9.16 pytalismy o jeden: AudioManager.isMicrophoneMute. On z definicji pokazuje wylacznie
+ * wyciszenie PROGRAMOWE (setMicrophoneMute), a nie systemowy przelacznik prywatnosci — czyli
+ * akurat nie to, co najczesciej gasi mikrofon na Androidzie 12+. Diagnostyka odpowiadala wiec
+ * "wyciszony: nie" na telefonie z odcietym mikrofonem, i to bylo jedyne, co mowila.
+ *
+ * @param przelacznikPrywatnosci null = nie da sie zapytac (API < 29); "nie wiadomo" jest osobna
+ *        odpowiedzia od "nie" i tak ma byc pokazane
+ */
+data class StanMikrofonu(
+    val wyciszonyProgramowo: Boolean,
+    val przelacznikPrywatnosci: Boolean?,
+    val zgoda: Boolean,
+) {
+    /** Mikrofon jest GLUCHY, choc aplikacja ma prawo nagrywac — to podpowiadamy uczniowi. */
+    val gluchy: Boolean get() = wyciszonyProgramowo || przelacznikPrywatnosci == true
+
+    /** Cokolwiek z tych trzech stoi dzwiekowi na drodze (brak zgody to sprawa ekranu, nie paska). */
+    val blokada: Boolean get() = gluchy || !zgoda
+}
+
+/** Jedna linia diagnostyki: wszystkie trzy odpowiedzi, kazda pod wlasna nazwa. */
+fun opisMikrofonu(stan: StanMikrofonu): String = buildString {
+    append("wyciszony: ").append(if (stan.wyciszonyProgramowo) "TAK" else "nie")
+    append(" · przełącznik prywatności: ")
+    append(
+        when (stan.przelacznikPrywatnosci) {
+            true -> "BLOKUJE"
+            false -> "nie"
+            null -> "nie wiadomo"
+        },
+    )
+    append(" · zgoda: ").append(if (stan.zgoda) "tak" else "NIE")
+}
+
+// ---- KTO WYLACZYL NASLUCH -------------------------------------------------------------
+
+/**
+ * Powod wylaczenia nasluchu. Enum, a nie napis, bo ten sam powod trafia do dziennika diagnostyki
+ * i do logcata — a wolajacy ma go WYBRAC z listy, nie wymyslic.
+ *
+ * Do 0.9.16 dziennik zapisywal samo "stop" i z raportu telefonu nie dalo sie odroznic pauzy,
+ * zejscia w tlo, dotkniecia paska i konca drabinki — czyli czterech zupelnie roznych historii,
+ * z ktorych tylko jedna jest awaria.
+ */
+enum class PowodStop {
+    /** Pauza rundy albo koniec gry (ekran). */
+    PAUZA,
+    /** Aplikacja zeszla w tlo: HOME, przelaczenie aplikacji, zgaszony ekran. */
+    TLO,
+    /** Uczen sam dotknal paska. */
+    DOTKNIECIE,
+    /** Drabinka silnikow doszla do konca — [VoiceInput] oddaje decyzje ekranowi. */
+    DRABINKA,
+    /** Silnik zglosil brak zgody na mikrofon i zgody faktycznie nie ma. */
+    ZGODA,
+    /** Seria bledow nagrywania — mikrofon zajety przez inna aplikacje. */
+    MIKROFON,
+    /** Ekran znika (release). */
+    EKRAN,
+    /** Wywolanie bez podanego powodu — zostaje samo "stop". */
+    NIEZNANY,
+}
+
+/** Wpis do dziennika dla [PowodStop]. */
+fun opisStopu(powod: PowodStop): String = when (powod) {
+    PowodStop.PAUZA -> "stop (pauza)"
+    PowodStop.TLO -> "stop (tło)"
+    PowodStop.DOTKNIECIE -> "stop (dotknięcie)"
+    PowodStop.DRABINKA -> "stop (drabinka)"
+    PowodStop.ZGODA -> "stop (brak zgody)"
+    PowodStop.MIKROFON -> "stop (mikrofon zajęty)"
+    PowodStop.EKRAN -> "stop (koniec ekranu)"
+    PowodStop.NIEZNANY -> "stop"
 }

@@ -1,7 +1,13 @@
 package com.matura.app
 
+import com.matura.app.model.UiLanguage
 import com.matura.app.ui.KOD_BRAK_SILNIKA
+import com.matura.app.ui.KOD_PRZERWANE
 import com.matura.app.ui.MAX_BIASING_WORDS
+import com.matura.app.ui.OstatniRaport
+import com.matura.app.ui.PowodPrzerwania
+import com.matura.app.ui.Przerwanie
+import com.matura.app.ui.Str
 import com.matura.app.ui.SDK_BIASING
 import com.matura.app.ui.SDK_ON_DEVICE
 import com.matura.app.ui.SygnalMikrofonu
@@ -12,17 +18,27 @@ import com.matura.app.ui.VoiceProbaTyp
 import com.matura.app.ui.VoiceTestTeksty
 import com.matura.app.ui.VoiceWynik
 import com.matura.app.ui.budujKonfiguracje
+import com.matura.app.ui.czytajPrzerwanie
+import com.matura.app.ui.czytajWyniki
 import com.matura.app.ui.dopisekMikrofon
 import com.matura.app.ui.ktoraZadzialala
 import com.matura.app.ui.mikrofonSlyszal
 import com.matura.app.ui.nazwaBledu
 import com.matura.app.ui.MAX_TEKST_RAPORTU
+import com.matura.app.ui.opisPrzerwania
+import com.matura.app.ui.opisWsparcia
 import com.matura.app.ui.opisWyniku
+import com.matura.app.ui.przebiegRozstrzygajacy
 import com.matura.app.ui.przytnijTekst
 import com.matura.app.ui.raportMowy
+import com.matura.app.ui.raportPrzebiegu
 import com.matura.app.ui.sygnalMikrofonu
 import com.matura.app.ui.werdyktMowy
+import com.matura.app.ui.werdyktPrzebiegu
+import com.matura.app.ui.zapiszPrzerwanie
+import com.matura.app.ui.zapiszWyniki
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -51,6 +67,7 @@ class VoiceTestMatrixTest {
         czesciowe = "czesciowe",
         dziala = "DZIALA",
         zadna = "zadna konfiguracja nie zadzialala",
+        przerwana = "proba przerwana",
     )
 
     private fun wynik(
@@ -479,6 +496,174 @@ class VoiceTestMatrixTest {
         assertTrue(k.nazwa.contains("on-device"))
         assertTrue(k.nazwa.contains("offline"))
         assertTrue(k.nazwa.contains("bias"))
+    }
+
+    // ---- proba ZAMKNIETA W LOCIE -------------------------------------------
+    //
+    // Zgloszenie z Motoroli wrocilo jako "proby: 0/10 · PRZERWANY", czyli bez ani jednego
+    // pomiaru — a proba, ktora wlasnie leciala, byla najcenniejszym, co ten ekran z takiego
+    // telefonu zdejmuje: gotowosc po 0,2 s, zero probek RMS, cisza przez ~2 s. Zero w liczniku
+    // bralo sie stad, ze zwolnij() wyrzucal ja tokenem, zamiast zapisac.
+
+    @Test
+    fun przerwanaProba_nieUdajeBleduSilnika_iZachowujePomiar() {
+        val w = wynik(
+            "on-device / offline / bias",
+            blad = KOD_PRZERWANE,
+            gotowy = true,
+            maxRms = Float.NEGATIVE_INFINITY,
+            czasMs = 2_012L,
+        )
+        val opis = opisWyniku(w, teksty)
+        assertTrue("przerwanie ma sie nazywac po imieniu", opis.contains("proba przerwana"))
+        assertTrue("i nie udawac bledu silnika", !opis.contains("blad"))
+        assertTrue("czas proby zostaje", Regex("2[.,]0 s").containsMatchIn(opis))
+        assertTrue("gotowosc zostaje", opis.contains("gotowosc"))
+        assertTrue("brak pomiaru RMS tez jest wynikiem", opis.contains("RMS max —"))
+    }
+
+    /**
+     * Przerwana proba jest DZIURA w danych, wiec przebieg, ktory ja zawiera, nie orzeka o
+     * telefonie — nawet jesli doszedl do konca matrycy (przebieg przezywa dzis zejscie w tlo,
+     * wiec taki przypadek jest zwyczajny, a nie teoretyczny).
+     */
+    @Test
+    fun przebiegZdziuraPoPrzerwanejProbie_nieJestRozstrzygajacy() {
+        val zdziura = listOf(wynik("a", blad = KOD_PRZERWANE), wynik("b", blad = 7))
+        val czysty = listOf(wynik("a", blad = 7), wynik("b", blad = 7))
+        assertTrue(przebiegRozstrzygajacy(skonczone = true, wyniki = czysty))
+        assertFalse(przebiegRozstrzygajacy(skonczone = true, wyniki = zdziura))
+        assertFalse("niedokonczony przebieg nie orzeka nigdy", przebiegRozstrzygajacy(false, czysty))
+    }
+
+    @Test
+    fun werdyktPrzebieguZdziura_nieWydajeWyrokuOTelefonie() {
+        val str = Str(UiLanguage.PL)
+        val zdziura = OstatniRaport(
+            naglowek = "Android 36\n",
+            wyniki = listOf(wynik("a", blad = KOD_PRZERWANE), wynik("b", blad = 7)),
+            ile = 2,
+            przerwanie = null,
+            skonczone = true,
+        )
+        val werdykt = werdyktPrzebiegu(zdziura, str, teksty)
+        assertNotEquals("pelna matryca z dziura to nadal nie jest odpowiedz", teksty.zadna, werdykt)
+        assertFalse("i nie wolno doklejac wniosku o mikrofonie", werdykt.contains(str.voiceTestMicSilent))
+    }
+
+    // ---- POWOD i CHWILA przerwania -----------------------------------------
+
+    @Test
+    fun opisPrzerwania_niesieKtoKiedyINaCzym() {
+        val o = opisPrzerwania(
+            Przerwanie(PowodPrzerwania.TLO, 2_100L, numerProby = 1, nazwaProby = "on-device / offline / bias")
+        )
+        assertTrue("kto przerwal", o.startsWith("tło"))
+        assertTrue("kiedy", Regex("2[.,]1 s").containsMatchIn(o))
+        assertTrue("i co to kosztowalo", o.contains("w próbie 1"))
+        assertTrue("z nazwa konfiguracji, bo po niej odtwarza sie ustawienie", o.contains("\"on-device / offline / bias\""))
+    }
+
+    /** Przerwanie przed pierwsza proba: numeru nie ma i nie wolno go zmyslac. */
+    @Test
+    fun opisPrzerwania_bezProbyWtoku_niePodajeNumeru() {
+        val o = opisPrzerwania(Przerwanie(PowodPrzerwania.PRZYCISK, 800L))
+        assertTrue(o.startsWith("przycisk"))
+        assertFalse(o.contains("w próbie"))
+    }
+
+    @Test
+    fun raportPrzerwanegoPrzebiegu_niesiePowodIChwileWlinijceLicznika() {
+        val wyniki = listOf(wynik("on-device / offline / bias", blad = KOD_PRZERWANE, czasMs = 2_012L))
+        val r = raportMowy(
+            "Android 36 · motorola edge 50 neo\n", wyniki, "PRZERWANY", teksty,
+            ile = 10,
+            przerwany = true,
+            przerwanie = Przerwanie(PowodPrzerwania.TLO, 2_100L, 1, "on-device / offline / bias"),
+        )
+        val licznik = r.lines().first { it.startsWith("próby: ") }
+        assertTrue("przerwana proba JEST w liczniku", licznik.startsWith("próby: 1/10 · PRZERWANY"))
+        assertTrue("razem z powodem", licznik.contains("tło"))
+        assertTrue("i chwila przerwania", Regex("2[.,]1 s").containsMatchIn(licznik))
+        assertTrue("i probe, ktora to kosztowalo", licznik.contains("w próbie 1 \"on-device / offline / bias\""))
+    }
+
+    /** Bez [Przerwanie] linia licznika wyglada jak dotad — stare wywolania nie zmienily sensu. */
+    @Test
+    fun raportBezOpisuPrzerwania_zostajeSamymSlowemPRZERWANY() {
+        val r = raportMowy("Android 36\n", emptyList(), "werdykt", teksty, ile = 8, przerwany = true)
+        assertTrue(r.contains("próby: 0/8 · PRZERWANY\n"))
+    }
+
+    // ---- raport, ktory przezywa aplikacje ----------------------------------
+
+    @Test
+    fun zapisIOdczytWynikow_niczegoNieGubi() {
+        val wyniki = listOf(
+            // Wlasnie ten wynik jest powodem, dla ktorego zapis nie idzie przez JSON:
+            // maxRms = NEGATIVE_INFINITY nie ma reprezentacji w JSON-ie.
+            wynik("on-device / offline / bias", blad = KOD_PRZERWANE, maxRms = Float.NEGATIVE_INFINITY, czasMs = 2_012L),
+            wynik("default / net-ok", tekst = "kolano", czesciowe = true, maxRms = 4.7f),
+            wynik("service / com.anthropic.claude", blad = 7, gotowy = false),
+        )
+        assertEquals(wyniki, czytajWyniki(zapiszWyniki(wyniki)))
+    }
+
+    @Test
+    fun uszkodzonyZapis_nieWywracaWejsciaNaEkran() {
+        assertEquals(emptyList<VoiceWynik>(), czytajWyniki(""))
+        assertEquals(emptyList<VoiceWynik>(), czytajWyniki("śmieci z innej wersji"))
+        assertNull(czytajPrzerwanie(""))
+        assertNull(czytajPrzerwanie("NIE_MA_TAKIEGO_POWODU11a"))
+    }
+
+    @Test
+    fun zapisIOdczytPrzerwania_niczegoNieGubi() {
+        val p = Przerwanie(PowodPrzerwania.WYJSCIE, 12_345L, 3, "default / net-ok")
+        assertEquals(p, czytajPrzerwanie(zapiszPrzerwanie(p)))
+        val bezProby = Przerwanie(PowodPrzerwania.NOWY_PRZEBIEG, 10L)
+        assertEquals(bezProby, czytajPrzerwanie(zapiszPrzerwanie(bezProby)))
+    }
+
+    @Test
+    fun raportOdtworzonyZdysku_skladaSieTakSamoJakBiezacy() {
+        val str = Str(UiLanguage.PL)
+        val r = OstatniRaport(
+            naglowek = "Android 36 · motorola edge 50 neo\ntło: 2x\n",
+            wyniki = listOf(wynik("on-device / offline / bias", blad = KOD_PRZERWANE, maxRms = Float.NEGATIVE_INFINITY)),
+            ile = 10,
+            przerwanie = Przerwanie(PowodPrzerwania.TLO, 2_100L, 1, "on-device / offline / bias"),
+            skonczone = false,
+        )
+        val raport = raportPrzebiegu(r, str, teksty)
+        assertTrue("naglowek zostaje pierwszy", raport.startsWith("Android 36"))
+        assertTrue("z liczba zejsc w tlo", raport.contains("tło: 2x"))
+        assertTrue("licznik niesie powod przerwania", raport.contains("próby: 1/10 · PRZERWANY (tło"))
+        assertTrue("przerwana proba jest wypisana", raport.contains("1. on-device / offline / bias -> "))
+        assertTrue("a werdykt nie orzeka o telefonie", raport.contains("PRZEBIEG PRZERWANY"))
+    }
+
+    // ---- odpowiedz o modelu on-device --------------------------------------
+
+    /**
+     * Linia o modelu rozstrzyga cale zgloszenie, wiec ma byc DOSLOWNA: nie "jest/brak", tylko
+     * to, co usluga naprawde odpowiedziala. Liczba przed kazda lista jest konieczna, bo listy
+     * sa przyciete — inaczej "—" pustej odpowiedzi wyglada jak lista, ktora sie nie zmiescila.
+     */
+    @Test
+    fun opisWsparcia_drukujeOdpowiedzUslugiDoslownie() {
+        val o = opisWsparcia(
+            tag = "pl-PL",
+            zainstalowane = listOf("en-US"),
+            obslugiwane = listOf("pl-PL", "en-US"),
+            wToku = emptyList(),
+            online = List(112) { "tag" + it },
+        )
+        assertTrue("stan jest dalej pierwszy", o.startsWith("model on-device pl-PL: BRAK (do pobrania)"))
+        assertTrue("zainstalowane doslownie", o.contains("zainstalowane(1): en-US"))
+        assertTrue("obslugiwane doslownie", o.contains("obsługiwane(2): pl-PL,en-US"))
+        assertTrue("pusta lista ma liczbe, a nie sam myslnik", o.contains("w toku(0): —"))
+        assertTrue("jezykow online jest za duzo na liste — zostaje liczba", o.contains("online(112)"))
     }
 }
 

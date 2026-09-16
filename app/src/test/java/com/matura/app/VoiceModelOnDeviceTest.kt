@@ -287,11 +287,21 @@ class VoiceModelOnDeviceTest {
     fun martwySilnik_trafiaNaCzarnaListe_iNieWracaPoDotknieciu() {
         sondaWTle(listOf("pl-PL"))
         start()
-        gotowoscBezDzwieku()
+
+        // Schodzimy drabinka, az biezacym silnikiem bedzie KONKRETNA usluga (silnik domyslny
+        // nie ma pakietu, ktory dalo by sie skreslic — patrz odnotujAwarieSilnika).
+        var skreslony = false
+        repeat(6) {
+            if (!skreslony && wyczerpane == 0) {
+                gotowoscBezDzwieku()
+                skreslony = voice.diagnostyka().contains("pominięte pakiety: " + PAKIET_USLUGI) ||
+                    voice.diagnostyka().contains("on-device skreślony")
+            }
+        }
 
         assertTrue(
-            "diagnostyka ma nazwac martwy silnik",
-            voice.diagnostyka().contains("martwy silnik"),
+            "usluga, ktora zglosila gotowosc i zamilkla, ma zostac skreslona na te sesje",
+            skreslony,
         )
     }
 

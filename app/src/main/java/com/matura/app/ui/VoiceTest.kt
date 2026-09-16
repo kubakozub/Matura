@@ -42,6 +42,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,6 +50,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.matura.app.BuildConfig
 
 /**
  * TEST MOWY — po co ten ekran istnieje.
@@ -131,6 +133,8 @@ data class VoiceTestTeksty(
     val czesciowe: String,
     val dziala: String,
     val zadna: String,
+    /** Proba zamknieta w locie przez przerwanie przebiegu ([KOD_PRZERWANE]). */
+    val przerwana: String,
 )
 
 /** Slowo, ktore uzytkownik ma wypowiedziec. Krotkie, polskie, bez zbitki trudnej dla silnika. */
@@ -160,6 +164,29 @@ val VOICE_TEST_SLOWNIK_DLUGI: List<String> = listOf(
 /** Jezyk testu. Hipoteza brzmi "brak modelu polskiego", wiec testujemy dokladnie polski. */
 const val VOICE_TEST_JEZYK = "pl-PL"
 
+/**
+ * Plik SharedPreferences z OSTATNIM raportem (patrz [VoiceProbe.ostatniRaport]).
+ *
+ * Wlasny plik, a nie zapis gry: to dane diagnostyczne o telefonie, ktore maja przezyc takze
+ * skasowanie postepu, i nie maja po co dotykac modelu danych gry. Nazwa jest publiczna, zeby
+ * test mogl zaczac od czystego stanu.
+ */
+const val VOICE_TEST_PAMIEC = "voice_test_raport"
+
+/**
+ * Znaczniki przyciskow dla testu UI.
+ *
+ * Etykiety przyciskow rysuje czcionka pikselowa na Canvasie ([PixelText]), wiec w drzewie
+ * semantyki NIE MA ich tekstu i test nie ma jak ich po napisie znalezc. Bez znacznikow jedyna
+ * droga jest liczenie klikalnych wezlow — a wtedy test "drugie dotkniecie nie zabija przebiegu"
+ * sprawdzalby przycisk POWROTU zamiast STARTU.
+ */
+const val TAG_TEST_START = "voiceTestStart"
+/** @see TAG_TEST_START */
+const val TAG_TEST_STOP = "voiceTestStop"
+/** @see TAG_TEST_START */
+const val TAG_TEST_KOPIUJ_OSTATNI = "voiceTestCopyLast"
+
 /** Od API 31 istnieje createOnDeviceSpeechRecognizer / isOnDeviceRecognitionAvailable. */
 const val SDK_ON_DEVICE = 31
 /** Od API 33 dziala EXTRA_BIASING_STRINGS — nizej proba "z podpowiedziami" nie roznilaby sie. */
@@ -167,6 +194,21 @@ const val SDK_BIASING = 33
 
 /** Rozpoznawacza nie udalo sie w ogole utworzyc (null albo wyjatek z fabryki). */
 const val KOD_BRAK_SILNIKA = -1
+
+/**
+ * Proba zamknieta w locie: [VoiceProbe.zwolnij] albo [VoiceProbe.wstrzymaj] zabraly jej mikrofon,
+ * zanim silnik cokolwiek powiedzial.
+ *
+ * Wartosc jest trzecia z wlasnych, UJEMNYCH kodow tego ekranu (po [KOD_BRAK_SILNIKA] = -1 i
+ * [KOD_WYJATEK] = -2); SpeechRecognizer.ERROR_* sa dodatnie (1..15), wiec kolizji nie ma.
+ *
+ * Do 0.9.16 przerwana proba byla po prostu WYRZUCANA (token uniewazlnial sluchacza, wynik nie
+ * powstawal) i raport z Motoroli wracal jako "proby: 0/10 · PRZERWANY" — czyli bez ani jednego
+ * pomiaru. A wlasnie ta proba jest najcenniejszym, co ten ekran z takiego telefonu zdejmuje:
+ * gotowosc po 0,2 s, zero probek RMS i cisza przez ~2 s to jest ODPOWIEDZ, tylko trzeba ja
+ * zapisac.
+ */
+const val KOD_PRZERWANE = -3
 
 /** Ile tagow z listy trafia do raportu — lista jezykow online ma ponad sto pozycji. */
 const val MAX_TAGOW_RAPORTU = 12
@@ -191,16 +233,20 @@ fun opisWsparcia(
         modelZainstalowany(tag, obslugiwane) -> "BRAK (do pobrania)"
         else -> "NIEOBSŁUGIWANY"
     }
-    fun lista(x: List<String>): String = when {
-        x.isEmpty() -> "—"
-        x.size <= MAX_TAGOW_RAPORTU -> x.joinToString(",")
-        else -> x.take(MAX_TAGOW_RAPORTU).joinToString(",") + ",…(" + x.size + ")"
+    // LICZBA stoi przed kazda lista, bo listy sa przyciete do [MAX_TAGOW_RAPORTU]: po samym
+    // "—" nie da sie odroznic pustej odpowiedzi uslugi od listy, ktora sie nie zmiescila, a
+    // "zainstalowane(0)" kontra "zainstalowane(1)" to na tym telefonie cala roznica miedzy
+    // "brak pakietu polskiego" a "pakiet jest, wiec milczenie ma inna przyczyne".
+    fun lista(x: List<String>): String = "(" + x.size + ")" + when {
+        x.isEmpty() -> ": —"
+        x.size <= MAX_TAGOW_RAPORTU -> ": " + x.joinToString(",")
+        else -> ": " + x.take(MAX_TAGOW_RAPORTU).joinToString(",") + ",…"
     }
     return "model on-device " + tag + ": " + stan +
-        " · zainstalowane: " + lista(zainstalowane) +
-        " · obsługiwane: " + lista(obslugiwane) +
-        " · w toku: " + lista(wToku) +
-        " · online: " + (if (online.isEmpty()) "—" else online.size.toString())
+        " · zainstalowane" + lista(zainstalowane) +
+        " · obsługiwane" + lista(obslugiwane) +
+        " · w toku" + lista(wToku) +
+        " · online(" + online.size + ")"
 }
 
 /** Przebieg zlecenia pobrania modelu on-device — ekran tlumaczy na [Str]. */
@@ -369,6 +415,57 @@ fun ocenaProby(w: VoiceWynik, zamowione: String = VOICE_TEST_SLOWO): Int {
 }
 
 /**
+ * Kto zabral przebiegowi mikrofon.
+ *
+ * W oknie pierwszej, 8-sekundowej proby [VoiceProbe.zwolnij] ma TRZECH mozliwych wolajacych:
+ * przycisk PRZERWIJ, obserwatora ON_STOP (zgaszony ekran, przelaczenie aplikacji) i onDispose
+ * ekranu (wyjscie z ekranu). Raport "proby: 0/10 · PRZERWANY" nie odroznial ich od siebie, wiec
+ * szukanie przyczyny zaczynalo sie od zgadywania — czyli od tego, co ten ekran mial usunac.
+ *
+ * [etykieta] idzie do raportu, ktory czyta czlowiek, wiec jest po polsku i z diakrytykami —
+ * tak samo jak reszta linii raportu, obok ktorej stoi.
+ */
+enum class PowodPrzerwania(val etykieta: String) {
+    /** Uczen dotknal PRZERWIJ. */
+    PRZYCISK("przycisk"),
+    /** Aplikacja zeszla w tlo (ON_STOP): zgaszony ekran, powiadomienie, inna aplikacja. */
+    TLO("tło"),
+    /** Ekran testu zostal opuszczony (onDispose) — przebieg konczy sie razem z nim. */
+    WYJSCIE("wyjście"),
+    /** Start nowego przebiegu zamknal poprzedni. */
+    NOWY_PRZEBIEG("nowy przebieg"),
+}
+
+/**
+ * Czym, kiedy i na czym przebieg stanal.
+ *
+ * [czasMs] liczy sie od STARTU PRZEBIEGU, a nie od poczatku proby: w zgloszeniu z Motoroli
+ * rozstrzygajace bylo to, ze przerwanie przyszlo w pierwszych sekundach (czyli mniej wiecej
+ * wtedy, kiedy konczy sie pytanie o model on-device), a nie po minucie mowienia.
+ */
+data class Przerwanie(
+    val powod: PowodPrzerwania,
+    val czasMs: Long,
+    /** Numer proby w toku, liczony od 1; null = przerwanie przed pierwsza proba. */
+    val numerProby: Int? = null,
+    val nazwaProby: String? = null,
+)
+
+/**
+ * Nawias przy slowie PRZERWANY: kto przerwal, w ktorej sekundzie przebiegu i ktora probe to
+ * kosztowalo. Czas ma ten sam format co czas proby ("%.1f s"), zeby obie liczby w raporcie
+ * dalo sie porownac bez przeliczania.
+ */
+fun opisPrzerwania(p: Przerwanie): String = buildString {
+    append(p.powod.etykieta)
+    append(" · ").append("%.1f s".format(p.czasMs / 1000.0))
+    if (p.numerProby != null) {
+        append(" · w próbie ").append(p.numerProby)
+        if (!p.nazwaProby.isNullOrBlank()) append(" \"").append(p.nazwaProby).append('"')
+    }
+}
+
+/**
  * Jedno zdanie na koniec: ktora konfiguracja dziala, ze zadna — albo ze przebieg nie doszedl
  * do konca i nie ma z czego orzekac.
  *
@@ -468,6 +565,9 @@ fun opisWyniku(w: VoiceWynik, t: VoiceTestTeksty): String {
         !w.tekst.isNullOrBlank() -> "„" + przytnijTekst(w.tekst) + "” · " + t.dziala
         w.blad == KOD_BRAK_SILNIKA -> t.brakSilnika
         w.blad == KOD_WYJATEK -> t.brakSilnika + " (start)"
+        // Przerwana proba NIE jest bledem silnika i nie wolno jej tak opisac — reszta linii
+        // (czas, gotowosc, RMS max) zostaje, bo to wlasnie ona niesie pomiar.
+        w.blad == KOD_PRZERWANE -> t.przerwana
         w.blad != null && w.blad != 0 -> t.blad + " " + nazwaBledu(w.blad)
         else -> t.cisza
     }
@@ -484,6 +584,9 @@ fun opisWyniku(w: VoiceWynik, t: VoiceTestTeksty): String {
  * Linia "proby: N/M" i slowo PRZERWANY sa tu po to, zeby WKLEJONY raport bronil sie sam: czyta
  * go ktos, kto nie widzial ekranu i nie wie, czy przebieg doszedl do konca. Bez tej linii raport
  * z trzech prob wyglada dokladnie tak samo jak raport z osmiu.
+ *
+ * @param przerwanie powod, chwila i proba przerwania — patrz [Przerwanie]. Raport z Motoroli
+ *   ("proby: 0/10 · PRZERWANY") utknal dokladnie na pytaniu, kto to przerwanie wywolal.
  */
 fun raportMowy(
     naglowek: String,
@@ -492,16 +595,165 @@ fun raportMowy(
     t: VoiceTestTeksty,
     ile: Int = wyniki.size,
     przerwany: Boolean = false,
+    przerwanie: Przerwanie? = null,
 ): String = buildString {
     append(naglowek)
     append("próby: ").append(wyniki.size).append('/').append(ile)
-    if (przerwany) append(" · PRZERWANY")
+    if (przerwany) {
+        append(" · PRZERWANY")
+        // Samo slowo PRZERWANY zatrzymywalo kazda rozmowe o takim raporcie na pytaniu "kto
+        // przerwal i kiedy" — a odpowiedz jest po stronie aplikacji i nie kosztuje nic.
+        if (przerwanie != null) append(" (").append(opisPrzerwania(przerwanie)).append(')')
+    }
     append('\n')
     wyniki.forEachIndexed { i, w ->
         append('\n').append(i + 1).append(". ").append(w.nazwa).append(" -> ").append(opisWyniku(w, t))
     }
     append('\n').append('\n').append(werdykt)
 }
+
+/**
+ * Czy z TEGO przebiegu wolno orzekac o telefonie.
+ *
+ * Nie wystarczy "doszedl do konca matrycy": od 0.9.16 przebieg przezywa krotkie zejscie w tlo
+ * ([VoiceProbe.wstrzymaj]), wiec do konca moze dojsc przebieg, w ktorym jedna albo dwie proby
+ * zostaly zamkniete w locie ([KOD_PRZERWANE]). Taka proba nic nie zmierzyla, a zdanie "zadna
+ * konfiguracja nie zadzialala" jest wnioskiem z braku dowodow — wiec nie wolno go wydac, dopoki
+ * w przebiegu jest choc jedna dziura.
+ */
+fun przebiegRozstrzygajacy(skonczone: Boolean, wyniki: List<VoiceWynik>): Boolean =
+    skonczone && wyniki.none { it.blad == KOD_PRZERWANE }
+
+/**
+ * Jeden przebieg w calosci — to, z czego sklada sie raport.
+ *
+ * Ta sama struktura opisuje przebieg BIEZACY i przebieg odtworzony z dysku
+ * ([VoiceProbe.ostatniRaport]), dzieki czemu raport sklada sie w JEDNYM miejscu
+ * ([raportPrzebiegu]) i nie ma jak sie rozjechac miedzy tymi dwiema drogami.
+ */
+data class OstatniRaport(
+    val naglowek: String,
+    val wyniki: List<VoiceWynik>,
+    val ile: Int,
+    val przerwanie: Przerwanie?,
+    val skonczone: Boolean,
+)
+
+/**
+ * Separator pol w zapisie na dysk. Znak sterujacy US (0x1F) nie moze wyjsc z rozpoznawania mowy
+ * ani z nazwy konfiguracji, wiec nie da sie nim rozbic zapisu.
+ */
+private const val SEP_POLA = ""
+
+/** Separator wynikow (RS, 0x1E) — z tego samego powodu co [SEP_POLA]. */
+private const val SEP_WYNIKOW = ""
+
+/** Zapis nie moze zawierac wlasnych separatorow ani konca linii — ucinamy je u zrodla. */
+private fun bezSeparatorow(s: String): String =
+    s.replace(SEP_POLA, " ").replace(SEP_WYNIKOW, " ").replace('\n', ' ').replace('\r', ' ')
+
+/**
+ * Wyniki w jednej linii tekstu, do SharedPreferences.
+ *
+ * Wlasny format, a nie kotlinx.serialization, z jednego twardego powodu: [VoiceWynik.maxRms] to
+ * Float, ktory w normalnym przebiegu wynosi NEGATIVE_INFINITY ("silnik nie podal poziomu"), a
+ * JSON nie ma zapisu dla wartosci nieskonczonych — Json bez allowSpecialFloatingPointValues
+ * rzuca wyjatkiem dokladnie na tym przypadku, czyli na przebiegu z Motoroli. Drugi powod:
+ * zapis raportu diagnostycznego nie ma po co dotykac modelu danych gry (SaveData).
+ */
+fun zapiszWyniki(wyniki: List<VoiceWynik>): String = wyniki.joinToString(SEP_WYNIKOW) { w ->
+    listOf(
+        bezSeparatorow(w.nazwa),
+        if (w.gotowy) "1" else "0",
+        w.maxRms.toString(),
+        if (w.czesciowe) "1" else "0",
+        bezSeparatorow(w.tekst ?: ""),
+        w.blad?.toString() ?: "",
+        w.czasMs.toString(),
+    ).joinToString(SEP_POLA)
+}
+
+/**
+ * Odwrotnosc [zapiszWyniki]. Wiersz, ktorego nie da sie odczytac, jest POMIJANY, a nie zamieniany
+ * w wyjatek: raport z poprzedniego przebiegu jest dodatkiem i nie ma prawa wywrocic wejscia na
+ * ekran — a to wlasnie ekran, na ktory uczen wchodzi, gdy nic innego nie dziala.
+ */
+fun czytajWyniki(zapis: String): List<VoiceWynik> {
+    if (zapis.isEmpty()) return emptyList()
+    return zapis.split(SEP_WYNIKOW).mapNotNull { linia ->
+        val p = linia.split(SEP_POLA)
+        if (p.size != 7) return@mapNotNull null
+        VoiceWynik(
+            nazwa = p[0],
+            gotowy = p[1] == "1",
+            maxRms = p[2].toFloatOrNull() ?: Float.NEGATIVE_INFINITY,
+            czesciowe = p[3] == "1",
+            tekst = p[4].ifEmpty { null },
+            blad = p[5].toIntOrNull(),
+            czasMs = p[6].toLongOrNull() ?: 0L,
+        )
+    }
+}
+
+/** Przerwanie w jednej linii tekstu; pusty napis = przebieg nie zostal przerwany. */
+fun zapiszPrzerwanie(p: Przerwanie?): String = if (p == null) "" else listOf(
+    p.powod.name,
+    p.czasMs.toString(),
+    p.numerProby?.toString() ?: "",
+    bezSeparatorow(p.nazwaProby ?: ""),
+).joinToString(SEP_POLA)
+
+/**
+ * Odwrotnosc [zapiszPrzerwanie]. Nieznana nazwa powodu (zapis ze starszej wersji aplikacji)
+ * daje null, a nie wyjatek — patrz [czytajWyniki].
+ */
+fun czytajPrzerwanie(zapis: String): Przerwanie? {
+    val p = zapis.split(SEP_POLA)
+    if (p.size != 4) return null
+    val powod = PowodPrzerwania.values().firstOrNull { it.name == p[0] } ?: return null
+    return Przerwanie(
+        powod = powod,
+        czasMs = p[1].toLongOrNull() ?: 0L,
+        numerProby = p[2].toIntOrNull(),
+        nazwaProby = p[3].ifEmpty { null },
+    )
+}
+
+/**
+ * Werdykt jednego przebiegu — ten sam na ekranie i w raporcie do wklejenia.
+ *
+ * Dopisek o mikrofonie idzie WYLACZNIE do przebiegu rozstrzygajacego: oba zdania ("brakuje
+ * modelu polskiego", "sprawdz przelacznik prywatnosci") sa wnioskiem z tego, ze zawiodly
+ * WSZYSTKIE konfiguracje, a nie z tego, ze zabraklo czasu.
+ */
+fun werdyktPrzebiegu(r: OstatniRaport, str: Str, t: VoiceTestTeksty): String {
+    val pelny = przebiegRozstrzygajacy(r.skonczone, r.wyniki)
+    return werdyktMowy(
+        r.wyniki,
+        str.voiceTestWorksWith,
+        t.zadna,
+        pelny = pelny,
+        przerwany = str.voiceTestInterrupted(r.wyniki.size, r.ile),
+    ) + if (pelny && r.wyniki.isNotEmpty() && ktoraZadzialala(r.wyniki) == null) {
+        " " + dopisekMikrofon(
+            r.wyniki,
+            str.voiceTestMicHeard,
+            str.voiceTestMicSilent,
+            str.voiceTestMicUnknown,
+        )
+    } else ""
+}
+
+/** Caly raport jednego przebiegu: biezacego albo odtworzonego z dysku. */
+fun raportPrzebiegu(r: OstatniRaport, str: Str, t: VoiceTestTeksty): String = raportMowy(
+    naglowek = r.naglowek,
+    wyniki = r.wyniki,
+    werdykt = werdyktPrzebiegu(r, str, t),
+    t = t,
+    ile = r.ile,
+    przerwany = !przebiegRozstrzygajacy(r.skonczone, r.wyniki),
+    przerwanie = r.przerwanie,
+)
 
 // ---- warstwa Androida ------------------------------------------------------
 
@@ -539,6 +791,28 @@ class VoiceProbe(private val context: Context) {
     var przerwane by mutableStateOf(false)
         private set
     /**
+     * Co i kiedy przerwalo przebieg — null, dopoki nic go nie przerwalo.
+     *
+     * Bez tego pola raport konczyl sie slowem "PRZERWANY" i cala dalsza rozmowa szla o to, kto
+     * przerwal: uczen przyciskiem, system zejsciem w tlo czy wyjscie z ekranu. Tych trzech
+     * wolajacych nie da sie rozroznic po skutku, a po powodzie i chwili — natychmiast.
+     */
+    var przerwanie by mutableStateOf<Przerwanie?>(null)
+        private set
+    /**
+     * Przebieg czeka na powrot z tla ([wstrzymaj]): matryca, idx, wyniki i naglowek zostaja
+     * nietkniete, znika tylko zwiazany rozpoznawacz.
+     */
+    var wstrzymany by mutableStateOf(false)
+        private set
+    /**
+     * Ile razy przebieg schodzil w tlo. Idzie do naglowka raportu, bo zmienia jego wymowe:
+     * przebieg poszatkowany trzema powrotami z tla mierzy takze to, jak system oddaje mikrofon
+     * po powrocie, a nie sam silnik mowy.
+     */
+    var zejsciaWTlo by mutableStateOf(0)
+        private set
+    /**
      * Naglowek raportu policzony RAZ, w chwili startu. Opisuje stan telefonu PRZED probami, wiec
      * chwila jest wlasciwa — a przy okazji znika cztery przejscia przez binder (queryIntentServices,
      * resolveActivity, isRecognitionAvailable, isOnDeviceRecognitionAvailable) przy KAZDEJ
@@ -562,9 +836,19 @@ class VoiceProbe(private val context: Context) {
     private var idx = -1
     private var rec: SpeechRecognizer? = null
     private var token = 0
+    /** Chwila startu CALEGO przebiegu — od niej liczy sie [Przerwanie.czasMs]. */
+    private var startPrzebiegu = 0L
 
     // Stan BIEZACEJ proby.
     private var start = 0L
+    /**
+     * Czy proba spod [idx] ma juz swoj wynik.
+     *
+     * Miedzy probami stoi [PRZERWA_MS] i przez te chwile [trwa] jest wciaz prawda, a [idx] wciaz
+     * pokazuje probe WLASNIE ZAPISANA. Bez tej flagi przerwanie trafiajace dokladnie w te przerwe
+     * dopisywaloby te sama probe drugi raz — raz z jej wlasnym kodem, raz jako przerwana.
+     */
+    private var probaZapisana = true
     private var ponowienia = 0
     private var gotowy = false
     private var maxRms = Float.NEGATIVE_INFINITY
@@ -574,18 +858,27 @@ class VoiceProbe(private val context: Context) {
 
     /** Zaczyna caly przebieg od nowa. Wolane z glownego watku (dotkniecie przycisku). */
     fun start() {
-        zwolnij()
+        // Poprzedni przebieg konczy sie tu i teraz — z wlasnym powodem, zeby w logu i w raporcie
+        // zapisanym na dysku bylo widac, ze zabral go START, a nie system.
+        zwolnij(PowodPrzerwania.NOWY_PRZEBIEG)
         naglowekPrzebiegu = naglowek()
+        startPrzebiegu = SystemClock.elapsedRealtime()
         matryca = budujKonfiguracje(Build.VERSION.SDK_INT, onDevice(), uslugaDomyslna(), uslugi())
         ile = matryca.size
         wyniki = emptyList()
         idx = -1
         skonczone = false
         przerwane = false
+        przerwanie = null
+        wstrzymany = false
+        zejsciaWTlo = 0
         if (matryca.isEmpty()) {
             // Telefon bez jakiegokolwiek silnika mowy — to tez jest odpowiedz, i to jednoznaczna.
             skonczone = true
             logWerdykt()
+            // Caly dowod takiego przebiegu siedzi w naglowku, wiec tym bardziej ma przezyc
+            // zamkniecie aplikacji.
+            zapiszRaport()
             return
         }
         trwa = true
@@ -601,6 +894,10 @@ class VoiceProbe(private val context: Context) {
     private fun dopiszDoNaglowka(linia: String) {
         naglowekPrzebiegu = naglowekPrzebiegu + linia + '\n'
         Log.i(VOICE_TAG, "test " + linia)
+        // Naglowek niesie odpowiedz o modelu on-device — czyli najwazniejsza linie calego
+        // raportu. Musi trafic na dysk od razu: przebieg trwa okolo minuty i konczy sie czesto
+        // tym, ze system ubija aplikacje w tle.
+        zapiszRaport()
     }
 
     private fun konfigModelu() = VoiceKonfig("model", VoiceProbaTyp.ON_DEVICE, offline = false, podpowiedzi = false)
@@ -626,12 +923,14 @@ class VoiceProbe(private val context: Context) {
         }
         rec = r
         var gotowe = false
-        fun zakoncz(linia: String) {
+        // Linia jest tu opcjonalna, bo odpowiedz uslugi (onSupportResult/onError) trafia do
+        // naglowka SAMA, jeszcze przed tym wywolaniem — patrz komentarz w onSupportResult.
+        fun zakoncz(linia: String?) {
             if (gotowe || moj != token) return
             gotowe = true
             handler.removeCallbacksAndMessages(null)
             zwolnijRec()
-            dopiszDoNaglowka(linia)
+            if (linia != null) dopiszDoNaglowka(linia)
             // Pierwsza proba wiaze TE SAMA usluge on-device, ktora wlasnie zwolnilismy. Od Androida 15
             // system odlacza usluge natychmiast po ostatnim kliencie, a wiazanie tuz po tym konczy sie
             // 11 SERVER_DISCONNECTED (emulator: 38 ms). Ta sama przerwa co miedzy probami.
@@ -644,10 +943,14 @@ class VoiceProbe(private val context: Context) {
                 ContextCompat.getMainExecutor(context),
                 object : RecognitionSupportCallback {
                     override fun onSupportResult(recognitionSupport: RecognitionSupport) {
-                        val jest = modelZainstalowany(VOICE_TEST_JEZYK, recognitionSupport.installedOnDeviceLanguages)
-                        modelDoPobrania = !jest &&
-                            modelZainstalowany(VOICE_TEST_JEZYK, recognitionSupport.supportedOnDeviceLanguages)
-                        zakoncz(
+                        // NAJPIERW do naglowka, DOPIERO POTEM zamkniecie proby. Do 0.9.16 szlo to
+                        // przez zakoncz(), ktore milczy, gdy przebieg zostal juz przerwany
+                        // (moj != token) — a przerwanie w pierwszych ~2,35 s (WSPARCIE_MS + PRZERWA_MS)
+                        // jest bardzo prawdopodobne i kasowalo NAJWAZNIEJSZA linie calego raportu:
+                        // te, ktora mowi, czy pakiet polskiego modelu w ogole jest na telefonie.
+                        // Odpowiedz opisuje TELEFON, a nie ten konkretny przebieg, wiec zostaje
+                        // wazna takze wtedy, gdy przebieg juz nie zyje.
+                        dopiszDoNaglowka(
                             opisWsparcia(
                                 VOICE_TEST_JEZYK,
                                 recognitionSupport.installedOnDeviceLanguages,
@@ -656,10 +959,16 @@ class VoiceProbe(private val context: Context) {
                                 recognitionSupport.onlineLanguages,
                             ),
                         )
+                        val jest = modelZainstalowany(VOICE_TEST_JEZYK, recognitionSupport.installedOnDeviceLanguages)
+                        modelDoPobrania = !jest &&
+                            modelZainstalowany(VOICE_TEST_JEZYK, recognitionSupport.supportedOnDeviceLanguages)
+                        zakoncz(null)
                     }
 
                     override fun onError(error: Int) {
-                        zakoncz("model on-device: błąd " + nazwaBledu(error))
+                        // Ten sam powod co wyzej: kod bledu uslugi opisuje telefon, nie przebieg.
+                        dopiszDoNaglowka("model on-device: błąd " + nazwaBledu(error))
+                        zakoncz(null)
                     }
                 },
             )
@@ -722,8 +1031,18 @@ class VoiceProbe(private val context: Context) {
         try { r.destroy() } catch (_: Throwable) {}
     }
 
-    /** Przerywa przebieg i oddaje mikrofon. Bezpieczne do wolania wielokrotnie. */
-    fun zwolnij() {
+    /**
+     * Konczy przebieg i oddaje mikrofon. Bezpieczne do wolania wielokrotnie.
+     *
+     * [powod] nie jest ozdoba: w oknie pierwszej proby tego wywolania moga uzyc az trzy rozne
+     * miejsca (przycisk PRZERWIJ, obserwator ON_STOP, onDispose ekranu), a raport konczacy sie
+     * samym slowem "PRZERWANY" nie mowil, ktore z nich to bylo.
+     */
+    fun zwolnij(powod: PowodPrzerwania) {
+        // Kto wolal? W buildzie debug slad stosu — tak samo jak w VoiceInput.stop(). Bez niego
+        // "PRZERWANY" w raporcie z cudzego telefonu nie ma jak wskazac wolajacego, a wolajacych
+        // jest trzech. W wersji ze sklepu nie ma tego ani w logu, ani w koszcie.
+        if (BuildConfig.DEBUG && trwa) Log.i(VOICE_TAG, "test zwolnij: wolajacy (" + powod + ")", Throwable("slad"))
         // Przebieg, ktory nie doszedl do konca matrycy, jest PRZERWANY — i tak ma sie nazywac.
         // Do 0.9.11 stalo tu "skonczone = true", wiec przerwanie na trzeciej z osmiu prob
         // dawalo raport nieodrozninalny od pelnego, konczacy sie zdaniem "na tym telefonie
@@ -731,15 +1050,89 @@ class VoiceProbe(private val context: Context) {
         // (naglowek powstaje w start) i kolejne wywolania po tym samym przerwaniu — zwolnij()
         // leci i z DisposableEffect, i z obserwatora ON_STOP, i z wejscia w start().
         val wToku = naglowekPrzebiegu.isNotEmpty() && !skonczone && !przerwane
+        // Proba, ktora wlasnie leci, to POMIAR — i na telefonie z tego zgloszenia najcenniejszy,
+        // jaki ten ekran zdejmuje: gotowosc po 0,2 s, zero probek RMS, cisza przez ~2 s. Do
+        // 0.9.16 zwolnij() wyrzucal ja tokenem, wiec raport wracal jako "proby: 0/10" i nie
+        // niosl ani gotowosci, ani czasu, ani braku pomiaru. Zapis MUSI isc PRZED "token += 1":
+        // pozniej stan proby jest juz niedostepny dla sluchacza, a wynik nie mialby jak powstac.
+        if (trwa && !probaZapisana && idx in matryca.indices) zapisz(matryca[idx], KOD_PRZERWANE)
         token += 1
         handler.removeCallbacksAndMessages(null)
         zwolnijRec()
         trwa = false
         teraz = null
+        wstrzymany = false
         if (wToku) {
             przerwane = true
+            // Przebieg wstrzymany w tle ma juz zapisany swoj powod i swoja chwile — to WTEDY
+            // realnie stanal, a wyjscie z ekranu tylko domyka to, co zaczelo zejscie w tlo.
+            // Nadpisanie tego powodem WYJSCIE zgubiloby jedyna prawdziwa odpowiedz.
+            if (przerwanie == null) {
+                przerwanie = Przerwanie(
+                    powod = powod,
+                    czasMs = SystemClock.elapsedRealtime() - startPrzebiegu,
+                    numerProby = if (idx in matryca.indices) idx + 1 else null,
+                    nazwaProby = matryca.getOrNull(idx)?.nazwa,
+                )
+            }
             logWerdykt()
+            zapiszRaport()
         }
+    }
+
+    /**
+     * Zejscie w tlo (ON_STOP) NIE konczy przebiegu — zawiesza go.
+     *
+     * Przebieg trwa okolo minuty, a wystarczy powiadomienie albo przypadkowe przelaczenie
+     * aplikacji, zeby do 0.9.16 przepadl w calosci: ON_STOP wolal zwolnij() i z minuty mowienia
+     * zostawal raport "PRZERWANY", ktory nic nie mowi o telefonie. Mikrofonu w tle i tak nie ma
+     * (AudioPolicyService wycisza aplikacje spoza wierzchu), wiec rozpoznawacz trzeba oddac —
+     * ale idx, wyniki, matryca i naglowek zostaja i po powrocie przebieg rusza dalej.
+     */
+    fun wstrzymaj() {
+        if (!trwa) return
+        // Proba w toku nie przezyje tla, wiec zapisujemy ja jako przerwana — ma ten sam kod co
+        // przy PRZERWIJ, bo to jest dokladnie ta sama dziura w danych, tylko chwilowa.
+        if (!probaZapisana && idx in matryca.indices) zapisz(matryca[idx], KOD_PRZERWANE)
+        token += 1
+        handler.removeCallbacksAndMessages(null)
+        zwolnijRec()
+        trwa = false
+        teraz = null
+        wstrzymany = true
+        zejsciaWTlo += 1
+        // Powod i chwila zapisuja sie JUZ TERAZ, a nie dopiero przy wyjsciu z ekranu: jesli
+        // system ubije aplikacje w tle, to wlasnie ten zapis jest calym raportem — i ma
+        // powiedziec wprost, ze przebieg stanal na tle, a nie na silniku mowy. Powrot
+        // ([wznow]) kasuje ten wpis, bo przebieg jednak sie nie skonczyl.
+        przerwanie = Przerwanie(
+            powod = PowodPrzerwania.TLO,
+            czasMs = SystemClock.elapsedRealtime() - startPrzebiegu,
+            numerProby = if (idx in matryca.indices) idx + 1 else null,
+            nazwaProby = matryca.getOrNull(idx)?.nazwa,
+        )
+        Log.i(VOICE_TAG, "test wstrzymany w tle (" + zejsciaWTlo + "x) na probie " + (idx + 1) + "/" + ile)
+        zapiszRaport()
+    }
+
+    /**
+     * Powrot na wierzch (ON_START/ON_RESUME): przebieg rusza od NASTEPNEJ proby — ta, ktora
+     * trwala w chwili zejscia w tlo, jest juz zapisana jako przerwana i powtarzanie jej tylko
+     * wydluzyloby test. Wolanie bez wstrzymania nic nie robi, wiec obserwator cyklu zycia moze
+     * je slac przy kazdym wejsciu na ekran.
+     */
+    fun wznow() {
+        if (!wstrzymany) return
+        wstrzymany = false
+        if (skonczone || przerwane) return
+        // Przebieg jednak sie nie skonczyl, wiec wpis o przerwaniu z [wstrzymaj] przestaje byc
+        // prawda. Slad po tle zostaje w [zejsciaWTlo] i w probie zapisanej jako przerwana.
+        przerwanie = null
+        trwa = true
+        Log.i(VOICE_TAG, "test wznowiony po tle od proby " + (idx + 2) + "/" + ile)
+        // Ta sama przerwa co miedzy probami: usluga musi zdazyc sie odwiazac po cancel(),
+        // inaczej pierwsza proba po powrocie dostaje ERROR_RECOGNIZER_BUSY nie ze swojej winy.
+        handler.postDelayed({ nastepna() }, PRZERWA_MS)
     }
 
     private fun zwolnijRec() {
@@ -756,6 +1149,9 @@ class VoiceProbe(private val context: Context) {
             teraz = null
             skonczone = true
             logWerdykt()
+            // Zapis po ostatniej probie mial jeszcze skonczone = false, wiec bez tego wiersza
+            // raport odtworzony z dysku podawalby PELNY przebieg za przerwany.
+            zapiszRaport()
             return
         }
         val k = matryca[idx]
@@ -763,6 +1159,7 @@ class VoiceProbe(private val context: Context) {
         token += 1
         val moj = token
         start = SystemClock.elapsedRealtime()
+        probaZapisana = false
         ponowienia = 0
         gotowy = false
         maxRms = Float.NEGATIVE_INFINITY
@@ -787,6 +1184,7 @@ class VoiceProbe(private val context: Context) {
     /** Koniec proby: zapis wyniku, zwolnienie rozpoznawacza, przerwa i nastepna. */
     private fun zapisz(k: VoiceKonfig, kod: Int?) {
         token += 1
+        probaZapisana = true
         handler.removeCallbacksAndMessages(null)
         wyniki = wyniki + VoiceWynik(
             nazwa = k.nazwa,
@@ -799,6 +1197,14 @@ class VoiceProbe(private val context: Context) {
         )
         logProba(wyniki.last())
         zwolnijRec()
+        // Po KAZDEJ probie raport idzie na dysk. Przebieg trwa okolo minuty, a jego najczestszy
+        // koniec to nie przycisk, tylko system ubijajacy aplikacje w tle — i wtedy z calego
+        // przebiegu nie zostawalo nic do wklejenia.
+        zapiszRaport()
+        // Proba przerwana nie ma nastepczyni: zamyka ja zwolnij() albo wstrzymaj(), ktore
+        // wlasnie konczy albo zawiesza caly przebieg. Bez tego warunku wstrzymanie planowaloby
+        // kolejna probe do mikrofonu, ktorego aplikacja w tle i tak nie dostanie.
+        if (kod == KOD_PRZERWANE) return
         // Przerwa daje uslugom czas na rozwiazanie poprzedniego wiazania; bez niej nastepna
         // proba dostawalaby ERROR_RECOGNIZER_BUSY nie ze swojej winy.
         handler.postDelayed({ nastepna() }, PRZERWA_MS)
@@ -831,6 +1237,8 @@ class VoiceProbe(private val context: Context) {
             VOICE_TAG,
             "test koniec: proby " + wyniki.size + "/" + ile +
                 (if (skonczone) " (pelny)" else " PRZERWANY") +
+                (przerwanie?.let { " (" + opisPrzerwania(it) + ")" } ?: "") +
+                (if (zejsciaWTlo > 0) " · tlo " + zejsciaWTlo + "x" else "") +
                 " · dziala: " + (ktoraZadzialala(wyniki)?.nazwa ?: "zadna") +
                 " · mikrofon: " + sygnalMikrofonu(wyniki),
         )
@@ -949,6 +1357,33 @@ class VoiceProbe(private val context: Context) {
             .resolveActivity(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0) != null
     } catch (_: Throwable) { false }
 
+    /**
+     * Usluga, ktora system uwaza za DOMYSLNY rozpoznawacz mowy
+     * (Settings.Secure "voice_recognition_service", nazwa ustawienia jest publiczna i stala).
+     *
+     * Na telefonie z tego zgloszenia nie ma aplikacji Google, a android.speech.RecognitionService
+     * rejestruje takze com.anthropic.claude — wiec systemowy fallback mogl oddac DOMYSLNEGO
+     * SpeechRecognizera wlasnie jemu. Lista uslug w naglowku tego nie rozstrzygala: pokazuje
+     * wszystkich kandydatow, a nie tego wybranego. Bez tej nazwy proby "default / *" opisuja
+     * NIEWIADOMO CZYJ silnik.
+     */
+    private fun domyslnyRozpoznawacz(): String = try {
+        val s = Settings.Secure.getString(context.contentResolver, "voice_recognition_service")
+        if (s.isNullOrBlank()) "brak" else s
+    } catch (_: Throwable) { "?" }
+
+    /**
+     * Pakiet, ktory obsluguje SYSTEMOWE OKNO mowy (resolveActivity dla ACTION_RECOGNIZE_SPEECH).
+     *
+     * To druga, niezalezna droga gry do rozpoznawania i moze nalezec do zupelnie innej aplikacji
+     * niz [domyslnyRozpoznawacz] — a "okno: tak" mowilo tylko tyle, ze ktos je obsluguje.
+     */
+    private fun pakietOkna(): String = try {
+        context.packageManager
+            .resolveActivity(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0)
+            ?.activityInfo?.packageName ?: "brak"
+    } catch (_: Throwable) { "?" }
+
     private fun maZgode(): Boolean = try {
         ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
@@ -970,11 +1405,65 @@ class VoiceProbe(private val context: Context) {
             append(" · okno: ").append(tak(okno()))
             append(" · zgoda: ").append(tak(maZgode())).append('\n')
             append("słowo: ").append(VOICE_TEST_SLOWO).append(" · język: ").append(VOICE_TEST_JEZYK).append('\n')
+            // DWIE nazwy, ktorych nie widac nigdzie indziej: kogo system uwaza za domyslny
+            // rozpoznawacz i czyje jest systemowe okno mowy. Na telefonie bez aplikacji Google
+            // to one rozstrzygaja, czyj silnik odpowiada za proby "default / *".
+            append("domyślny rozpoznawacz: ").append(domyslnyRozpoznawacz()).append('\n')
+            append("okno mowy: ").append(pakietOkna()).append('\n')
             append("usługi (").append(u.size).append("): ")
             append(if (u.isEmpty()) "brak" else u.joinToString(", ") { it.first })
             append('\n')
         }
     }
+
+    /**
+     * Naglowek do raportu: to, co policzyl [naglowek] w chwili startu, plus linia o zejsciach
+     * w tlo. Liczba zejsc zmienia wymowe calego przebiegu (patrz [zejsciaWTlo]), a nie da sie
+     * jej policzyc przed startem, wiec doklejamy ja dopiero tutaj.
+     */
+    fun naglowekRaportu(): String =
+        if (zejsciaWTlo == 0) naglowekPrzebiegu else naglowekPrzebiegu + "tło: " + zejsciaWTlo + "x\n"
+
+    /**
+     * Raport na dysk po kazdej probie i po kazdym przerwaniu.
+     *
+     * apply(), a nie commit(): to jest glowny watek i ta sama petla, ktora obsluguje mikrofon —
+     * commit() wpina tu synchroniczny zapis pliku. apply() oddaje zapis watkowi w tle i system
+     * i tak domyka go przy zatrzymaniu aktywnosci, czyli dokladnie w chwili, przed ktora ten
+     * zapis ma bronic.
+     */
+    private fun zapiszRaport() {
+        try {
+            context.getSharedPreferences(VOICE_TEST_PAMIEC, Context.MODE_PRIVATE).edit()
+                .putString(KLUCZ_NAGLOWEK, naglowekRaportu())
+                .putString(KLUCZ_WYNIKI, zapiszWyniki(wyniki))
+                .putInt(KLUCZ_ILE, ile)
+                .putString(KLUCZ_PRZERWANIE, zapiszPrzerwanie(przerwanie))
+                .putBoolean(KLUCZ_SKONCZONE, skonczone)
+                .apply()
+        } catch (_: Throwable) {
+            // Brak zapisu nie moze przerwac przebiegu: raport w schowku jest droga glowna,
+            // a ten zapis tylko zapasowa.
+        }
+    }
+
+    /**
+     * Ostatni raport zapisany na dysku — null, gdy tego telefonu jeszcze nie testowano.
+     *
+     * Po to, zeby przebieg ubity w tle nie przepadal: uczen wraca na ekran i kopiuje wynik
+     * zamiast przeklikiwac cala minute od nowa.
+     */
+    fun ostatniRaport(): OstatniRaport? = try {
+        val p = context.getSharedPreferences(VOICE_TEST_PAMIEC, Context.MODE_PRIVATE)
+        val zapisanyNaglowek = p.getString(KLUCZ_NAGLOWEK, "").orEmpty()
+        if (zapisanyNaglowek.isEmpty()) null else OstatniRaport(
+            naglowek = zapisanyNaglowek,
+            wyniki = czytajWyniki(p.getString(KLUCZ_WYNIKI, "").orEmpty()),
+            ile = p.getInt(KLUCZ_ILE, 0),
+            przerwanie = czytajPrzerwanie(p.getString(KLUCZ_PRZERWANIE, "").orEmpty()),
+            skonczone = p.getBoolean(KLUCZ_SKONCZONE, false),
+        )
+    } catch (_: Throwable) { null }
 
     private fun tak(b: Boolean) = if (b) "tak" else "NIE"
 
@@ -991,6 +1480,14 @@ class VoiceProbe(private val context: Context) {
         const val MAX_PONOWIEN = 12
         /** Ile czekamy na odpowiedz o model on-device, zanim ruszy matryca. */
         const val WSPARCIE_MS = 2_000L
+
+        // Klucze zapisanego raportu. Same krotkie nazwy — plik jest prywatny dla aplikacji
+        // i nie ma innego czytelnika niz [ostatniRaport].
+        const val KLUCZ_NAGLOWEK = "naglowek"
+        const val KLUCZ_WYNIKI = "wyniki"
+        const val KLUCZ_ILE = "ile"
+        const val KLUCZ_PRZERWANIE = "przerwanie"
+        const val KLUCZ_SKONCZONE = "skonczone"
     }
 }
 
@@ -1004,6 +1501,7 @@ fun voiceTestTeksty(str: Str) = VoiceTestTeksty(
     czesciowe = str.voiceTestPartial,
     dziala = str.voiceTestWorks,
     zadna = str.voiceTestNone,
+    przerwana = str.voiceTestAborted,
 )
 
 // ---- ekran -----------------------------------------------------------------
@@ -1028,23 +1526,31 @@ fun VoiceTestScreen(
     probe: VoiceProbe = rememberVoiceProbe(),
 ) {
     val context = LocalContext.current
-    // Zejscie aplikacji w tlo przerywa przebieg. Sam DisposableEffect lapie tylko wyjscie
+    // Zejscie aplikacji w tlo ZAWIESZA przebieg. Sam DisposableEffect lapie tylko wyjscie
     // z kompozycji: gdy uczen w polowie minutowego przebiegu przelaczy sie do innej aplikacji
     // albo zgasi ekran, sonda dalej trzymalaby zwiazana usluge i dalej odliczala 8-sekundowe
     // proby — z mikrofonem, do ktorego Android aplikacji w tle i tak nie da dostepu. Wyszlaby
     // seria pustych prob z rzedu, czyli raport falszywie negatywny, i nikt by tego z raportu
-    // nie odczytal. Przerwany przebieg zachowuje dotychczasowe wyniki (patrz VoiceProbe.zwolnij).
+    // nie odczytal. Do 0.9.16 ON_STOP konczyl caly przebieg, wiec jedno powiadomienie kosztowalo
+    // minute mowienia i zostawialo raport "PRZERWANY", ktory nic nie mowi o telefonie.
     val wlasciciel = LocalLifecycleOwner.current
     DisposableEffect(wlasciciel, probe) {
         val obserwator = LifecycleEventObserver { _, zdarzenie ->
-            if (zdarzenie == Lifecycle.Event.ON_STOP) probe.zwolnij()
+            when (zdarzenie) {
+                Lifecycle.Event.ON_STOP -> probe.wstrzymaj()
+                // Powrot na wierzch wznawia od nastepnej proby. ON_RESUME jest tu razem z
+                // ON_START, bo obserwator dostaje oba, a wznow() bez wstrzymania nic nie robi.
+                Lifecycle.Event.ON_START, Lifecycle.Event.ON_RESUME -> probe.wznow()
+                else -> {}
+            }
         }
         wlasciciel.lifecycle.addObserver(obserwator)
-        // Wyjscie z ekranu ma oddac mikrofon NATYCHMIAST — inaczej zwiazana usluga zostalaby
-        // z otwartym nasluchem, a gra po powrocie dostawalaby ERROR_RECOGNIZER_BUSY.
+        // Wyjscie z EKRANU to co innego niz zejscie w tlo: konczy przebieg i ma oddac mikrofon
+        // NATYCHMIAST — inaczej zwiazana usluga zostalaby z otwartym nasluchem, a gra po powrocie
+        // dostawalaby ERROR_RECOGNIZER_BUSY.
         onDispose {
             wlasciciel.lifecycle.removeObserver(obserwator)
-            probe.zwolnij()
+            probe.zwolnij(PowodPrzerwania.WYJSCIE)
         }
     }
 
@@ -1060,6 +1566,10 @@ fun VoiceTestScreen(
     val teksty = remember(str) { voiceTestTeksty(str) }
     var brakZgody by remember { mutableStateOf(false) }
     var skopiowane by remember { mutableStateOf(false) }
+    // Raport z POPRZEDNIEGO przebiegu, odczytany raz przy wejsciu na ekran. Przebieg trwa okolo
+    // minuty i bardzo czesto konczy go system, ubijajac aplikacje w tle — do 0.9.16 nie zostawalo
+    // wtedy nic i uczen musial przeklikac wszystko od nowa.
+    val poprzedni = remember(probe) { probe.ostatniRaport() }
 
     val prosba = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -1092,37 +1602,24 @@ fun VoiceTestScreen(
     }
 
     val wyniki = probe.wyniki
-    // Wnioski o TYM TELEFONIE wolno wyciagac tylko z przebiegu, ktory objal cala matryce.
-    val pelny = probe.skonczone
-    // Gdy nic nie zadzialalo, samo "zadna konfiguracja" jeszcze nie mowi, gdzie szukac.
-    // Doklejamy wiec to, czego nie widac inaczej: czy mikrofon w ogole cos slyszal. Dopisek
-    // idzie WYLACZNIE do przebiegu pelnego: oba zdania ("brakuje modelu polskiego", "sprawdz
-    // przelacznik prywatnosci") sa wnioskiem z tego, ze zawiodly WSZYSTKIE konfiguracje.
-    val werdykt = werdyktMowy(
-        wyniki,
-        str.voiceTestWorksWith,
-        teksty.zadna,
-        pelny = pelny,
-        przerwany = str.voiceTestInterrupted(wyniki.size, probe.ile),
-    ) + if (pelny && wyniki.isNotEmpty() && ktoraZadzialala(wyniki) == null) {
-        " " + dopisekMikrofon(
-            wyniki,
-            str.voiceTestMicHeard,
-            str.voiceTestMicSilent,
-            str.voiceTestMicUnknown,
-        )
-    } else ""
+    // Caly przebieg w jednym pudelku — ta sama struktura opisuje przebieg biezacy i ten
+    // odtworzony z dysku, wiec werdykt i raport skladaja sie DLA OBU w jednym miejscu.
+    val biezacy = OstatniRaport(
+        naglowek = probe.naglowekRaportu(),
+        wyniki = wyniki,
+        ile = probe.ile,
+        przerwanie = probe.przerwanie,
+        skonczone = probe.skonczone,
+    )
+    val werdykt = werdyktPrzebiegu(biezacy, str, teksty)
     // Przerwany test tez ma wynik: to, co zdazylo sie zdarzyc, jest juz twarda informacja
     // i musi dac sie skopiowac — inaczej dlugi przebieg trzeba by przeklikiwac od nowa.
-    val gotowe = !probe.trwa && (probe.skonczone || probe.przerwane || wyniki.isNotEmpty())
-    val raport = raportMowy(
-        probe.naglowekPrzebiegu, wyniki, werdykt, teksty,
-        ile = probe.ile,
-        przerwany = probe.przerwane,
-    )
+    // Przebieg wstrzymany (uczen wrocil z tla) nie jest skonczony i nie ma co podsumowywac.
+    val gotowe = !probe.trwa && !probe.wstrzymany &&
+        (probe.skonczone || probe.przerwane || wyniki.isNotEmpty())
+    val raport = raportPrzebiegu(biezacy, str, teksty)
 
-    fun kopiuj() {
-        val tresc = raport
+    fun kopiuj(tresc: String) {
         try {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
             cm?.setPrimaryClip(ClipData.newPlainText("MATURA", tresc))
@@ -1146,17 +1643,50 @@ fun VoiceTestScreen(
                 Text(str.voiceTestRepeat, color = Palette.Muted, fontSize = 12.sp, lineHeight = 17.sp)
                 Spacer(Modifier.height(14.dp))
 
+                // START i PRZERWIJ to DWA rozne przyciski. Do 0.9.16 byl jeden, ktory w trakcie
+                // przebiegu zmienial sie w PRZERWIJ — a uczen, ktory po dotknieciu START nie
+                // widzi zadnej reakcji (silnik z tego zgloszenia milczy!), dotyka go po raz
+                // drugi. Drugie dotkniecie zabijalo wlasnie zaczety przebieg i raport wracal
+                // pusty: "proby: 0/10 · PRZERWANY".
                 PrimaryButton(
                     label = when {
-                        probe.trwa -> str.voiceTestStop
+                        probe.trwa -> str.voiceTestRunning
                         // Przerwany przebieg tez jest przebiegiem: przycisk ma zapraszac do
                         // powtorki, a nie udawac, ze nic sie nie wydarzylo.
                         wyniki.isNotEmpty() || probe.skonczone || probe.przerwane -> str.voiceTestAgain
                         else -> str.voiceTestStart
                     },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag(TAG_TEST_START),
+                    // W trakcie przebiegu glowny przycisk jest MARTWY, a nie "przerywajacy".
+                    enabled = !probe.trwa,
                 ) {
-                    if (probe.trwa) probe.zwolnij() else uruchom()
+                    uruchom()
+                }
+
+                if (probe.trwa) {
+                    Spacer(Modifier.height(10.dp))
+                    // Mniejszy i osobny: przerwanie ma byc mozliwe, ale nie ma stac dokladnie
+                    // tam, gdzie przed chwila byl START.
+                    GhostButton(str.voiceTestStop, Modifier.testTag(TAG_TEST_STOP)) {
+                        probe.zwolnij(PowodPrzerwania.PRZYCISK)
+                    }
+                }
+
+                // Raport z poprzedniego przebiegu — tylko dopoki ten ekran nie ma wlasnego
+                // wyniku, bo od tej chwili KOPIUJ RAPORT nizej jest wazniejszy.
+                if (poprzedni != null && wyniki.isEmpty() && !probe.trwa &&
+                    !probe.skonczone && !probe.przerwane
+                ) {
+                    Spacer(Modifier.height(10.dp))
+                    GhostButton(str.voiceTestCopyLast, Modifier.testTag(TAG_TEST_KOPIUJ_OSTATNI)) {
+                        kopiuj(raportPrzebiegu(poprzedni, str, teksty))
+                    }
+                    if (skopiowane) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(str.voiceTestCopied, color = Palette.Accent, fontSize = 12.sp)
+                    }
                 }
 
                 if (brakZgody) {
@@ -1209,7 +1739,7 @@ fun VoiceTestScreen(
                     // i lista uslug. Do 0.9.11 wlasnie wtedy nie bylo czego skopiowac i uzytkownik
                     // wracal z jednym zdaniem — czyli z tym samym, co przed calym ekranem.
                     Spacer(Modifier.height(12.dp))
-                    GhostButton(str.voiceTestCopy) { kopiuj() }
+                    GhostButton(str.voiceTestCopy) { kopiuj(raport) }
                     if (skopiowane) {
                         Spacer(Modifier.height(8.dp))
                         Text(str.voiceTestCopied, color = Palette.Accent, fontSize = 12.sp)

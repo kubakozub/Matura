@@ -447,6 +447,11 @@ fun PlayScreen(
         voice.tekstJezykPolski = str.voiceLangPolish
         voice.tekstJezykAngielski = str.voiceLangEnglish
         voice.tekstBrakZgody = str.voiceNoPermission
+        // Brak pakietu offline nie jest awaria (nasluch idzie siecia), ale uczen ma prawo wiedziec,
+        // czemu glos nagle wymaga internetu — i jest to jedyna rzecz z tej listy, ktora moze
+        // naprawic sam. Propozycje pobrania pokazuje ekran testu mowy (OPCJE -> Test mowy),
+        // bo tam jest juz cala obsluga triggerModelDownload razem z postepem.
+        voice.tekstBrakModeluOnDevice = str.voiceNoOfflinePack
     }
 
     // Jezyk silnika ustala sie RAZ, przy starcie nasluchu — a w trybie losowym plansza zmienia
@@ -653,7 +658,9 @@ fun PlayScreen(
     // dac zgode w ustawieniach, doinstalowac aplikacje Google albo zwolnic mikrofon. Kolejnosc
     // i regula siedza w VoicePolicy (czysta logika, testowana bez Androida).
     fun toggleVoice() {
-        if (voice.listening) { voice.stop(); voiceMsg = ""; return }
+        // Powod wylaczenia idzie do dziennika diagnostyki: bez niego dotkniecie paska, pauza,
+        // zejscie w tlo i koniec drabinki zapisywaly sie w raporcie z telefonu identycznie.
+        if (voice.listening) { voice.stop(PowodStop.DOTKNIECIE); voiceMsg = ""; return }
         // Przy pauzie wyniki i tak sa odrzucane (onHeard), a pasek zapalilby sie na niby.
         if (paused) { voiceMsg = str.voicePaused; return }
         voice.refresh()
@@ -696,7 +703,7 @@ fun PlayScreen(
 
     // Pauza i koniec rundy koncza nasluch - mikrofon nie ma chodzic w tle.
     LaunchedEffect(paused, snap.gameOver) {
-        if ((paused || snap.gameOver) && voice.listening) { voice.stop(); voiceMsg = "" }
+        if ((paused || snap.gameOver) && voice.listening) { voice.stop(PowodStop.PAUZA); voiceMsg = "" }
     }
 
     // ZEJSCIE W TLO (HOME, przelaczenie aplikacji, zgaszony ekran). Zadne z nich nie wyprowadza
@@ -709,7 +716,7 @@ fun PlayScreen(
     // (remember(engine)), a obserwator kluczowany wlascicielem cyklu zyje dalej i pisalby do
     // poprzedniego — ta sama pulapka, ktora zalatano wyzej przy onExhausted.
     val wTlo by rememberUpdatedState({
-        if (voice.listening) { voice.stop(); voiceMsg = "" }
+        if (voice.listening) { voice.stop(PowodStop.TLO); voiceMsg = "" }
         // To NIE jest pauza od awarii: powrot z tla ma byc swiadomy, wiec zdejmuje ja dopiero
         // przycisk u gory, a nie pierwszy dotkniety klawisz.
         if (wstrzymacRunde(paused, engine.snapshot().gameOver)) paused = true

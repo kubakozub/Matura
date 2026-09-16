@@ -88,6 +88,16 @@ class Str(private val lang: UiLanguage) {
         "Brak pakietu mowy — wpisz odpowiedź",
         "Speech pack missing — type your answer",
     )
+    /**
+     * Silnik on-device NIE MA pobranego pakietu tego jezyka; "%s" to nazwa jezyka.
+     *
+     * To nie jest awaria: nasluch idzie dalej, tylko przez siec. Zdanie ma powiedziec uczniowi,
+     * co sie stalo i co da sie z tym zrobic — do 0.9.16 gra schodzila na siec zupelnie po cichu.
+     */
+    val voiceNoOfflinePack get() = pick(
+        "Brak pakietu offline: %s — słucham przez sieć",
+        "No offline %s pack — listening online",
+    )
     val voiceEngineSilent get() = pick(
         "Silnik mowy milczy (%s/%s) — wpisz odpowiedź",
         "Speech engine silent (%s/%s) — type your answer",
@@ -99,6 +109,48 @@ class Str(private val lang: UiLanguage) {
     // Po polsku mianownik po dwukropku ("Brak pakietu mowy: polski"), po angielsku przydawka ("no Polish speech pack").
     val voiceLangPolish get() = pick("polski", "Polish")
     val voiceLangEnglish get() = pick("angielski", "English")
+
+
+    // ---- SILNIK MOWY WBUDOWANY (offline, Vosk) -----------------------------
+    // Ustawienie w OPCJACH i komunikaty drogi offline. "Wbudowany" zamiast "Vosk":
+    // uczen nie ma powodu znac nazwy biblioteki, a ma powod wiedziec, ze ta droga
+    // nie potrzebuje ani internetu, ani aplikacji Google.
+    val speechEngine get() = pick("Silnik mowy", "Speech engine")
+    val speechEngineAuto get() = pick("AUTOMATYCZNY", "AUTOMATIC")
+    val speechEngineSystem get() = pick("SYSTEMOWY", "SYSTEM")
+    val speechEngineOffline get() = pick("WBUDOWANY", "BUILT-IN")
+    val speechEngineAutoDesc get() = pick(
+        "Najpierw systemowy, a gdy zamilknie — wbudowany.",
+        "System first; the built-in one takes over if it goes quiet.",
+    )
+    val speechEngineSystemDesc get() = pick(
+        "Rozpoznawanie Google lub producenta telefonu.",
+        "Recognition by Google or by your phone's maker.",
+    )
+    val speechEngineOfflineDesc get() = pick(
+        "Wbudowany w grę — działa bez internetu i bez aplikacji Google. Zajmuje więcej miejsca.",
+        "Built into the game — works with no internet and no Google app. Takes more space.",
+    )
+    /** Pierwsze uzycie glosu offline: model jedzie z pakietu na dysk. Trwa kilka sekund. */
+    val voskPreparing get() = pick("Przygotowuję głos offline…", "Preparing offline voice…")
+    /** Modelu nie da sie wczytac (brak miejsca, uszkodzone pliki) — zostaje wpisywanie. */
+    val voskUnavailable get() = pick(
+        "Głos offline niedostępny — wpisz odpowiedź",
+        "Offline voice unavailable — type your answer",
+    )
+    /** Telefon zglasza sie jako maloplamieciowy — model 100 MB by go przewrocil. */
+    val voskLowMemory get() = pick(
+        "Za mało pamięci na głos offline — wpisz odpowiedź",
+        "Not enough memory for offline voice — type your answer",
+    )
+    /**
+     * Przelacznik prywatnosci mikrofonu (Android 12+). To JEDYNY komunikat, ktory nazywa
+     * przyczyne ciszy wprost — dowiadujemy sie o niej z AppOps, a nie zgadujemy z braku probek.
+     */
+    val micPrivacyToggle get() = pick(
+        "Mikrofon wyłączony przełącznikiem prywatności",
+        "Microphone is off (privacy toggle)",
+    )
 
     // ---- Etap 3: trudne slowa i codzienna sesja ----------------------------
     val hardWordsMenu get() = pick("TRUDNE SŁOWA", "HARD WORDS")
@@ -151,6 +203,16 @@ class Str(private val lang: UiLanguage) {
     val voiceTestStart get() = pick("START", "START")
     val voiceTestStop get() = pick("PRZERWIJ", "STOP")
     val voiceTestAgain get() = pick("JESZCZE RAZ", "RUN AGAIN")
+    // Glowny przycisk w trakcie przebiegu jest MARTWY (PRZERWIJ stoi osobno, nizej): napis ma
+    // powiedziec, ze test idzie, zeby uczen nie dotykal go po raz drugi i nie zabijal przebiegu.
+    // Czcionka pikselowa przycisku nie ma polskich znakow — stad napis bez diakrytykow.
+    val voiceTestRunning get() = pick("TEST TRWA", "TEST RUNNING")
+    // Raport z POPRZEDNIEGO przebiegu przezyl zamkniecie aplikacji (SharedPreferences) — przebieg
+    // trwa okolo minuty i najczesciej konczy go system, ubijajac aplikacje w tle.
+    val voiceTestCopyLast get() = pick("KOPIUJ OSTATNI RAPORT", "COPY LAST REPORT")
+    // Proba zamknieta w locie przez przerwanie przebiegu (KOD_PRZERWANE) — to nie jest blad
+    // silnika i nie wolno jej tak opisac; reszta linii (czas, gotowosc, RMS max) zostaje.
+    val voiceTestAborted get() = pick("próba przerwana", "attempt interrupted")
     val voiceTestProgress get() = pick("Próba", "Attempt")
     val voiceTestCopy get() = pick("KOPIUJ RAPORT", "COPY REPORT")
     val voiceTestCopied get() = pick(
