@@ -435,7 +435,7 @@ class Str(private val lang: UiLanguage) {
  */
 private val PRIVACY_PL = """
 MATURA — słówka angielskie · polityka prywatności
-Ostatnia aktualizacja: 13 września 2026
+Ostatnia aktualizacja: 16 września 2026
 
 W SKRÓCIE
 Gra działa na Twoim urządzeniu. Nie ma kont, logowania, reklam ani śledzenia. Aplikacja nie ma uprawnienia dostępu do internetu, więc sama nie może niczego wysłać.
@@ -449,7 +449,8 @@ Te dane leżą w pamięci aplikacji i znikają po jej odinstalowaniu. Nie mamy d
 
 MIKROFON I TRYB GŁOSOWY
 Tryb głosowy jest opcjonalny — możesz grać, wpisując odpowiedzi z klawiatury. Jeśli go włączysz, aplikacja poprosi o zgodę na mikrofon (RECORD_AUDIO).
-• Nie nagrywamy dźwięku i nie zapisujemy plików audio.
+• W czasie gry nie nagrywamy dźwięku i nie zapisujemy plików audio — wypowiedź idzie prosto do usługi rozpoznawania mowy.
+• JEDYNY wyjątek to OPCJE → Test mikrofonu, uruchamiany ręcznie: żeby pokazać, czy mikrofon w ogóle działa, zapisuje on kilkusekundowe nagranie do prywatnej pamięci aplikacji i pozwala je odsłuchać. Plik jest nadpisywany przy każdym teście, znika po odinstalowaniu aplikacji i nigdzie nie jest wysyłany — aplikacja nie ma dostępu do internetu.
 • Wypowiedź zamienia na tekst usługa rozpoznawania mowy zainstalowana w Twoim telefonie (najczęściej Google, u niektórych producentów własna). Aplikacja dostaje sam tekst.
 • Jeśli telefon ma pobrany model rozpoznawania offline dla danego języka, używamy go i dźwięk nie opuszcza urządzenia. W przeciwnym razie rozpoznanie wykonuje usługa sieciowa dostawcy (najczęściej Google) — wtedy wypowiedź trafia do niego i podlega JEGO polityce prywatności.
 • To samo dotyczy systemowego okna dyktowania i mikrofonu na klawiaturze telefonu.
@@ -464,7 +465,7 @@ kuba1k@gmail.com · https://matura.uk/polityka-prywatnosci
 
 private val PRIVACY_EN = """
 MATURA — English vocabulary · privacy policy
-Last updated: 13 September 2026
+Last updated: 16 September 2026
 
 IN SHORT
 The game runs on your device. No accounts, no sign-in, no ads, no tracking. The app has no internet permission, so it cannot send anything anywhere by itself.
@@ -478,7 +479,8 @@ This data lives in the app storage and is removed when you uninstall the app. We
 
 MICROPHONE AND VOICE MODE
 Voice mode is optional — you can always type your answers. If you turn it on, the app asks for the microphone permission (RECORD_AUDIO).
-• We do not record or store any audio.
+• During play we do not record or store any audio — your speech goes straight to the speech recognition service.
+• The ONLY exception is OPTIONS → Microphone test, which you start yourself: to show whether the microphone works at all, it saves a few seconds of audio to the app's private storage and lets you play it back. The file is overwritten by the next test, disappears when you uninstall the app, and is never sent anywhere — the app has no internet access.
 • Your speech is turned into text by the speech recognition service installed on your phone (usually Google, sometimes the manufacturer's own). The app only receives the text.
 • If your phone has an offline recognition model for the language, we use it and the audio never leaves the device. Otherwise recognition happens in the provider's online service (usually Google) — your speech then goes to them under THEIR privacy policy.
 • The same applies to the system dictation dialog and to your keyboard's microphone key.

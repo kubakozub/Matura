@@ -60,6 +60,7 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.unit.dp
+import com.matura.app.BuildConfig
 import com.matura.app.game.Crate
 import com.matura.app.game.FlashKind
 import com.matura.app.game.GameConfig
@@ -736,6 +737,16 @@ fun PlayScreen(
     var diagnostyka by remember { mutableStateOf<String?>(null) }
     var pauzaOdDiagnostyki by remember { mutableStateOf(false) }
     fun pokazDiagnostyke() {
+        // NAKLADKA DIAGNOSTYCZNA TYLKO W BUILDZIE DEBUG.
+        //
+        // To trzecia — obok OPCJE -> Test mowy i OPCJE -> Test mikrofonu — powierzchnia
+        // diagnostyczna, i jedyna, ktora uczen moze otworzyc PRZYPADKIEM: wystarczy przytrzymac
+        // pasek glosu chwile dluzej. Pokazuje przy tym zrzut, ktory jest jezykiem raportu
+        // (wersja Androida, nazwy pakietow uslug, kody bledow, poziom RMS), a od chwili ukrycia
+        // tamtych dwoch ekranow wskazuje na dodatek droge, ktorej w wydaniu juz nie ma
+        // (str.voiceTestWhere ponizej). W wersji ze sklepu dlugie przytrzymanie po prostu
+        // nic nie robi; w buildzie debug dziala jak dotad.
+        if (!BuildConfig.DEBUG) return
         diagnostyka = voice.diagnostyka()
         nasluchPrzedDiagnostyka = voice.listening
         if (!paused) { paused = true; pauzaOdDiagnostyki = true }

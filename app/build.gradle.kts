@@ -31,6 +31,12 @@ android {
      */
     val zModelamiOffline = (project.findProperty("vosk") as String?)?.toBoolean() == true
     if (zModelamiOffline) {
+        // CZTERY architektury libvosk.so to 39 MB w paczce, a telefon uruchamia dokladnie jedna.
+        // Zostaja te dwie, ktore wystepuja na prawdziwych telefonach. WYLACZNIE dla buildu
+        // z Voskiem: w zwyklym wydaniu jedyna biblioteka natywna to libandroidx.graphics.path.so
+        // (10 kB na architekture), wiec obciecie ABI nie oszczedzilo by nic, a ODEBRALO BY
+        // aplikacji urzadzenia x86_64 (Chromebooki, tablety) — Google Play filtruje po ABI.
+        defaultConfig.ndk.abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         sourceSets.getByName("main").assets.srcDir("src/vosk-assets")
         sourceSets.getByName("main").java.srcDir("src/vosk/java")
         sourceSets.getByName("test").java.srcDir("src/vosk/test/java")
@@ -52,19 +58,6 @@ android {
         versionCode = 35
         versionName = "0.9.18"
 
-        ndk {
-            // CZTERY architektury libvosk.so to 39 MB w paczce, a telefon uruchamia dokladnie
-            // jedna. Zostaja te dwie, ktore wystepuja na prawdziwych urzadzeniach: arm64-v8a
-            // (wszystko od 2019) i armeabi-v7a (starsze telefony, ktore minSdk 24 jeszcze
-            // obejmuje). Wypadaja x86 (10,0 MB) i x86_64 (9,9 MB) — x86 nie ma zadnego
-            // wspolczesnego telefonu, a x86_64 to wylacznie emulator, ktorego ten projekt
-            // i tak nie uzywa (testy chodza na Robolectriku, na JVM).
-            //
-            // Kto bedzie chcial wrocic do emulatora: dopisac tu "x86_64" i przebudowac.
-            // Kto bedzie wydawal przez AAB: te linie mozna wtedy usunac w calosci, bo Google
-            // Play i tak dzieli paczke po ABI i telefon pobiera jedna biblioteke.
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
-        }
     }
 
     // Klucz do podpisu wydania czytany jest z keystore.properties, ktorego

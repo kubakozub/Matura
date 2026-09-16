@@ -40,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.matura.app.BuildConfig
 import com.matura.app.R
 import com.matura.app.model.Achievement
 import com.matura.app.model.Direction
@@ -620,16 +621,29 @@ fun OptionsScreen(
                 }
                 // Test mowy stoi obok prywatnosci, a nie przy dzwieku: to nie jest ustawienie
                 // gry, tylko narzedzie do jednego pytania — czemu mikrofon milczy na tym telefonie.
-                OptionRow(str.voiceTest, icon = R.drawable.icon_target) {
-                    GhostButton(str.voiceTestOpen) { onVoiceTest() }
-                }
+                // EKRANY DIAGNOSTYCZNE TYLKO W BUILDZIE DEBUG.
+                //
+                // Oba powstaly po to, zeby rozstrzygnac awarie mikrofonu na telefonie, ktorego
+                // nie mamy w reku, i do tego sluza dalej — ale ich jezyk jest jezykiem raportu
+                // (nazwy pakietow uslug, kody bledow SpeechRecognizer, dBFS, liczby probek),
+                // a nie jezykiem ucznia przygotowujacego sie do matury. W wersji ze sklepu
+                // OPCJE maja zawierac wylacznie to, czym uczen steruje.
+                //
+                // Kod ekranow zostaje w aplikacji i jest kompilowany w obu wariantach — znika
+                // sama DROGA do nich. Dzieki temu nastepne zgloszenie o mikrofonie zalatwia
+                // wyslanie buildu debug, a nie odtwarzanie skasowanych narzedzi.
+                if (BuildConfig.DEBUG) {
+                    OptionRow(str.voiceTest, icon = R.drawable.icon_target) {
+                        GhostButton(str.voiceTestOpen) { onVoiceTest() }
+                    }
 
-                // Test surowego mikrofonu stoi TUZ POD testem mowy, bo odpowiada na pytanie,
-                // ktore tamten zadaje dopiero wtedy, gdy zadna konfiguracja nic nie rozpoznala:
-                // czy do aplikacji w ogole wchodzi dzwiek. Bez tej odpowiedzi raport z testu mowy
-                // nie odroznia zepsutego silnika od mikrofonu oddajacego same zera.
-                OptionRow(str.rawMic, icon = R.drawable.icon_target) {
-                    GhostButton(str.rawMicOpen) { onRawMic() }
+                    // Test surowego mikrofonu stoi TUZ POD testem mowy, bo odpowiada na pytanie,
+                    // ktore tamten zadaje dopiero wtedy, gdy zadna konfiguracja nic nie rozpoznala:
+                    // czy do aplikacji w ogole wchodzi dzwiek. Bez tej odpowiedzi raport z testu mowy
+                    // nie odroznia zepsutego silnika od mikrofonu oddajacego same zera.
+                    OptionRow(str.rawMic, icon = R.drawable.icon_target) {
+                        GhostButton(str.rawMicOpen) { onRawMic() }
+                    }
                 }
                 Spacer(Modifier.height(16.dp))
                 InfoCard(str.speedNote)
