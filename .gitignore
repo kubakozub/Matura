@@ -31,3 +31,4 @@ docs/*.apk
 keystore.properties
 *.jks
 *.keystore
+.claude/

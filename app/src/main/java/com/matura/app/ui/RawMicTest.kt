@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.app.AppOpsManager
 import android.hardware.SensorPrivacyManager
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
@@ -771,14 +772,46 @@ class RawMicProbe(private val context: Context) {
     }
 
     /**
-     * Co system mowi o przelaczniku prywatnosci mikrofonu. Publiczne API daje TYLKO
-     * supportsSensorToggle() (API 31) — isSensorPrivacyEnabled() jest @SystemApi, wiec STANU
-     * przelacznika odczytac sie nie da i raport nie ma tego zmyslac. Stan rozstrzyga pomiar:
-     * strumien samych zer + isClientSilenced=TAK.
+     * Co system mowi o przelaczniku prywatnosci mikrofonu.
+     *
+     * SensorPrivacyManager.isSensorPrivacyEnabled() jest @SystemApi, wiec tamtedy stanu nie
+     * odczytamy — ale odczytamy go BOKIEM i to jest odczyt wiarygodny, a nie domysl. W AOSP
+     * przelacznik prywatnosci jest zrealizowany jako GLOBALNE ograniczenie AppOps na
+     * OP_RECORD_AUDIO (SensorPrivacyService -> AppOpsService), a publiczne
+     * AppOpsManager.unsafeCheckOpNoThrow(OPSTR_RECORD_AUDIO, ...) zwraca wtedy MODE_IGNORED.
+     * Do 0.9.17 raport pisal tu "stanu nie da sie odczytac" i przez to jedyna odpowiedz,
+     * jaka mial do zaoferowania na najczestsza przyczyne globalnej ciszy, brzmiala "nie wiem".
+     *
+     * MODE_IGNORED = zablokowany (przelacznik albo cofniete uprawnienie w AppOps); aplikacja
+     * dostaje wtedy same zera BEZ zadnego bledu — dokladnie objaw, ktory ten ekran ma nazwac.
      */
     fun przelacznikPrywatnosci(): String {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return "brak (API < 31)"
-        return try { toggleOpis() } catch (_: Throwable) { "nieznany" }
+        val sprzet = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) "brak (API < 31)"
+        else try { toggleOpis() } catch (_: Throwable) { "nieznany" }
+        return sprzet + " · AppOps RECORD_AUDIO: " + appOpsNagrywanie()
+    }
+
+    /**
+     * Stan operacji RECORD_AUDIO w AppOps — patrz [przelacznikPrywatnosci]. Od API 29;
+     * nizej ta droga nie istnieje i raport ma to powiedziec wprost, a nie milczec.
+     */
+    private fun appOpsNagrywanie(): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return "nie dotyczy (API < 29)"
+        return try {
+            val ops = context.getSystemService(AppOpsManager::class.java)
+                ?: return "nieznany (brak usługi)"
+            when (ops.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_RECORD_AUDIO,
+                android.os.Process.myUid(),
+                context.packageName,
+            )) {
+                AppOpsManager.MODE_ALLOWED -> "dozwolone"
+                AppOpsManager.MODE_IGNORED -> "ZABLOKOWANE (przełącznik prywatności albo AppOps)"
+                AppOpsManager.MODE_ERRORED -> "błąd"
+                AppOpsManager.MODE_DEFAULT -> "domyślne"
+                else -> "nieznany"
+            }
+        } catch (_: Throwable) { "nieznany" }
     }
 
     /**

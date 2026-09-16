@@ -341,7 +341,32 @@ fun nazwaBledu(kod: Int): String = when (kod) {
  * a nie o celnosc — ta jest sprawa dopasowania w grze.
  */
 fun ktoraZadzialala(wyniki: List<VoiceWynik>): VoiceWynik? =
-    wyniki.firstOrNull { !it.tekst.isNullOrBlank() }
+    wyniki.filter { !it.tekst.isNullOrBlank() }.maxByOrNull { ocenaProby(it) }
+
+/**
+ * Ile warta jest proba, ktora COS oddala. Do 0.9.17 wybor byl "pierwsza z brzegu" i na telefonie
+ * ze zgloszenia dal odpowiedz FALSZYWA: raport zakonczyl sie zdaniem "Dziala konfiguracja:
+ * on-device / offline / bias", chociaz ta proba oddala urwane "ko" i zamilkla, a cztery wiersze
+ * nizej lezaly konfiguracje, ktore oddaly pelne "kolano" — na silniku, ktory na tym telefonie
+ * naprawde dziala. Werdykt wysylal wiec prosto w jedyna zepsuta usluge.
+ *
+ * Wagi (od najwazniejszej):
+ *  - trafienie w ZAMOWIONE slowo — jedyny twardy dowod, ze droga rozpoznaje to, o co prosimy;
+ *  - zmierzony poziom dzwieku — silnik, ktory nie oddal ani jednej probki, jest podejrzany
+ *    nawet wtedy, gdy cos napisal (tak wlasnie wygladala proba 1 z telefonu);
+ *  - brak kodu bledu;
+ *  - dlugosc tekstu jako rozstrzygniecie remisu ("kolano" bije "ko").
+ */
+fun ocenaProby(w: VoiceWynik, zamowione: String = VOICE_TEST_SLOWO): Int {
+    val tekst = w.tekst.orEmpty().trim()
+    if (tekst.isBlank()) return 0
+    var punkty = 1
+    if (tekst.equals(zamowione, ignoreCase = true)) punkty += 8
+    else if (tekst.contains(zamowione, ignoreCase = true)) punkty += 6
+    if (w.maxRms != Float.NEGATIVE_INFINITY) punkty += 4
+    if (w.blad == null || w.blad == 0) punkty += 2
+    return punkty * 100 + minOf(tekst.length, 99)
+}
 
 /**
  * Jedno zdanie na koniec: ktora konfiguracja dziala, ze zadna — albo ze przebieg nie doszedl

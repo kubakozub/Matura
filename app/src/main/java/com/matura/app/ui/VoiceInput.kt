@@ -148,6 +148,41 @@ class VoiceInput(private val context: Context) {
     private var attemptedOnline = false
 
     /**
+     * Czy system w ogole ma rozpoznawanie on-device. Sama DOSTEPNOSC, nie decyzja o uzyciu —
+     * i to rozroznienie jest sednem poprawki 0.9.17.
+     *
+     * DOWOD Z URZADZENIA (test mowy, motorola edge 50 neo, Android 16, 11 prob):
+     *   on-device / offline / bias  -> "ko", urwane, ZERO probek poziomu
+     *   on-device / offline / bias50-> cisza, ZERO probek poziomu
+     *   on-device / offline         -> cisza, ZERO probek poziomu
+     *   service / com.google.android.as -> cisza, ZERO probek poziomu
+     *   default (offline)           -> ROZPOZNANE w 1,5 s
+     *   service / com.google.android.tts -> ROZPOZNANE
+     * Na tym telefonie zepsuta jest DOKLADNIE JEDNA usluga — com.google.android.as — i gra
+     * trafiala w nia przy kazdym starcie, bo probe() ustawial ON_DEVICE na podstawie samej
+     * odpowiedzi isOnDeviceRecognitionAvailable. A createOnDeviceSpeechRecognizer IGNORUJE
+     * ComponentName (system_server podstawia config_defaultOnDeviceSpeechRecognitionService),
+     * wiec drabinka nie miala jak zejsc z tej uslugi, majac dwie sprawne obok.
+     *
+     * Bramka modelu jezyka z 0.9.16 tego nie ratuje: polski model na tym telefonie JEST
+     * zainstalowany ("zainstalowane: pl-PL"), wiec bramka przepuszczala i wysylala aplikacje
+     * prosto w martwy silnik. Dlatego awaria przezyla osiem wydan.
+     *
+     * Od 0.9.17 punktem wyjscia jest silnik DOMYSLNY — ten, ktory system sam wskazuje dla
+     * aplikacji trzecich i ktory sam siega po model offline, gdy go ma. On-device zostaje
+     * droga awaryjna dla urzadzen, na ktorych domyslnego nie ma wcale.
+     */
+    private var onDeviceDostepne = false
+
+    /**
+     * Pakiety uslug, ktore w TEJ sesji zglosily gotowosc i nie oddaly ani probki dzwieku, ani
+     * tekstu. Drabinka ma isc do przodu, a nie wracac do silnika, o ktorym wlasnie zmierzyla,
+     * ze jest martwy — bez tej listy refresh() i resetujDrabinke() potrafily wstawic go z
+     * powrotem na poczatek kolejki przy nastepnym dotknieciu paska.
+     */
+    private val martweSilniki = HashSet<String>()
+
+    /**
      * Czy on-device ma MODEL dla tagu jezyka — odpowiedz SpeechRecognizer.checkRecognitionSupport
      * (API 33+). Klucz: tag ("pl-PL"); brak klucza = jeszcze nie pytano. Wypelniane sonda w tle
      * ([sprawdzModeleWTle]) i przed pierwszym wiazaniem sesji ([start]).
@@ -296,13 +331,26 @@ class VoiceInput(private val context: Context) {
      * jesli go ma.
      */
     fun probe() {
-        mode = when {
+        onDeviceDostepne = try {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                SpeechRecognizer.isOnDeviceRecognitionAvailable(context) -> VoiceMode.ON_DEVICE
+                SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        } catch (_: Throwable) { false }
+        // KOLEJNOSC ODWROCONA W 0.9.17 — patrz dlugi komentarz przy [onDeviceDostepne].
+        // Najpierw silnik DOMYSLNY, on-device dopiero, gdy domyslnego nie ma wcale.
+        mode = when {
             SpeechRecognizer.isRecognitionAvailable(context) -> VoiceMode.ONLINE
+            onDeviceDostepne -> VoiceMode.ON_DEVICE
             else -> VoiceMode.UNAVAILABLE
         }
-        preferOffline = mode == VoiceMode.ON_DEVICE
+        // Offline wymuszamy tylko tam, gdzie wiemy, ze jest czym: model tego jezyka
+        // potwierdzony przez checkRecognitionSupport. Silnik domyslny z potwierdzonym modelem
+        // oddal na telefonie ze zgloszenia wynik w 1,5 s; ten sam silnik bez modelu potrafi
+        // odmowic albo zamilknac, wiec bez potwierdzenia nie prosimy o offline.
+        preferOffline = when (mode) {
+            VoiceMode.ON_DEVICE -> true
+            VoiceMode.ONLINE -> modelOnDevice[language] == true
+            VoiceMode.UNAVAILABLE -> false
+        }
     }
 
     /**
@@ -459,6 +507,32 @@ class VoiceInput(private val context: Context) {
     val silnikOpis: String
         get() = silniki.getOrNull(silnikIdx)?.packageName?.substringAfterLast('.') ?: "domyślny"
 
+    /**
+     * Klucz biezacego silnika na czarnej liscie ([martweSilniki]). Tryb on-device ma wlasny
+     * klucz, bo tam nazwy uslugi NIE ZNAMY: createOnDeviceSpeechRecognizer wiaze to, co wskaze
+     * system, i ComponentName jest ignorowany — wiec zapamietujemy sama DROGE.
+     */
+    private fun kluczSilnika(): String = when {
+        mode == VoiceMode.ON_DEVICE -> "on-device"
+        else -> silniki.getOrNull(silnikIdx)?.packageName ?: ("domyslny:" + domyslnaUsluga())
+    }
+
+    /**
+     * Silnik zglosil gotowosc i nie oddal ani probki dzwieku, ani tekstu — czyli zmierzylismy,
+     * ze jest martwy. Do konca sesji drabinka ma go omijac.
+     *
+     * Bez tej listy [refresh] i [resetujDrabinke] potrafily wstawic go z powrotem na poczatek
+     * kolejki przy nastepnym dotknieciu paska, a uczen znow czekal pelne DZWIEK_MS na ten sam
+     * wynik. Na telefonie ze zgloszenia dotyczy to com.google.android.as.
+     */
+    private fun oznaczMartwy() {
+        val klucz = kluczSilnika()
+        if (martweSilniki.add(klucz)) {
+            ostrzez("silnik " + klucz + " uznany za martwy (gotowosc bez dzwieku i bez tekstu)")
+            dziennik.dodaj(System.currentTimeMillis(), "martwy silnik: " + klucz.substringAfterLast('.'))
+        }
+    }
+
     // EXTRA_LANGUAGE_PREFERENCE i EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE celowo NIE sa tu
     // dodawane. Wbrew nazwom nie sa to dodatki do zlecenia rozpoznawania: dokumentacja
     // RecognizerIntent opisuje pierwszy jako KLUCZ w Bundle ZWRACANYM przez rozgloszenie
@@ -542,6 +616,7 @@ class VoiceInput(private val context: Context) {
         dziennik.dodaj(System.currentTimeMillis(), "cisza cyklu (" + silnikOpis + ") — schodzę")
         ostatniBlad = ERROR_WATCHDOG
         zanotujProbe(silnikOpis + ":cisza-cyklu")
+        oznaczMartwy()
         // Uczen ma widziec, ze silnik sie zmienil — tak samo jak w galeziach PUSTY_CYKL
         // i BRAK_JEZYKA. Bez tego pasek milczy przez cala zmiane silnika i wyglada jak zawis.
         if (escalate()) status = tekstInnySilnik
@@ -565,6 +640,7 @@ class VoiceInput(private val context: Context) {
         dziennik.dodaj(System.currentTimeMillis(), "brak dźwięku z mikrofonu")
         ostatniBlad = ERROR_BEZ_DZWIEKU
         zanotujProbe(silnikOpis + ":" + ERROR_BEZ_DZWIEKU)
+        oznaczMartwy()
         if (escalate()) status = tekstInnySilnik
         else wyczerpane(friendlyError(ERROR_BEZ_DZWIEKU))
     }
@@ -946,15 +1022,34 @@ class VoiceInput(private val context: Context) {
         //    (Samsung) domyslna usluga nalezy do producenta i nie obsluguje aplikacji trzecich,
         //    a usluga Google siedzi obok i dziala, tylko trzeba sie z nia zwiazac po nazwie.
         if (silniki.isEmpty()) silniki = dostepneSilniki()
-        if (silnikIdx + 1 < silniki.size) {
-            silnikIdx += 1
-            log("escalate 3/3: usluga " + (silnikIdx + 1) + "/" + silniki.size +
+        // Martwe pomijamy zamiast tracic na kazde z nich pelne DZWIEK_MS jeszcze raz.
+        var nastepny = silnikIdx + 1
+        while (nastepny < silniki.size && silniki[nastepny].packageName in martweSilniki) {
+            log("escalate: pomijam martwa usluge " + silniki[nastepny].packageName)
+            nastepny += 1
+        }
+        if (nastepny < silniki.size) {
+            silnikIdx = nastepny
+            log("escalate 3/4: usluga " + (silnikIdx + 1) + "/" + silniki.size +
                 " = " + silniki[silnikIdx].packageName)
             useEngine(VoiceMode.ONLINE, offline = false)
             scheduleRestart(80L)
             return true
         }
-        ostrzez("escalate: drabinka wyczerpana (uslug: " + silniki.size + ")")
+        // 4) OSTATNI szczebel, nie pierwszy: rozpoznawanie on-device. Do 0.9.16 gra ZACZYNALA
+        //    tutaj i na telefonie ze zgloszenia trafiala prosto w jedyna martwa usluge
+        //    (com.google.android.as), majac dwie sprawne obok. Teraz on-device dostaje szanse
+        //    dopiero, gdy zawiodly wszystkie uslugi, ktore da sie wskazac po nazwie.
+        if (onDeviceDostepne && "on-device" !in martweSilniki && mode != VoiceMode.ON_DEVICE &&
+            modelOnDevice[language] != false
+        ) {
+            log("escalate 4/4: ostatnia szansa — rozpoznawanie on-device")
+            useEngine(VoiceMode.ON_DEVICE, offline = true)
+            scheduleRestart(80L)
+            return true
+        }
+        ostrzez("escalate: drabinka wyczerpana (uslug: " + silniki.size +
+            ", martwych: " + martweSilniki.size + ")")
         return false
     }
 
@@ -1219,6 +1314,9 @@ class VoiceInput(private val context: Context) {
         // ZANIM zwiazemy sie z nim na sesje. Bez tego pytania on-device bez pakietu melduje
         // gotowosc i milczy (zgloszenie z Motoroli). Sonda w tle (refresh) zwykle juz odpowiedziala;
         // tu czekamy tylko, gdy odpowiedzi jeszcze nie ma — najwyzej MODEL_MS.
+        // Silnik domyslny prosimy o prace offline TYLKO z potwierdzonym modelem tego jezyka —
+        // z nim oddal wynik w 1,5 s na telefonie ze zgloszenia, bez niego potrafi zamilknac.
+        if (mode == VoiceMode.ONLINE && silnikIdx < 0) preferOffline = modelOnDevice[language] == true
         if (mode == VoiceMode.ON_DEVICE && recognizer == null && !modelSprawdzony(language)) {
             czekamNaSilnik = true   // pasek: "uruchamiam mikrofon…"
             log("start: sprawdzam model on-device dla " + language)
@@ -1438,7 +1536,10 @@ class VoiceInput(private val context: Context) {
      * w droge sesji, ktora juz trwa (ta ma wlasne pytanie w [start]).
      */
     private fun sprawdzModeleWTle() {
-        if (sondaWTleZlecona || mode != VoiceMode.ON_DEVICE) return
+        // Bramka na DOSTEPNOSCI on-device, nie na trybie: od 0.9.17 sesja zaczyna w trybie
+        // ONLINE, wiec warunek "mode == ON_DEVICE" wyciszalby sonde modelu na zawsze — a to
+        // wlasnie jej odpowiedz decyduje, czy wolno poprosic silnik domyslny o prace offline.
+        if (sondaWTleZlecona || !onDeviceDostepne) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
         sondaWTleZlecona = true
         val tagi = JEZYKI_GRY.filter { !modelSprawdzony(it) }

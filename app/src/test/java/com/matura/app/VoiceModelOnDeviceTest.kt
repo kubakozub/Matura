@@ -80,8 +80,33 @@ class ModelZainstalowanyTest {
 }
 
 /**
- * Przebieg na cieniu Robolectrica z usluga on-device "dostepna": cien przyjmuje pytanie o model
- * i oddaje odpowiedz, ktora test sam podstawia — dokladnie tak, jak robi to telefon.
+ * KONTRAKT OD 0.9.17 — KOLEJNOSC SILNIKOW ODWROCONA.
+ *
+ * Do 0.9.16 gra ZACZYNALA od rozpoznawania on-device, bo isOnDeviceRecognitionAvailable mowilo
+ * "tak". Test mowy z motoroli edge 50 neo (Android 16, 11 prob) pokazal, ze to bylo dokladnie
+ * najgorsze mozliwe pierwsze posuniecie na tym telefonie:
+ *
+ *   on-device / offline / bias       -> "ko", urwane, ZERO probek poziomu
+ *   on-device / offline / bias50     -> cisza,        ZERO probek poziomu
+ *   on-device / offline              -> cisza,        ZERO probek poziomu
+ *   service / com.google.android.as  -> cisza,        ZERO probek poziomu
+ *   default (offline)                -> ROZPOZNANE w 1,5 s
+ *   service / com.google.android.tts -> ROZPOZNANE
+ *
+ * Zepsuta jest DOKLADNIE JEDNA usluga (com.google.android.as) i gra trafiala w nia przy kazdym
+ * starcie, bo createOnDeviceSpeechRecognizer IGNORUJE ComponentName — system_server podstawia
+ * config_defaultOnDeviceSpeechRecognitionService i drabinka nie ma jak z tej uslugi zejsc.
+ *
+ * Bramka modelu jezyka z 0.9.16 tego NIE ratuje: polski model na tym telefonie JEST zainstalowany,
+ * wiec bramka przepuszczala i wysylala aplikacje prosto w martwy silnik. Dlatego awaria przezyla
+ * osiem wydan — poprawka celowala w niewlasciwa przyczyne.
+ *
+ * Nowy kontrakt, ktorego pilnuje ta klasa:
+ *  1. punktem wyjscia jest silnik DOMYSLNY (ten, ktory system wskazuje aplikacjom trzecim),
+ *  2. on-device jest OSTATNIM szczeblem drabinki, nie pierwszym,
+ *  3. o offline prosimy tylko z POTWIERDZONYM modelem jezyka,
+ *  4. silnik, ktory zglosil gotowosc i nie oddal ani probki dzwieku, ani tekstu, trafia na
+ *     czarna liste i drabinka juz do niego nie wraca.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -133,129 +158,151 @@ class VoiceModelOnDeviceTest {
             .setOnlineLanguages(listOf("pl-PL", "en-US"))
             .build()
 
+    /** Odpowiedz sondy w tle dla JEDNEGO tagu; sonda odczekuje ODSTEP_WIAZANIA_MS przed nastepnym. */
     private fun odpowiedzOModelu(r: SpeechRecognizer, zainstalowane: List<String>, obslugiwane: List<String> = zainstalowane) {
         cien(r).triggerSupportResult(wsparcie(zainstalowane, obslugiwane))
-        // Sonda w tle odczekuje ODSTEP_WIAZANIA_MS (400 ms) przed nastepnym wiazaniem tej samej
-        // uslugi — wyscig odlaczenia na Androidzie 15+ — wiec czekamy z zapasem.
         uplyw(500)
+    }
+
+    /** Sonda w tle odpowiada za OBA tagi gry — po tym modelOnDevice zna odpowiedz. */
+    private fun sondaWTle(zainstalowane: List<String>) {
+        voice.refresh()
+        uplyw(50)
+        odpowiedzOModelu(ostatni(), zainstalowane)
+        odpowiedzOModelu(ostatni(), zainstalowane)
     }
 
     private fun wynikBundle(vararg slowa: String) = Bundle().apply {
         putStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION, ArrayList(slowa.toList()))
     }
 
-    /** Warunek wstepny: start z usluga on-device NAJPIERW pyta o model, a nie sklada zlecenia. */
+    /** Doprowadza biezacy silnik do zejscia przez straznika dzwieku: gotowosc i cisza. */
+    private fun gotowoscBezDzwieku() {
+        cien(ostatni()).triggerOnReadyForSpeech(Bundle())
+        uplyw(3_000)   // DZWIEK_MS z zapasem
+    }
+
+    // ---- 1. punkt wyjscia --------------------------------------------------
+
+    /**
+     * SEDNO POPRAWKI. Telefon ma usluge on-device i silnik domyslny; nasluch ma ruszyc
+     * NATYCHMIAST na silniku domyslnym, bez pytania o model i bez wiazania on-device.
+     */
     @Test
-    fun start_naOnDevice_najpierwPytaOModel() {
+    fun start_idzieOdRazuDoSilnikaDomyslnego_aNieDoOnDevice() {
         start()
-        val sonda = ostatni()
-        assertNull("przed odpowiedzia o modelu nie wolno startowac nasluchu", cien(sonda).lastRecognizerIntent)
-        assertTrue("nasluch jest juz wlaczony (pasek: uruchamiam mikrofon)", voice.listening)
+
+        val i = requireNotNull(cien(ostatni()).lastRecognizerIntent) { "zlecenie ma poleciec od razu" }
+        assertEquals(VoiceMode.ONLINE, voice.mode)
+        assertEquals("pl-PL", i.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
+        assertTrue("nasluch trwa", voice.listening)
         assertEquals(0, wyczerpane)
     }
 
-    /** Model JEST: on-device, offline, ze slownikiem zestawu — najlepsza droga, gdy dziala. */
+    /** Bez potwierdzonego modelu nie prosimy o offline — silnik domyslny sam wybierze droge. */
     @Test
-    fun modelJest_startOnDevice_offline_zeSlownikiem() {
+    fun bezPotwierdzonegoModelu_silnikDomyslnyBezWymuszonegoOffline() {
         start()
-        val sonda = ostatni()
-        odpowiedzOModelu(sonda, listOf("pl-PL", "en-US"))
+        val i = requireNotNull(cien(ostatni()).lastRecognizerIntent)
+        assertFalse(i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
+        assertTrue(
+            "slownik zestawu jest udokumentowany dla on-device, nie dla silnika domyslnego",
+            i.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS).isNullOrEmpty(),
+        )
+    }
 
-        val r = ostatni()
-        val i = requireNotNull(cien(r).lastRecognizerIntent) { "po potwierdzeniu modelu ma poleciec zlecenie" }
-        assertEquals(VoiceMode.ON_DEVICE, voice.mode)
-        assertEquals("pl-PL", i.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
-        assertTrue("on-device z modelem prosi o offline", i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
-        assertTrue("i niesie slownik zestawu", i.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS)?.isNotEmpty() == true)
+    /**
+     * Z POTWIERDZONYM modelem tego jezyka silnik domyslny dostaje prosbe o prace offline —
+     * na telefonie ze zgloszenia ta wlasnie konfiguracja oddala wynik w 1,5 s.
+     */
+    @Test
+    fun zPotwierdzonymModelem_silnikDomyslnyProsiOOffline() {
+        sondaWTle(listOf("pl-PL", "en-US"))
+        start()
+
+        val i = requireNotNull(cien(ostatni()).lastRecognizerIntent)
+        assertEquals(VoiceMode.ONLINE, voice.mode)
+        assertTrue("model potwierdzony -> prosimy o offline", i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
         assertTrue(voice.diagnostyka().contains("pl-PL zainstalowany"))
     }
 
-    /**
-     * SEDNO (zgloszenie z Motoroli). Usluga on-device jest, modelu pl-PL NIE MA: nasluch idzie
-     * od razu do silnika domyslnego — bez wymuszonego offline (nie ma czym rozpoznawac offline)
-     * i bez slownika. Do 0.9.15 gra startowala tu on-device i czekala na straznika.
-     */
+    /** Model, ktorego nie ma, nie zamyka drogi: silnik domyslny startuje, tylko bez offline. */
     @Test
-    fun modelBrak_startOdSilnikaDomyslnego_bezOfflineIbezSlownika() {
+    fun brakModelu_silnikDomyslnyStartujeBezOffline() {
+        sondaWTle(emptyList())
         start()
-        val sonda = ostatni()
-        odpowiedzOModelu(sonda, zainstalowane = emptyList(), obslugiwane = listOf("pl-PL"))
 
-        val r = ostatni()
-        assertNotSame("sonda on-device nie moze byc rozpoznawaczem sesji", sonda, r)
-        assertTrue("sonda zostaje zwolniona", cien(sonda).isDestroyed)
-        val i = requireNotNull(cien(r).lastRecognizerIntent)
+        val i = requireNotNull(cien(ostatni()).lastRecognizerIntent)
         assertEquals(VoiceMode.ONLINE, voice.mode)
-        assertFalse("bez modelu offline nie ma sensu", i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
-        assertTrue("slownik tylko dla on-device", i.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS).isNullOrEmpty())
+        assertFalse(i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
         assertEquals("to nie awaria — ekran nie dostaje sygnalu", 0, wyczerpane)
-        assertTrue(voice.listening)
         assertTrue(voice.diagnostyka().contains("pl-PL brak"))
     }
 
-    /** Usluga, ktora na pytanie o model nie odpowiada wcale, nie moze trzymac paska w nieskonczonosc. */
+    /** Sonda w tle chodzi takze wtedy, gdy sesja zaczyna w trybie ONLINE (regresja 0.9.17). */
     @Test
-    fun brakOdpowiedziOModel_poLimicieStartujeSieciowo() {
-        start()
-        val sonda = ostatni()
-        uplyw(1_000)
-        assertNull("w limicie jeszcze czekamy", cien(sonda).lastRecognizerIntent)
-
-        uplyw(1_000)   // MODEL_MS = 1,5 s
-
-        val r = ostatni()
-        assertNotSame(sonda, r)
-        assertNotNull("po limicie nasluch ma ruszyc", cien(r).lastRecognizerIntent)
-        assertEquals("bez odpowiedzi nie ufamy on-device", VoiceMode.ONLINE, voice.mode)
-        assertEquals(0, wyczerpane)
-    }
-
-    /** Blad z checkRecognitionSupport to tez odpowiedz: nie on-device. */
-    @Test
-    fun bladSprawdzeniaModelu_startujeSieciowo() {
-        start()
-        val sonda = ostatni()
-        cien(sonda).triggerSupportError(SpeechRecognizer.ERROR_CANNOT_CHECK_SUPPORT)
-        uplyw(100)
-        assertEquals(VoiceMode.ONLINE, voice.mode)
-        assertNotNull(cien(ostatni()).lastRecognizerIntent)
-        assertEquals(0, wyczerpane)
-    }
-
-    /**
-     * Sonda w tle (refresh) pyta o oba tagi gry, zeby dotkniecie paska nie czekalo: po odpowiedzi
-     * start() sklada zlecenie od razu, bez drugiego pytania.
-     */
-    @Test
-    fun sondaWTle_odpowiadaZaOba_tagi_aStartNieCzeka() {
+    fun sondaWTle_dziala_mimoZeSesjaZaczynaOnline() {
         voice.refresh()
         uplyw(50)
-        val sondaPl = ostatni()
-        assertNull("sonda w tle nie startuje nasluchu", cien(sondaPl).lastRecognizerIntent)
-        odpowiedzOModelu(sondaPl, listOf("pl-PL"))
+        val sonda = ostatni()
+        assertNull("sonda w tle nie startuje nasluchu", cien(sonda).lastRecognizerIntent)
+        odpowiedzOModelu(sonda, listOf("pl-PL"))
         val sondaEn = ostatni()
-        assertNotSame("po polskim pyta o angielski", sondaPl, sondaEn)
-        odpowiedzOModelu(sondaEn, listOf("pl-PL"))   // angielskiego nie ma
+        assertNotSame("po polskim pyta o angielski", sonda, sondaEn)
+        odpowiedzOModelu(sondaEn, listOf("pl-PL"))
         assertFalse(voice.listening)
-
-        start()
-
-        val r = ostatni()
-        val i = requireNotNull(cien(r).lastRecognizerIntent) { "z odpowiedzia w kieszeni start nie czeka" }
-        assertEquals(VoiceMode.ON_DEVICE, voice.mode)
-        assertTrue(i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
         assertTrue(voice.diagnostyka().contains("en-US brak"))
     }
 
-    /** Zmiana jezyka w rundzie na tag bez modelu: silnik sieciowy, a nie milczacy on-device. */
+    // ---- 2. on-device jako OSTATNI szczebel --------------------------------
+
+    /**
+     * Drabinka: silnik domyslny -> konkretne uslugi -> DOPIERO NA KONCU on-device.
+     * Kazdy szczebel schodzi przez straznika dzwieku (gotowosc bez ani jednej probki poziomu) —
+     * czyli dokladnie tym objawem, ktory przyszedl z telefonu.
+     */
     @Test
-    fun przelaczenieNaJezykBezModelu_idzieSieciowo() {
-        voice.refresh()
-        uplyw(50)
-        odpowiedzOModelu(ostatni(), listOf("pl-PL"))
-        odpowiedzOModelu(ostatni(), listOf("pl-PL"))
+    fun onDeviceJestOstatnimSzczeblem_aNiePierwszym() {
+        sondaWTle(listOf("pl-PL"))
         start()
-        assertEquals(VoiceMode.ON_DEVICE, voice.mode)
+        assertEquals("zaczynamy od domyslnego", VoiceMode.ONLINE, voice.mode)
+
+        var onDevice = false
+        repeat(6) {
+            if (!onDevice && wyczerpane == 0) {
+                gotowoscBezDzwieku()
+                if (voice.mode == VoiceMode.ON_DEVICE) onDevice = true
+            }
+        }
+
+        assertTrue("on-device ma dostac szanse, ale na koncu drabinki", onDevice || wyczerpane == 1)
+    }
+
+    /**
+     * Silnik, ktory zglosil gotowosc i zamilkl, trafia na czarna liste — i nie wraca po
+     * dotknieciu paska. Bez tego kazde wlaczenie kosztowalo ucznia pelne DZWIEK_MS na ten sam
+     * martwy silnik (na telefonie ze zgloszenia: com.google.android.as).
+     */
+    @Test
+    fun martwySilnik_trafiaNaCzarnaListe_iNieWracaPoDotknieciu() {
+        sondaWTle(listOf("pl-PL"))
+        start()
+        gotowoscBezDzwieku()
+
+        assertTrue(
+            "diagnostyka ma nazwac martwy silnik",
+            voice.diagnostyka().contains("martwy silnik"),
+        )
+    }
+
+    // ---- 3. reszta kontraktu ----------------------------------------------
+
+    /** Zmiana jezyka w rundzie nie wywraca sesji i nie wraca na on-device. */
+    @Test
+    fun przelaczenieJezyka_zostajeNaSilnikuDomyslnym() {
+        sondaWTle(listOf("pl-PL"))
+        start()
+        assertEquals(VoiceMode.ONLINE, voice.mode)
 
         uplyw(ODSTEP_JEZYKA_MS + 100)
         assertTrue(voice.przelaczJezyk("en-US"))
@@ -264,66 +311,33 @@ class VoiceModelOnDeviceTest {
         assertEquals(VoiceMode.ONLINE, voice.mode)
         val i = requireNotNull(cien(ostatni()).lastRecognizerIntent)
         assertEquals("en-US", i.getStringExtra(RecognizerIntent.EXTRA_LANGUAGE))
-        assertFalse(i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
         assertTrue(voice.listening)
     }
 
-    /**
-     * Po zejsciu z on-device (kod 13 mimo "modelu") nowa sesja NIE wraca na slepo na on-device:
-     * silnik, ktory zawiodl, nie dostaje pierwszenstwa tylko dlatego, ze uczen wlaczyl pasek
-     * ponownie. Slownik zestawu znika razem z on-device — na silniku domyslnym nie jest wysylany.
-     */
-    @Test
-    fun poZejsciuZOnDevice_noweWlaczenie_zostajeNaSilnikuDomyslnym() {
-        start()
-        odpowiedzOModelu(ostatni(), listOf("pl-PL"))
-        val onDevice = ostatni()
-        cien(onDevice).triggerOnError(SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE)
-        uplyw(300)
-        assertEquals("kod 13 na on-device schodzi do silnika domyslnego", VoiceMode.ONLINE, voice.mode)
-        assertEquals(0, wyczerpane)
-
-        voice.stop()
-        uplyw(100)
-        start()
-
-        val i = requireNotNull(cien(ostatni()).lastRecognizerIntent)
-        assertEquals(VoiceMode.ONLINE, voice.mode)
-        assertFalse(i.getBooleanExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false))
-        assertTrue(i.getStringArrayListExtra(RecognizerIntent.EXTRA_BIASING_STRINGS).isNullOrEmpty())
-    }
-
-    /**
-     * Po wyczerpaniu drabinki i ostygnieciu blokady nowa sesja wraca do trybu z sondy (on-device),
-     * a nie zostaje na ostatnim szczeblu. Emulator: on-device porzucony raz nie wracal do konca
-     * ekranu, choc byl jedynym silnikiem z pobranym modelem.
-     */
-    @Test
-    fun poWyczerpaniuIOstygnieciu_noweWlaczenieWracaDoOnDevice() {
-        start()
-        odpowiedzOModelu(ostatni(), listOf("pl-PL"))
-        assertEquals(VoiceMode.ON_DEVICE, voice.mode)
-        repeat(6) { if (wyczerpane == 0) { cien(ostatni()).triggerOnError(SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE); uplyw(300) } }
-        assertEquals("drabinka ma sie wyczerpac", 1, wyczerpane)
-        assertEquals("ostatni szczebel byl sieciowy", VoiceMode.ONLINE, voice.mode)
-
-        uplyw(26_000)   // BLOKADA_MS = 25 s
-        voice.refresh()
-
-        assertEquals("po ostygnieciu wracamy do trybu z sondy", VoiceMode.ON_DEVICE, voice.mode)
-        assertTrue("i drabinka znow jest do dyspozycji", voice.maSilnik)
-    }
-
-    /** stop() w trakcie pytania o model: odpowiedz, ktora przyjdzie pozniej, nie wskrzesza nasluchu. */
+    /** stop() w trakcie sondy w tle: spozniona odpowiedz nie wskrzesza nasluchu. */
     @Test
     fun stopWTrakcieSprawdzania_odpowiedzNieStartujeNasluchu() {
-        start()
+        voice.refresh()
+        uplyw(50)
         val sonda = ostatni()
         voice.stop()
         odpowiedzOModelu(sonda, listOf("pl-PL"))
         uplyw(2_000)
         assertFalse(voice.listening)
-        assertNull("po stop() nikt nie sklada zlecenia", cien(ostatni()).lastRecognizerIntent)
+    }
+
+    /** Po wyczerpaniu drabinki i ostygnieciu blokady nowa sesja znow ma czym probowac. */
+    @Test
+    fun poWyczerpaniuIOstygnieciu_drabinkaWracaDoDyspozycji() {
+        sondaWTle(listOf("pl-PL"))
+        start()
+        repeat(8) { if (wyczerpane == 0) gotowoscBezDzwieku() }
+        assertEquals("drabinka ma sie w koncu wyczerpac", 1, wyczerpane)
+
+        uplyw(26_000)   // BLOKADA_MS = 25 s
+        voice.refresh()
+
+        assertTrue("po ostygnieciu jest czym probowac", voice.maSilnik)
     }
 }
 

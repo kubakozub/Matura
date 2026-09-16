@@ -481,3 +481,48 @@ class VoiceTestMatrixTest {
         assertTrue(k.nazwa.contains("bias"))
     }
 }
+
+/**
+ * WERDYKT NIE MOZE WSKAZYWAC ZEPSUTEGO SILNIKA.
+ *
+ * Raport z motoroli edge 50 neo (11 prob) skonczyl sie zdaniem "Dziala konfiguracja:
+ * on-device / offline / bias", chociaz ta proba oddala urwane "ko" i ani jednej probki poziomu,
+ * a nizej lezaly trzy konfiguracje z pelnym "kolano" i zmierzonym dzwiekiem. Wybor "pierwsza
+ * z brzegu" wysylal wiec uzytkownika prosto w jedyna martwa usluge na tym telefonie.
+ */
+class WerdyktWyboruTest {
+
+    private fun w(nazwa: String, tekst: String?, rms: Float = Float.NEGATIVE_INFINITY, blad: Int? = null) =
+        com.matura.app.ui.VoiceWynik(
+            nazwa = nazwa, gotowy = true, maxRms = rms, czesciowe = tekst != null,
+            tekst = tekst, blad = blad, czasMs = 8_000,
+        )
+
+    @Test
+    fun pelneSlowoZeZmierzonymDzwiekiem_bijeUrwanyFragmentBezDzwieku() {
+        val wyniki = listOf(
+            w("on-device / offline / bias", "ko"),                    // pierwsza, ale martwy silnik
+            w("default / net-ok", "kolano", rms = 10f),               // ta jest odpowiedzia
+            w("service / com.google.android.tts", "kolano", rms = 10f),
+        )
+        assertEquals("default / net-ok", com.matura.app.ui.ktoraZadzialala(wyniki)?.nazwa)
+    }
+
+    @Test
+    fun zadnegoTekstu_toBrakOdpowiedzi() {
+        val wyniki = listOf(w("on-device / offline", null), w("service / as", null, blad = 7))
+        assertNull(com.matura.app.ui.ktoraZadzialala(wyniki))
+    }
+
+    @Test
+    fun przyRownymTekscie_decydujeZmierzonyDzwiek() {
+        val wyniki = listOf(w("a", "kolano"), w("b", "kolano", rms = 3f))
+        assertEquals("b", com.matura.app.ui.ktoraZadzialala(wyniki)?.nazwa)
+    }
+
+    @Test
+    fun cudzeSlowo_przegrywaZZamowionym() {
+        val wyniki = listOf(w("a", "telefon", rms = 10f), w("b", "kolano", rms = 10f))
+        assertEquals("b", com.matura.app.ui.ktoraZadzialala(wyniki)?.nazwa)
+    }
+}
