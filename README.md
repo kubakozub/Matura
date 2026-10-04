@@ -1,5 +1,10 @@
 # Matura — CLASSIC
 
+[![Pobierz z Google Play](https://img.shields.io/badge/Google%20Play-pobierz-a8e05a?style=for-the-badge&logo=googleplay&logoColor=101322&labelColor=101322)](https://play.google.com/store/apps/details?id=com.matura.app&referrer=utm_source%3Dgithub%26utm_medium%3Dreadme%26utm_campaign%3Drepo)
+[![Strona i demo w przeglądarce](https://img.shields.io/badge/matura.uk-demo%20w%20przegl%C4%85darce-101322?style=for-the-badge&labelColor=a8e05a)](https://matura.uk)
+
+**Aplikacja jest w Google Play — darmowa, bez reklam i bez konta.** Grę można też przetestować bez instalacji w przeglądarce na [matura.uk](https://matura.uk).
+
 Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
 *Verbume — Verbum + Game*. Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 
