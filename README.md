@@ -5,6 +5,10 @@
 
 **Aplikacja jest w Google Play — darmowa, bez reklam i bez konta.** Grę można też przetestować bez instalacji w przeglądarce na [matura.uk](https://matura.uk).
 
+[![Zwiastun gry MATURA — 32 s na YouTube](https://matura.uk/assets/zwiastun.527946e5.png)](https://www.youtube.com/watch?v=B8ScJBjyoMg)
+
+*Zwiastun (32 s) — kliknij obrazek, żeby obejrzeć na YouTube.*
+
 Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
 *Verbume — Verbum + Game*. Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 
