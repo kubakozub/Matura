@@ -3,6 +3,7 @@ package com.matura.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -166,7 +167,38 @@ fun InfoCard(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun StatRow(label: String, value: String, icon: ImageBitmap? = null) {
+fun StatRow(
+    label: String,
+    value: String,
+    icon: ImageBitmap? = null,
+    stacked: Boolean = false,
+) {
+    if (stacked) {
+        // Długie wartości (np. tytuł zestawu) nie mieszczą się obok etykiety —
+        // wtedy etykieta idzie nad wartością, obie na pełną szerokość.
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 7.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (icon != null) {
+                    PixelImage(icon, Modifier.size(18.dp))
+                    Spacer(Modifier.width(9.dp))
+                }
+                Text(label, color = Palette.Muted, fontSize = 13.sp, maxLines = 1)
+            }
+            Spacer(Modifier.height(5.dp))
+            Text(
+                value,
+                color = Palette.Bone,
+                fontSize = 14.sp,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        return
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -179,8 +211,9 @@ fun StatRow(label: String, value: String, icon: ImageBitmap? = null) {
                 PixelImage(icon, Modifier.size(18.dp))
                 Spacer(Modifier.width(9.dp))
             }
-            Text(label, color = Palette.Muted, fontSize = 13.sp)
+            Text(label, color = Palette.Muted, fontSize = 13.sp, maxLines = 2)
         }
+        Spacer(Modifier.width(10.dp))
         PixelText(value, color = Palette.Bone, glyphHeight = 10.dp)
     }
 }

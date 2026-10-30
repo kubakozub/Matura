@@ -1,0 +1,36 @@
+GIMP Palette
+Name: Matura
+Columns: 8
+#
+ 16  19  34	outline
+ 22  26  44	night_deep
+ 34  38  60	night
+ 43  47  74	night_mid
+ 58  63  94	night_soft
+ 59  65  96	steel_dark
+ 91 100 120	steel_shade
+154 164 184	steel
+200 210 224	steel_light
+244 241 228	paper
+232 228 210	paper_warm
+143 138 118	grey
+ 74 122  40	green_dark
+124 194  66	green
+168 224  90	green_light
+ 74  52 136	purple_dark
+122  90 201	purple
+160 126 232	purple_light
+160  47  47	red_dark
+224  82  79	red
+255 122 107	red_light
+ 42 127 150	cyan_dark
+ 74 198 224	cyan
+143 230 242	cyan_light
+160 111  24	amber_dark
+242 178  60	amber
+255 215 122	amber_light
+ 92  58  23	wood_dark
+139  90  43	wood
+176 122  60	wood_light
+205 127  50	bronze
+229 228 226	silver

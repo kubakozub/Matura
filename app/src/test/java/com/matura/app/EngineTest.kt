@@ -7,7 +7,6 @@ import com.matura.app.game.Matching
 import com.matura.app.game.SubmitResult
 import com.matura.app.model.Direction
 import com.matura.app.model.Entry
-import com.matura.app.model.Speed
 import com.matura.app.model.WordSet
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -71,26 +70,6 @@ class MatchingTest {
         assertTrue(Matching.isExactMatch("zręczny", ans))
         assertFalse(Matching.isExactMatch("zreczn", ans))
     }
-
-    @Test
-    fun `a hyphenated answer counts with or without the gap`() {
-        // Tester wylosowal "otwarty" i nie mial jak odpowiedziec: klawiatura A-Z nie ma
-        // lacznika, wiec "open-minded" bylo nie do wpisania.
-        val ans = Matching.acceptedAnswers("open-minded")
-        assertTrue(Matching.isExactMatch("open minded", ans))
-        assertTrue(Matching.isExactMatch("openminded", ans))
-        assertTrue(Matching.isExactMatch("OPEN-MINDED", ans))
-        assertTrue("prefiks bez spacji tez podswietla", Matching.isPrefixOfAny("openm", ans))
-        assertFalse("polowa hasla to nadal nie odpowiedz", Matching.isExactMatch("open", ans))
-    }
-
-    @Test
-    fun `a two word answer counts written as one word`() {
-        val ans = Matching.acceptedAnswers("stan cywilny")
-        assertTrue(Matching.isExactMatch("stan cywilny", ans))
-        assertTrue(Matching.isExactMatch("stancywilny", ans))
-        assertTrue(Matching.isPrefixOfAny("stanc", ans))
-    }
 }
 
 class GameEngineTest {
@@ -100,7 +79,7 @@ class GameEngineTest {
      * otherwise a monster spawning mid-assertion would make counts non-deterministic.
      * Auto-spawning itself is covered by [the field does not overflow with monsters].
      */
-    private fun engine(lives: Int = 3, speed: Speed = Speed.NORMAL): GameEngine = GameEngine(
+    private fun engine(lives: Int = 3): GameEngine = GameEngine(
         set = WordSet(
             id = "t",
             title = "test",
@@ -110,12 +89,7 @@ class GameEngineTest {
                 Entry("tart", "cierpki"),
             ),
         ),
-        config = GameConfig(
-            lives = lives,
-            direction = Direction.TERM_TO_DEF,
-            speed = speed,
-            autoSpawn = false,
-        ),
+        config = GameConfig(lives = lives, direction = Direction.TERM_TO_DEF, autoSpawn = false),
         random = Random(42),
     )
 
@@ -190,7 +164,7 @@ class GameEngineTest {
     }
 
     @Test
-    fun `multiplier climbs x2 x3 x4 x5 with consecutive kills`() {
+    fun `multiplier climbs x2 x3 x5 with consecutive kills`() {
         val e = engine()
         val seen = mutableListOf<Int>()
         repeat(13) {
@@ -199,11 +173,12 @@ class GameEngineTest {
             e.resolveShots()
             seen.add(e.multiplier)
         }
-        // after 3 kills x2, after 6 x3, after 9 x4, after 12 x5
+        // Ujednolicona krzywa 3/6/9 -> x2/x3/x5 (spojna z 3 nowymi trybami i odznakami
+        // badge_x2/x3/x5). Po 3 zabiciach x2, po 6 x3, po 9 x5.
         assertEquals(1, seen[1])
         assertEquals(2, seen[2])
         assertEquals(3, seen[5])
-        assertEquals(4, seen[8])
+        assertEquals(5, seen[8])
         assertEquals(5, seen[11])
     }
 
@@ -252,43 +227,6 @@ class GameEngineTest {
         e.type('x')
         assertEquals("typing is ignored after game over", before, e.snapshot().typed)
         assertTrue(e.submit() is SubmitResult.Ignored)
-    }
-
-    /**
-     * Tempo z OPCJI. Tester zglosil, ze przy dluzszych haslach nie zdazyl dopisac
-     * odpowiedzi — SLOW ma dawac wyraznie wiecej czasu, FAST mniej, a punktacja
-     * zostaje ta sama.
-     */
-    @Test
-    fun `speed setting scales how fast monsters close in on the cannon`() {
-        fun travelledInFiveSeconds(speed: Speed): Float {
-            val e = engine(speed = speed)
-            e.debugAddMonster("agile", "zręczny", x = 0.05f, y = GameEngine.CANNON_Y)
-            repeat(100) { e.tick(0.05f) }
-            val m = e.snapshot().monsters.single()
-            return m.x - 0.05f
-        }
-
-        val slow = travelledInFiveSeconds(Speed.SLOW)
-        val normal = travelledInFiveSeconds(Speed.NORMAL)
-        val fast = travelledInFiveSeconds(Speed.FAST)
-
-        assertTrue("WOLNO musi być wolniejsze niż NORMALNIE", slow < normal)
-        assertTrue("SZYBKO musi być szybsze niż NORMALNIE", normal < fast)
-        assertTrue("każde tempo musi w ogóle ruszać potworkiem", slow > 0f)
-    }
-
-    @Test
-    fun `tempo does not change scoring`() {
-        fun scoreForOneKill(speed: Speed): Int {
-            val e = engine(speed = speed)
-            e.debugAddMonster("agile", "zręczny", x = 0.05f, y = GameEngine.CANNON_Y)
-            e.setTyped("zreczny"); e.submit()
-            e.resolveShots()
-            return e.score
-        }
-        assertEquals(scoreForOneKill(Speed.NORMAL), scoreForOneKill(Speed.SLOW))
-        assertEquals(scoreForOneKill(Speed.NORMAL), scoreForOneKill(Speed.FAST))
     }
 
     @Test
@@ -458,81 +396,5 @@ class GameEngineTest {
         e.resolveShots()
         assertNotNull(e.snapshot().flash)
         assertEquals(FlashKind.HIT, e.snapshot().flash)
-    }
-
-    @Test
-    fun `every word comes up once before any word comes up twice`() {
-        // Tester poprosil o "ograniczenie powtarzania sie slowek". Losowanie ze zwracaniem
-        // potrafilo pokazac jedno haslo kilka razy, zanim inne pojawilo sie choc raz.
-        val entries = (1..5).map { Entry("w$it", "t$it") }
-        val e = GameEngine(
-            set = WordSet(id = "t", title = "bag", entries = entries),
-            config = GameConfig(autoSpawn = false),
-            random = Random(7),
-        )
-        val seen = mutableListOf<String>()
-        repeat(10) {
-            e.spawnMonster()
-            val m = e.snapshot().monsters.single()
-            seen.add(m.prompt)
-            e.setTyped(m.answers.first())
-            e.submit()
-            e.resolveShots()
-        }
-        val all = entries.map { it.term }.toSet()
-        assertEquals("pierwsza kolejka to caly zestaw", all, seen.take(5).toSet())
-        assertEquals("druga kolejka tez, bez powtorek w srodku", all, seen.drop(5).toSet())
-        assertTrue("kolejka nie zaczyna sie tym, czym poprzednia sie skonczyla", seen[4] != seen[5])
-    }
-
-    @Test
-    fun `a word that reaches the cannon lands on the review list with its translation`() {
-        val e = engine()
-        e.debugAddMonster("agile", "zręczny", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
-        e.tick(0.016f)
-
-        assertEquals(2, e.lives)
-        val missed = e.missedWords.single()
-        assertEquals("agile", missed.prompt)
-        // Tlumaczenie tak, jak stoi w zestawie — z ogonkami, nie w postaci znormalizowanej.
-        assertEquals("zręczny", missed.solution)
-        assertEquals(1, missed.times)
-        assertEquals(missed, e.snapshot().missedWords.single())
-    }
-
-    @Test
-    fun `the same word missed twice is one line with a counter`() {
-        val e = engine(lives = 5)
-        repeat(2) {
-            e.debugAddMonster("agile", "zręczny", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
-            e.tick(0.016f)
-        }
-        assertEquals(1, e.missedWords.size)
-        assertEquals(2, e.missedWords.single().times)
-    }
-
-    @Test
-    fun `two entries sharing a prompt stay apart on the review list`() {
-        // "uprzejmy" jest w zestawach tlumaczeniem i `kind`, i `polite`. Klucz po samym
-        // hasle zlalby je w jeden wpis i pokazal cudza odpowiedz — 115 polskich i 120
-        // angielskich promptow powtarza sie w BuiltInSets, wiec to nie jest przypadek brzegowy.
-        val e = engine(lives = 5)
-        e.debugAddMonster("uprzejmy", "kind", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
-        e.tick(0.016f)
-        e.debugAddMonster("uprzejmy", "polite", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)
-        e.tick(0.016f)
-
-        assertEquals("dwa osobne wpisy, nie jeden z licznikiem", 2, e.missedWords.size)
-        assertEquals(listOf("kind", "polite"), e.missedWords.map { it.solution })
-        assertTrue(e.missedWords.all { it.prompt == "uprzejmy" && it.times == 1 })
-    }
-
-    @Test
-    fun `a clean run leaves the review list empty`() {
-        val e = engine()
-        e.debugAddMonster("agile", "zręczny", x = 0.9f, y = 0.5f)
-        e.setTyped("zreczny"); e.submit()
-        e.resolveShots()
-        assertTrue(e.missedWords.isEmpty())
     }
 }

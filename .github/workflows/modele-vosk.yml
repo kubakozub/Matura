@@ -1,0 +1,30 @@
+# Kontrola, czy paczki modeli Vosk w upstreamie nadal sa tym, co przypiete.
+#
+# DLACZEGO TO ISTNIEJE. Modeli nie trzymamy w repozytorium — trzymamy przepis:
+# adres paczki, jej skrot SHA-256 i skroty 26 plikow, ktore z niej wychodza po
+# tools/vosk-slim.py. Przepis jest bezwartosciowy, jesli upstream podmieni plik pod
+# tym samym adresem: dowiedzielibysmy sie o tym dopiero przy wydaniu. Raz w tygodniu
+# ten przebieg pobiera paczki i sprawdza CALY lancuch, az do skrotow wyniku.
+name: Modele Vosk
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skroty:
+    name: Paczki upstreamu zgodne z przypietymi skrotami
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pobierz, odchudz, sprawdz skroty
+        run: ./tools/vosk-fetch.sh
+
+      - name: Powtorna kontrola (idempotencja)
+        run: ./tools/vosk-fetch.sh --verify

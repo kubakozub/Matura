@@ -1,6 +1,5 @@
 # Gradle
 .gradle/
-.kotlin/
 build/
 */build/
 local.properties
@@ -18,16 +17,23 @@ Thumbs.db
 
 # Robocze
 warmup.log
+build.log
+build3.log
+test2.log
+
+# Cache kompilatora Kotlin (zrzuty bledow)
+.kotlin/
 
 # APK trafia do docs/ ręcznie przed publikacją na Pages, nie do historii
 docs/*.apk
-
-# Obrazy referencyjne podgladow: 1,5 MB, ktore zmieniaja sie przy kazdej poprawce
-# ukladu. Ta sama zasada co przy APK — binaria rozdymaja .git. Generuje je
-# `./gradlew :app:updateDebugScreenshotTest` i sluza do ogladania, nie do historii.
-app/src/debug/screenshotTest/
 
 # Klucz do podpisu wydania - nigdy do repozytorium
 keystore.properties
 *.jks
 *.keystore
+.claude/
+
+# Modele rozpoznawania offline (Vosk) - 107 MB cudzych wag, NIE do historii gita.
+# Odtwarzane z paczek upstreamu przez tools/vosk-fetch.sh (wynik identyczny bajt
+# w bajt, sprawdzany skrotami z tools/vosk-models.sha256).
+app/src/vosk-assets/

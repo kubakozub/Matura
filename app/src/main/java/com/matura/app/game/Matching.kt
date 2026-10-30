@@ -1,14 +1,15 @@
 package com.matura.app.game
 
+import com.matura.app.model.Entry
+
 /**
  * Answer normalisation and prefix matching.
  *
  * The in-game keyboard drawn in the design document has only A-Z, space, backspace
  * and cursor keys — no Polish diacritics. A player therefore cannot literally type
  * "zręczny", so matching has to be diacritic-insensitive or the game is unplayable
- * with its own keyboard. Comparison is also case-insensitive, tolerant of repeated
- * whitespace, and — because the keyboard has no hyphen either — accepts a hyphenated
- * or multi-word answer written with or without the gap.
+ * with its own keyboard. Comparison is also case-insensitive and tolerant of
+ * repeated whitespace.
  */
 object Matching {
 
@@ -57,13 +58,7 @@ object Matching {
         val out = LinkedHashSet<String>()
         fun add(s: String) {
             val n = normalize(s)
-            if (n.isEmpty()) return
-            out.add(n)
-            // Tester nie mial jak wpisac "open-minded": lacznik nie miesci sie na
-            // klawiaturze A-Z, a normalizacja zamienia go na spacje. Wersja bez spacji
-            // jest przyjmowana obok tej ze spacja, wiec i "open minded", i "openminded"
-            // sa poprawne — a podpowiedz prefiksu dziala w obu przypadkach.
-            if (' ' in n) out.add(n.replace(" ", ""))
+            if (n.isNotEmpty()) out.add(n)
         }
         add(definition)
         for (part in definition.split(',', ';', '/')) {
@@ -71,7 +66,33 @@ object Matching {
             val withoutGloss = part.replace(Regex("\\([^)]*\\)"), " ")
             add(withoutGloss)
         }
+        // Hasła z łącznikiem i wielowyrazowe: "open-minded" zalicza się także jako
+        // "open minded" i "openminded" — normalizacja zamienia łącznik na spację,
+        // a tu dokładamy wariant zupełnie bez odstępów.
+        for (variant in out.toList()) {
+            if (variant.contains(' ')) out.add(variant.replace(" ", ""))
+        }
         return out.toList()
+    }
+
+    /**
+     * Wszystkie akceptowane odpowiedzi dla PYTANIA o tresci [prompt]: suma
+     * [acceptedAnswers] po stronie odpowiedzi KAZDEGO wiersza, ktorego strona
+     * pytania normalizuje sie tak samo jak [prompt]. Przy haslach wieloznacznych
+     * ("reka" -> arm/hand) zaden poprawny wariant nie zostanie wtedy uznany za
+     * falsz ani uzyty jako dystraktor.
+     */
+    fun answersForPrompt(entries: List<Entry>, prompt: String, termToDef: Boolean): Set<String> {
+        val key = normalize(prompt)
+        if (key.isEmpty()) return emptySet()
+        val out = LinkedHashSet<String>()
+        for (e in entries) {
+            val promptSide = if (termToDef) e.term else e.definition
+            if (normalize(promptSide) == key) {
+                out += acceptedAnswers(if (termToDef) e.definition else e.term)
+            }
+        }
+        return out
     }
 
     /** True when [typed] is a prefix of any accepted answer. Empty input matches nothing. */

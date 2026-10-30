@@ -1,0 +1,76 @@
+Matura — a vocabulary game for the Polish matura exam
+Copyright 2026 Jakub Kozub
+
+This product includes software and data developed by third parties.
+Their notices follow. Versions are the ones this build pins; see
+build.gradle.kts and app/build.gradle.kts for the authoritative list.
+
+
+================================================================================
+SPEECH RECOGNITION MODELS (optional, not stored in this repository)
+================================================================================
+
+The offline speech recognition path (-Pvosk=true) uses two acoustic models
+from the Vosk project by Alpha Cephei Inc:
+
+  vosk-model-small-pl-0.22       Apache License 2.0
+  vosk-model-small-en-us-0.15    Apache License 2.0
+                                 "Copyright 2020 Alpha Cephei Inc"
+
+  Source: https://alphacephei.com/vosk/models
+
+THESE MODELS ARE NOT REDISTRIBUTED HERE. They are downloaded from the address
+above by tools/vosk-fetch.sh, which verifies the published archives against
+pinned SHA-256 digests.
+
+MODIFICATIONS MADE (required by Apache License 2.0, section 4b). tools/vosk-slim.py
+rewrites one file of each model, graph/Gr.fst: the arcs of the language model are
+removed and only its symbol table is kept, leaving a valid FST with a single final
+state and no transitions. The application always builds its recognizers from an
+explicit word grammar, so Vosk composes its own grammar FST with graph/HCLr.fst and
+never traverses an arc of Gr.fst; it needs that file solely for the symbol table.
+This removes about 34 MB (Polish) and 21 MB (English) per model. No other file of
+either model is altered. The reasoning is documented in full at the top of
+tools/vosk-slim.py.
+
+The Android binding com.alphacephei:vosk-android:0.3.75 is also licensed under
+the Apache License 2.0 and depends on net.java.dev.jna:jna:5.18.1, which is
+dual-licensed under the Apache License 2.0 and the LGPL 2.1 or later; it is used
+here under the Apache License 2.0.
+
+
+================================================================================
+LIBRARIES
+================================================================================
+
+Apache License 2.0:
+
+  Kotlin standard library and compiler plugins, 2.0.21
+      Copyright 2010-2026 JetBrains s.r.o. and Kotlin Programming Language
+      contributors
+  org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3
+  Jetpack Compose (BOM 2024.10.01): ui, ui-graphics, foundation, material3
+  androidx.core:core-ktx:1.13.1
+  androidx.activity:activity-compose:1.9.3
+  androidx.lifecycle:lifecycle-runtime-ktx:2.8.7
+      Copyright The Android Open Source Project
+  Android Gradle Plugin 8.7.3, Gradle 8.14.3
+
+Test-only dependencies, not shipped in the application:
+
+  org.robolectric:robolectric:4.14.1                  MIT License
+  junit:junit:4.13.2                                  Eclipse Public License 1.0
+  androidx.test.ext:junit:1.2.1                       Apache License 2.0
+  androidx.compose.ui:ui-test-junit4,
+  androidx.compose.ui:ui-test-manifest                Apache License 2.0
+
+
+================================================================================
+ARTWORK, BITMAP FONT AND VOCABULARY
+================================================================================
+
+The pixel-art sprites (app/src/main/res/drawable-nodpi, atlas and palette in
+docs/pack), the 8x8 bitmap font font_8x8, the vocabulary sets in
+app/src/main/java/com/matura/app/data/BuiltInSets.kt and the design document in
+docs/ are the author's own work. The palette, grid and naming rules are
+documented in docs/pack/README.md.

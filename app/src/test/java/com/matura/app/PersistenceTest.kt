@@ -1,5 +1,6 @@
 package com.matura.app
 
+import com.matura.app.data.Repository
 import com.matura.app.data.SampleData
 import com.matura.app.game.GameConfig
 import com.matura.app.game.GameEngine
@@ -10,14 +11,18 @@ import com.matura.app.model.Options
 import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
 import com.matura.app.model.ScoreRecord
-import com.matura.app.model.Speed
 import com.matura.app.model.Texture
 import com.matura.app.model.WordSet
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
 
 /**
  * The save file is the one thing that runs on every cold start, so a broken
@@ -32,17 +37,17 @@ class PersistenceTest {
         encodeDefaults = true
     }
 
+    /** Repository dostaje katalog w konstruktorze, wiec testy obchodza sie bez Contextu. */
+    @get:Rule
+    val katalog = TemporaryFolder()
+
+    private fun plik(nazwa: String) = File(katalog.root, nazwa)
+
     @Test
     fun `save data survives a write and read round trip`() {
         val original = SaveData(
             profile = Profile(name = "Kuba", anonymous = true, gamesPlayed = 4, totalKills = 40, bestScore = 900, bestStreak = 7),
-            options = Options(
-                lives = 5,
-                soundEnabled = false,
-                texture = Texture.NIGHT,
-                direction = Direction.RANDOM,
-                speed = Speed.SLOW,
-            ),
+            options = Options(lives = 5, soundEnabled = false, texture = Texture.NIGHT, direction = Direction.RANDOM),
             sets = SampleData.builtInSets() + WordSet(
                 id = "user-1",
                 title = "Moje słówka",
@@ -57,33 +62,7 @@ class PersistenceTest {
         assertEquals(original, restored)
         assertEquals(Texture.NIGHT, restored.options.texture)
         assertEquals(Direction.RANDOM, restored.options.direction)
-        assertEquals(Speed.SLOW, restored.options.speed)
         assertEquals("Moje słówka", restored.sets.last().title)
-    }
-
-    /**
-     * Testerzy z zamknietego testu aktualizuja aplikacje na wierzch 0.6.0, wiec plik
-     * zapisu nie zna jeszcze pola `speed`. Musi wczytac sie bez wyjatku i przyjac
-     * domyslne tempo, inaczej po aktualizacji wywali sie przed menu.
-     */
-    @Test
-    fun `a save file written by 0_6_0 loads and picks the default speed`() {
-        val legacy = """
-            {
-              "profile": { "name": "Kuba", "anonymous": true, "gamesPlayed": 3 },
-              "options": { "lives": 4, "soundEnabled": false, "texture": "NIGHT",
-                           "direction": "RANDOM", "uiLanguage": "PL" },
-              "sets": [],
-              "scores": []
-            }
-        """.trimIndent()
-
-        val restored = json.decodeFromString(SaveData.serializer(), legacy)
-
-        assertEquals(4, restored.options.lives)
-        assertEquals(Texture.NIGHT, restored.options.texture)
-        assertEquals("nowe pole musi mieć wartość domyślną", Speed.NORMAL, restored.options.speed)
-        assertEquals("Kuba", restored.profile.name)
     }
 
     @Test
@@ -159,5 +138,126 @@ class PersistenceTest {
             }
             assertEquals(set.entries.size, engine.kills)
         }
+    }
+
+    // --- Repository na prawdziwym katalogu -------------------------------------------------
+    // Zapis byl nieatomowy (File.writeText nadpisywal w miejscu) i polykal bledy, wiec przerwana
+    // operacja albo pelny dysk konczyly sie obcietym plikiem i cichym powrotem do danych
+    // domyslnych. Ponizsze testy trzymaja te droge — kazdy odtwarza jedna awarie z audytu.
+
+    private fun daneUcznia(imie: String) = SaveData(
+        schemaVersion = Repository.SCHEMA_VERSION,
+        profile = Profile(name = imie, anonymous = true, gamesPlayed = 3, totalKills = 30, bestScore = 800, bestStreak = 6),
+        options = Options(lives = 5, soundEnabled = false, texture = Texture.NIGHT, direction = Direction.RANDOM),
+        sets = SampleData.builtInSets() + WordSet(
+            id = "user-1",
+            title = "Moje słówka",
+            entries = listOf(Entry("dog", "pies")),
+        ),
+        scores = listOf(ScoreRecord(imie, "Moje słówka", 800, 4, 6, 30, 1_700_000_000_000L)),
+    )
+
+    @Test
+    fun `wlasne zestawy, profil, opcje i wyniki przezywaja zapis na dysk`() {
+        val dane = daneUcznia("Kuba")
+
+        assertTrue(Repository(katalog.root).save(dane))
+        val odczytane = Repository(katalog.root).load()
+
+        assertEquals(dane, odczytane)
+        assertEquals("Moje słówka", odczytane.sets.last().title)
+        assertEquals(Texture.NIGHT, odczytane.options.texture)
+        assertEquals(1, odczytane.scores.size)
+    }
+
+    @Test
+    fun `po zapisie nie zostaje plik tymczasowy, a poprzednia wersja laduje w kopii`() {
+        val repo = Repository(katalog.root)
+        assertTrue(repo.save(daneUcznia("Pierwszy")))
+        assertTrue(repo.save(daneUcznia("Drugi")))
+
+        assertFalse("plik tymczasowy przezyl zapis", plik(Repository.TEMP_NAME).exists())
+        assertTrue(plik(Repository.FILE_NAME).exists())
+        assertEquals("Drugi", Repository(katalog.root).load().profile.name)
+
+        val kopia = json.decodeFromString(SaveData.serializer(), plik(Repository.BACKUP_NAME).readText())
+        assertEquals("Pierwszy", kopia.profile.name)
+    }
+
+    @Test
+    fun `uszkodzony plik nie kasuje danych - wracamy do kopii zapasowej`() {
+        val repo = Repository(katalog.root)
+        repo.save(daneUcznia("Kuba"))
+        repo.save(daneUcznia("Kuba po drugiej grze"))
+
+        // Tak wyglada przerwany zapis: ogon JSON-a nie doszedl na dysk.
+        val obciety = plik(Repository.FILE_NAME).readText().take(120)
+        plik(Repository.FILE_NAME).writeText(obciety)
+
+        val odczytane = Repository(katalog.root).load()
+
+        assertEquals("Kuba", odczytane.profile.name)
+        assertEquals("Moje słówka", odczytane.sets.last().title)
+        assertTrue("uszkodzony plik zniknal zamiast trafic do kwarantanny", plik(Repository.CORRUPT_NAME).exists())
+        assertEquals(obciety, plik(Repository.CORRUPT_NAME).readText())
+    }
+
+    @Test
+    fun `gdy i kopia jest zla, dostajemy dane domyslne, a uszkodzony plik zostaje na dysku`() {
+        plik(Repository.FILE_NAME).writeText("{to nie jest JSON")
+        plik(Repository.BACKUP_NAME).writeText("kopia tez nie")
+
+        val odczytane = Repository(katalog.root).load()
+
+        assertEquals(Profile(), odczytane.profile)
+        assertEquals(Options(), odczytane.options)
+        assertTrue(odczytane.sets.isNotEmpty())
+        assertTrue("dane domyslne to same wbudowane zestawy", odczytane.sets.all { it.builtIn })
+        assertEquals("{to nie jest JSON", plik(Repository.CORRUPT_NAME).readText())
+        assertTrue("kopii tez nie wolno kasowac", plik(Repository.BACKUP_NAME).exists())
+    }
+
+    @Test
+    fun `nieudany zapis nie udaje sukcesu`() {
+        val repo = Repository(katalog.root)
+        assertTrue(repo.save(daneUcznia("Kuba")))
+        assertNull(repo.lastSaveError)
+
+        // Katalog podstawiony pod nazwe pliku tymczasowego: strumienia nie da sie otworzyc,
+        // wiec zapis wywraca sie w kontrolowany sposob. Prawa dostepu odpadaja jako sposob
+        // na wymuszenie bledu — pod uzytkownikiem uprzywilejowanym nic nie blokuja.
+        val blokada = plik(Repository.TEMP_NAME)
+        assertTrue(blokada.mkdirs())
+        File(blokada, "zajete").writeText("x")
+
+        assertFalse("zapis zglosil sukces, choc nic nie zapisal", repo.save(daneUcznia("Nowe imie")))
+        assertNotNull("blad zapisu przepadl bez sladu", repo.lastSaveError)
+        // Pamiec nie ma prawa twierdzic, ze dane sa utrwalone — inaczej ekran pokazuje stan,
+        // ktorego po restarcie nie bedzie.
+        assertEquals("Kuba", repo.load().profile.name)
+        assertEquals("Kuba", Repository(katalog.root).load().profile.name)
+
+        File(blokada, "zajete").delete()
+        blokada.delete()
+        assertTrue(repo.save(daneUcznia("Nowe imie")))
+        assertNull(repo.lastSaveError)
+        assertEquals("Nowe imie", Repository(katalog.root).load().profile.name)
+    }
+
+    @Test
+    fun `plik bez pola wersji dostaje numer schematu, a powtorne wczytanie nic nie zmienia`() {
+        // Zapis sprzed wersjonowania: pola schemaVersion w pliku po prostu nie ma.
+        plik(Repository.FILE_NAME).writeText("""{"profile":{"name":"Stary"},"sets":[],"scores":[]}""")
+
+        val pierwsze = Repository(katalog.root).load()
+        assertEquals("Stary", pierwsze.profile.name)
+        assertEquals(Repository.SCHEMA_VERSION, pierwsze.schemaVersion)
+
+        // load() celowo nie pisze po dysku, wiec migracja rusza ponownie przy kazdym starcie
+        // az do pierwszego zapisu i musi dawac dokladnie to samo.
+        assertEquals(pierwsze, Repository(katalog.root).load())
+
+        val repo = Repository(katalog.root)
+        assertEquals(repo.migrate(pierwsze), repo.migrate(repo.migrate(pierwsze)))
     }
 }

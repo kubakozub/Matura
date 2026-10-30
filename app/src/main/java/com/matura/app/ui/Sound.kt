@@ -5,9 +5,12 @@ import android.media.ToneGenerator
 import com.matura.app.game.FlashKind
 
 /**
- * OPTIONS offers enable/disable sound. There are no audio assets in this build, so
- * feedback is a handful of short system tones — cheap, and it keeps the APK free of
- * binary blobs that would have to be licensed.
+ * OPTIONS offers enable/disable sound. Game feedback is a handful of short system
+ * tones — cheap, and no licensing question to answer.
+ *
+ * Spoken vocabulary is a separate concern and lives in [com.matura.app.audio.Pronunciation],
+ * which plays pre-generated clips from assets. Those are bundled rather than fetched,
+ * so the app still ships without the INTERNET permission.
  */
 class Sfx {
     private var gen: ToneGenerator? = null
