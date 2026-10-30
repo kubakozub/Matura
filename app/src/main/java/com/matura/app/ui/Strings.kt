@@ -81,6 +81,18 @@ class Str(private val lang: UiLanguage) {
     val micDeniedSettings get() = pick(
         "Mikrofon zablokowany — włącz w ustawieniach",
         "Mic blocked — allow it in app settings")
+
+    /**
+     * Zapis postepu na dysk sie nie udal.
+     *
+     * Repository.save() zwracalo `false`, a lastSaveError niosl wyjatek, ale ani jeden z 13
+     * wolajacych w App.kt tego nie czytal — uczen nie mial jak zauwazyc, ze nauka z tej rundy
+     * nie przetrwa zamkniecia gry. Cache jest odswiezany dopiero po UDANYM zapisie, wiec
+     * ekran po cichu wracal do poprzedniego stanu, jakby dotkniecie nie mialo skutku.
+     */
+    val saveFailed get() = pick(
+        "Nie udało się zapisać postępu na telefonie. Sprawdź wolne miejsce — ostatnia zmiana może nie przetrwać zamknięcia gry.",
+        "Could not save your progress on this device. Check free space — the last change may not survive closing the game.")
     /** Silnik zglosil brak zgody (kod w nawiasie) — podstawiane do VoiceInput jak reszta komunikatow. */
     val voiceNoPermission get() = pick("Brak zgody na mikrofon (%s)", "No microphone permission (%s)")
     val voiceOtherEngine get() = pick("próbuję innego silnika mowy…", "trying another speech engine…")

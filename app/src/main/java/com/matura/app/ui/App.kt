@@ -5,15 +5,18 @@ import com.matura.app.data.BuiltInSets
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import com.matura.app.data.Repository
 import com.matura.app.model.GameMode
 import com.matura.app.model.Options
@@ -66,7 +69,17 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
     fun push(s: Screen) { stack = stack + s }
     fun pop() { if (stack.size > 1) stack = stack.dropLast(1) }
     fun replaceTop(s: Screen) { stack = stack.dropLast(1) + s }
-    fun refresh() { data = repo.load() }
+    // Czy OSTATNI zapis padl. Repository czysci lastSaveError po udanym zapisie, wiec ta
+    // flaga sama gasnie, gdy dysk znowu przyjmie dane — nie trzeba jej odklikiwac.
+    var bladZapisu by remember { mutableStateOf(false) }
+
+    // Jedyne gardlo odczytu stanu po zmianie. Dlatego TU, a nie w 13 wywolaniach repo:
+    // kazde z nich konczy sie refresh(), a te, ktore go celowo pomijaja (zapis proby w
+    // trakcie rundy), i tak domykaja sie przez refresh() w finish().
+    fun refresh() {
+        data = repo.load()
+        bladZapisu = repo.lastSaveError != null
+    }
 
     // Dzien harmonogramu dla calej aplikacji. Liczony raz przy wejsciu — przekroczenie polnocy
     // UTC w trakcie jednej sesji nie ma przestawiac list pod palcami ucznia.
@@ -378,6 +391,17 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 str = str,
                 data = data,
                 onBack = { pop() },
+            )
+        }
+
+        // Nad kazdym ekranem, bo zapis pada niezaleznie od tego, gdzie uczen wtedy jest.
+        // Na dole, zeby nie zaslaniac planszy ani nagłowka z zyciami.
+        if (bladZapisu) {
+            InfoCard(
+                str.saveFailed,
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(12.dp),
             )
         }
     }
