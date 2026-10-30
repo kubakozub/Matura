@@ -32,3 +32,8 @@ keystore.properties
 *.jks
 *.keystore
 .claude/
+
+# Modele rozpoznawania offline (Vosk) - 107 MB cudzych wag, NIE do historii gita.
+# Odtwarzane z paczek upstreamu przez tools/vosk-fetch.sh (wynik identyczny bajt
+# w bajt, sprawdzany skrotami z tools/vosk-models.sha256).
+app/src/vosk-assets/
