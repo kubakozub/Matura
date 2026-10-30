@@ -42,7 +42,18 @@ class Repository(private val dir: File) {
     private val backup = File(dir, BACKUP_NAME)
 
     private val json = Json {
-        prettyPrint = true
+        // Zwarty zapis. Dokument jest przepisywany CALY po kazdej odpowiedzi, a wciecia
+        // kosztowaly w nim wiecej niz dane: zmierzone na pelnym katalogu (102 zestawy,
+        // 2084 wpisy) 376 824 B z prettyPrint wobec 153 650 B bez — 223 174 B zapisu z
+        // fsync na kazda odpowiedz, za samo formatowanie. Czytelnosc przy recznym
+        // odzyskiwaniu danych nie ginie: to dalej JSON, tylko w jednej linii.
+        //
+        // Reszta dokumentu (153 149 B) to tresc zestawow wbudowanych. Zostaje w pliku
+        // SWIADOMIE: ekran ZESTAWY pozwala otworzyc wbudowany zestaw w edytorze, wiec
+        // odtwarzanie go z katalogu przy kazdym odczycie kasowaloby uczniowi poprawki.
+        // Patrz [odswiezZestawyWbudowane] — tam ten sam koszt jest opisany dla migracji,
+        // ktora biegnie RAZ. Dane samego ucznia to 501 B.
+        prettyPrint = false
         ignoreUnknownKeys = true
         encodeDefaults = true
     }
