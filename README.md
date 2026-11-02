@@ -12,11 +12,45 @@
 Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
 *Verbume — Verbum + Game*. Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
 
-**Wersja 0.9.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
+**Wersja 0.9.18** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
 
 > Aplikacja nazywała się wcześniej **Verbume**. Zmieniła się nazwa i identyfikator
 > pakietu (`com.verbume.app` → `com.matura.app`); mechanika, słownictwo i grafika
 > zostały bez zmian.
+
+## Co nowego w 0.9.18
+
+- **Cztery tryby gry.** Obok KLASYCZNEGO doszły PRAWDA/FAŁSZ, WIELOKROTNY WYBÓR i NA CZAS.
+  Każdy respektuje życia, tempo, kierunek tłumaczenia, dźwięk i język; dystraktory są
+  filtrowane przez `Matching.normalize`, więc nigdy nie ma dwóch poprawnych odpowiedzi.
+  Tabela wyników jest osobna dla każdego trybu.
+- **Codzienna sesja i powtórki rozłożone w czasie.** `learn/Srs.kt` prowadzi każde słowo
+  przez pudełka powtórek, `learn/Sesja.kt` składa z nich dzienną trasę, a ekran DZISIAJ
+  pokazuje, co jest do powtórki i kiedy wraca następna porcja. Postęp jest liczony per
+  słowo i per kierunek, nie per zestaw.
+- **Trudne słowa.** Osobny ekran z hasłami, które najczęściej wygrywają z uczniem
+  (`learn/Trudne.kt`), z wymową i możliwością przerobienia samej tej listy.
+- **Wymowa.** Nagrania odtwarzane z pakietu, bez sieci i bez uprawnienia INTERNET; dla
+  haseł spoza pakietu — w tym własnych zestawów ucznia — wchodzi systemowy TextToSpeech.
+- **Odpowiadanie głosem.** Przycisk mikrofonu jest zawsze widoczny, a droga głosu
+  wybierana przy dotknięciu: silnik rozpoznawania, okno systemowe, a w ostateczności
+  klawiatura telefonu z własnym dyktowaniem. Doszedł strażnik ciszy (głuchy mikrofon
+  rozpoznawany po RMS) i strażnik martwego silnika, bo „gotowy, ale zero poziomu" to
+  na części telefonów stan trwały.
+- **Rozpoznawanie offline — kod jest, ale NIE JEST PODŁĄCZONY.** Dla telefonów bez żadnej
+  usługi rozpoznawania mowy powstał osobny dostawca (`app/src/vosk/`, wchodzi z `-Pvosk=true`).
+  `rememberVoskVoiceInput` **nie ma w aplikacji ani jednego wywołania** — `PlayScreen` woła
+  `rememberVoiceInput` z głównego źródła, a wariant go nie podmienia. Paczka z `-Pvosk=true`
+  zawiera więc modele i bibliotekę natywną, których nic nie używa. Modele nie leżą w tym
+  repozytorium — patrz *Budowanie ze źródeł*.
+- **Dane ucznia przestały ginąć.** Zapis idzie przez plik tymczasowy, `fsync` i zmianę
+  nazwy, poprzednia kompletna wersja ląduje w kopii, a plik, którego nie da się odczytać,
+  jest odkładany na bok zamiast nadpisywany. Nieudany zapis **mówi o sobie uczniowi**
+  zamiast cicho cofać ekran.
+- **Poprawki słownictwa docierają do telefonów, które już grały.** Każdy wpis ma trwały
+  identyfikator liczony z treści, a wersjonowana migracja (`schemaVersion`) przeprowadza
+  postęp pod nowy identyfikator po korekcie hasła. Bez tego literówka w haśle zostawała u
+  ucznia na zawsze — a aplikacja do matury uczyła błędu.
 
 ## Co nowego w 0.9.0
 
@@ -120,8 +154,7 @@ jeśli tekst pasuje dokładnie; przy kilku pasujących celem zostaje ten najbli�
 - SETS: lista zestawów, edytor w układzie Quizleta — numerowane wiersze, dwie kolumny z językami
   i przyciskiem zamiany stron (punkty 10–11). Własne zestawy kasujesz koszem: pierwsze tapnięcie
   uzbraja przycisk, drugie usuwa. Wbudowanych nie da się usunąć.
-- OPTIONS: dźwięk, liczba żyć, tekstury, tempo potworków, język interfejsu (PL/EN),
-  kierunek tłumaczenia (punkt 12)
+- OPTIONS: dźwięk, liczba żyć, tekstury, język interfejsu (PL/EN), kierunek tłumaczenia (punkt 12)
 - ACHIEVEMENTS: 8 odznak liczonych z Twoich statystyk
 - SCORES: lokalny ranking, najlepsze przebiegi, najpopularniejszy zestaw (punkt 13)
 - **102 zestawy, 2084 hasła** — słownictwo pod zakres tematyczny matury podstawowej, podzielone
@@ -174,41 +207,90 @@ Minimalny Android: 7.0 (API 24). Aplikacja jest w orientacji pionowej.
 
 ```bash
 echo "sdk.dir=/sciezka/do/Android/Sdk" > local.properties
-./gradlew :app:assembleDebug          # APK w app/build/outputs/apk/debug/
-./gradlew :app:bundleRelease          # AAB do Google Play w app/build/outputs/bundle/release/
-./gradlew :app:testDebugUnitTest      # 54 testy jednostkowe
+
+./gradlew :app:assembleDebug            # APK w app/build/outputs/apk/debug/
+./gradlew :app:testDebugUnitTest        # 483 testy
+./gradlew :app:testReleaseUnitTest      # 439 z nich, w konfiguracji wydania
 ```
 
-Bez `keystore.properties` paczka release wychodzi niepodpisana — podpis zakłada się
-osobno, na maszynie, która ma klucz.
+Android Studio: `File → Open` na katalogu repozytorium. Wymagany JDK 17 lub nowszy
+i Android SDK 36 (kod bajtowy powstaje pod Javę 17).
 
-Android Studio: `File → Open` na katalogu repozytorium. Wymagany JDK 21 i Android SDK 36
-(kod bajtowy powstaje pod Javę 17).
+**Dwa warianty testów uruchamiają różne zbiory, i to jest zamierzone.** Testy Compose
+i Robolectrica leżą w `app/src/testDebug/`, bo manifest testowy deklarujący
+`ComponentActivity` (`androidx.compose.ui:ui-test-manifest`) wchodzi tylko do wariantu
+debug. Wariant release składa się z inną scaloną konfiguracją, więc zielony debug nie
+dowodzi, że release się buduje — dlatego CI uruchamia oba.
+
+### Rozpoznawanie offline (opcjonalne)
+
+Modeli Vosk **nie ma w repozytorium**: to 107 MB cudzych wag, dziesięć razy więcej niż
+cały kod i cała grafika razem. Zamiast ich kopii repozytorium trzyma przepis — adres
+paczki upstreamu, jej skrót SHA-256 i skróty 26 plików, które z niej wychodzą:
+
+```bash
+./tools/vosk-fetch.sh                      # pobiera, odchudza, sprawdza skróty
+./gradlew :app:assembleDebug -Pvosk=true   # paczka z rozpoznawaniem offline
+```
+
+Wynik jest **identyczny bajt w bajt** z tym, co było wcześniej wersjonowane — skrypt to
+sprawdza i przerywa, gdy cokolwiek się nie zgadza.
+
+⚠️ **Ten wariant nie daje dziś działającego rozpoznawania offline.** Dostawca w
+`app/src/vosk/java/…/VoskVoiceInput.kt` jest kompletny, ale nikt go nie woła: ekran gry
+używa `rememberVoiceInput` z głównego źródła. Do podłączenia zostaje podmiana tego jednego
+wywołania w wariancie `vosk`. Dopóki jej nie ma, `-Pvosk=true` jedynie pogrubia paczkę
+z 17,7 MB do 99,5 MB. Bez tego kroku aplikacja buduje się normalnie, a głos idzie przez
+silniki systemowe — i to jest dzisiaj jedyna czynna droga głosu.
 
 ## Mapa kodu
 
 ```
 app/src/main/java/com/matura/app/
   MainActivity.kt            punkt wejścia
-  model/Models.kt            zestawy, opcje, profil, wyniki, odznaki
-  data/Repository.kt         zapis do JSON
+  model/Models.kt            zestawy, opcje, profil, wyniki, odznaki, postęp per słowo
+  data/Repository.kt         zapis do JSON — atomowo, z kopią i kwarantanną
   data/BuiltInSets.kt        generowane zestawy słownictwa (nie edytuj ręcznie)
   game/Matching.kt           normalizacja i dopasowanie odpowiedzi
   game/GameEngine.kt         symulacja CLASSIC — czysty Kotlin, bez Androida
+  game/VoiceMatch.kt         dopasowanie tego, co usłyszał mikrofon
+  learn/Srs.kt               pudełka powtórek i terminy
+  learn/Sesja.kt             dzienna trasa nauki
+  learn/Trudne.kt            dobór słów, które wygrywają z uczniem
+  learn/EntryId.kt           trwała tożsamość wpisu liczona z treści
+  learn/Podsumowanie.kt      liczby po rundzie (NIEPODŁĄCZONE — patrz niżej)
+  audio/Pronunciation.kt     nagrania z pakietu, TTS jako zapas
   ui/App.kt                  stos ekranów
   ui/PlayScreen.kt           plansza, rysowanie, pętla klatek
+  ui/TrueFalseScreen.kt      ·  ui/MultipleChoiceScreen.kt  ·  ui/TimeAttackScreen.kt
+  ui/DzisiejszaSesjaScreen.kt  ·  ui/TrudneSlowaScreen.kt
+  ui/VoiceInput.kt           drabinka silników mowy i strażnicy
+  ui/VoicePolicy.kt          która droga głosu — czysta logika, bez Androida
+  ui/VoiceTest.kt            ·  ui/RawMicTest.kt      diagnostyka ścieżki głosu
   ui/Keyboard.kt             ograniczona klawiatura z dokumentu
   ui/Screens.kt              menu, zestawy, edytor, opcje, odznaki, wyniki
+  ui/Common.kt               wspólne elementy (ScreenScaffold, InfoCard, przyciski)
   ui/Sprites.kt              rejestr sprite'ów, klatki animacji, kafelkowanie
   ui/PixelFont.kt            renderer fontu bitmapowego font_8x8
-app/src/test/java/com/matura/app/
-  EngineTest.kt              GameEngineTest (28) + MatchingTest (9)
-  BuiltInSetsTest.kt         10 testów pilnujących reguł słownictwa
-  PersistenceTest.kt         7 testów zapisu i odczytu
+app/src/vosk/java/com/matura/app/ui/      kod wchodzący tylko z -Pvosk=true
+app/src/test/java/        439 testów, oba warianty — logika, zapis, migracje, głos
+app/src/testDebug/java/    44 testy Compose i Robolectrica (patrz wyżej)
+tools/vosk-fetch.sh       odtworzenie modeli offline z paczek upstreamu
+tools/vosk-slim.py        odchudzanie modelu (dlaczego i jak — w nagłówku pliku)
 ```
 
-`GameEngine` celowo nie zna Androida ani Compose — dzięki temu cała mechanika jest testowana
-zwykłym JUnitem, bez emulatora. Razem 54 testy.
+`GameEngine`, `Srs`, `Sesja`, `Trudne`, `Matching` i `VoicePolicy` celowo nie znają
+Androida ani Compose — dzięki temu mechanika i logika decyzji są testowane zwykłym
+JUnitem, bez emulatora.
+
+**Niepodłączone (dwa miejsca):** `app/src/vosk/java/…/VoskVoiceInput.kt` — pełny dostawca
+rozpoznawania offline bez ani jednego wywołania; wchodzi tylko z `-Pvosk=true`, a wtedy i tak
+nic go nie używa.
+
+Oraz `learn/Podsumowanie.kt` i `ui/PodsumowanieRundy.kt` to gotowy,
+udokumentowany i przetestowany blok „co ta runda zrobiła dla nauki", który nie ma w
+aplikacji ani jednego wywołania. `Podsumowanie.rundy()` woła dziś wyłącznie
+`PodsumowanieTest`. Do podłączenia zostaje postawienie komponentu na ekranie końca gry.
 
 ## Publikacja
 
@@ -216,12 +298,15 @@ zwykłym JUnitem, bez emulatora. Razem 54 testy.
 folder **/docs**. APK celowo nie jest wersjonowany: jednorazowe wrzucenie go rozdmuchało
 katalog `.git` z kilkuset kilobajtów do jedenastu megabajtów.
 
-Dlatego APK wisi w **GitHub Releases**, nie w `docs/`. `docs/pobierz.html` linkuje do
-`releases/latest/download/MaturaV080.apk`, więc przy każdym wydaniu plik musi nazywać się
-dokładnie tak — inaczej przycisk pobierania zwróci 404. Do 0.7.0 link prowadził do pliku
-w `docs/`, którego tam nie było, i pobieranie po prostu nie działało.
-
 ## Siostrzana aplikacja
 
 **[Aleima](https://github.com/kubakozub/aleima)** — ta sama gra po angielsku, do nauki
 hiszpańskiego, ze słownictwem podzielonym według poziomów CEFR.
+
+## Licencja i noty
+
+Składniki innych autorów — modele Vosk, biblioteki AndroidX, Kotlin, Compose — są
+wymienione w [`NOTICE`](NOTICE) razem z ich licencjami i z opisem zmian, które
+`tools/vosk-slim.py` wprowadza w modelach (wymaga tego Apache License 2.0).
+Grafika, font bitmapowy i słownictwo są własną pracą autora; zasady palety, siatki
+i nazw opisuje [`docs/pack/README.md`](docs/pack/README.md).
