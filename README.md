@@ -37,8 +37,11 @@ Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
   klawiatura telefonu z własnym dyktowaniem. Doszedł strażnik ciszy (głuchy mikrofon
   rozpoznawany po RMS) i strażnik martwego silnika, bo „gotowy, ale zero poziomu" to
   na części telefonów stan trwały.
-- **Rozpoznawanie offline jako polisa.** Dla telefonów bez żadnej usługi rozpoznawania
-  mowy aplikacja umie użyć modeli Vosk. Nie wchodzą do domyślnej paczki i nie leżą w tym
+- **Rozpoznawanie offline — kod jest, ale NIE JEST PODŁĄCZONY.** Dla telefonów bez żadnej
+  usługi rozpoznawania mowy powstał osobny dostawca (`app/src/vosk/`, wchodzi z `-Pvosk=true`).
+  `rememberVoskVoiceInput` **nie ma w aplikacji ani jednego wywołania** — `PlayScreen` woła
+  `rememberVoiceInput` z głównego źródła, a wariant go nie podmienia. Paczka z `-Pvosk=true`
+  zawiera więc modele i bibliotekę natywną, których nic nie używa. Modele nie leżą w tym
   repozytorium — patrz *Budowanie ze źródeł*.
 - **Dane ucznia przestały ginąć.** Zapis idzie przez plik tymczasowy, `fsync` i zmianę
   nazwy, poprzednia kompletna wersja ląduje w kopii, a plik, którego nie da się odczytać,
@@ -231,9 +234,14 @@ paczki upstreamu, jej skrót SHA-256 i skróty 26 plików, które z niej wychodz
 ```
 
 Wynik jest **identyczny bajt w bajt** z tym, co było wcześniej wersjonowane — skrypt to
-sprawdza i przerywa, gdy cokolwiek się nie zgadza. Bez tego kroku aplikacja buduje się
-normalnie: kod Voska sam zgłasza, że nie ma czym rozpoznawać, a głos idzie przez silniki
-systemowe.
+sprawdza i przerywa, gdy cokolwiek się nie zgadza.
+
+⚠️ **Ten wariant nie daje dziś działającego rozpoznawania offline.** Dostawca w
+`app/src/vosk/java/…/VoskVoiceInput.kt` jest kompletny, ale nikt go nie woła: ekran gry
+używa `rememberVoiceInput` z głównego źródła. Do podłączenia zostaje podmiana tego jednego
+wywołania w wariancie `vosk`. Dopóki jej nie ma, `-Pvosk=true` jedynie pogrubia paczkę
+z 17,7 MB do 99,5 MB. Bez tego kroku aplikacja buduje się normalnie, a głos idzie przez
+silniki systemowe — i to jest dzisiaj jedyna czynna droga głosu.
 
 ## Mapa kodu
 
@@ -275,7 +283,11 @@ tools/vosk-slim.py        odchudzanie modelu (dlaczego i jak — w nagłówku pl
 Androida ani Compose — dzięki temu mechanika i logika decyzji są testowane zwykłym
 JUnitem, bez emulatora.
 
-**Niepodłączone:** `learn/Podsumowanie.kt` i `ui/PodsumowanieRundy.kt` to gotowy,
+**Niepodłączone (dwa miejsca):** `app/src/vosk/java/…/VoskVoiceInput.kt` — pełny dostawca
+rozpoznawania offline bez ani jednego wywołania; wchodzi tylko z `-Pvosk=true`, a wtedy i tak
+nic go nie używa.
+
+Oraz `learn/Podsumowanie.kt` i `ui/PodsumowanieRundy.kt` to gotowy,
 udokumentowany i przetestowany blok „co ta runda zrobiła dla nauki", który nie ma w
 aplikacji ani jednego wywołania. `Podsumowanie.rundy()` woła dziś wyłącznie
 `PodsumowanieTest`. Do podłączenia zostaje postawienie komponentu na ekranie końca gry.

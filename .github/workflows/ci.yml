@@ -41,6 +41,15 @@ jobs:
       - name: Paczka debug
         run: ./gradlew --no-daemon assembleDebug
 
+      # Wariant z -Pvosk=true wnosi WLASNE zrodla (src/vosk/java) i wlasne testy
+      # (src/vosk/test/java), ktorych domyslny build NIE KOMPILUJE ANI NIE URUCHAMIA.
+      # Dlatego gnil niezauwazony: recenzja znalazla w nim zapiszWDzienniku() wolajace
+      # samo siebie, czyli StackOverflowError przy kazdym starcie nasluchu. Kompilacja
+      # i testy tego wariantu nie potrzebuja modeli — brak katalogu assetow znaczy tylko
+      # tyle, ze w paczce nie ma czym rozpoznawac, a nie ze build pada.
+      - name: Wariant offline — kompilacja i testy
+        run: ./gradlew --no-daemon compileDebugKotlin testDebugUnitTest -Pvosk=true
+
       - name: Raporty z testow
         if: failure()
         uses: actions/upload-artifact@v4

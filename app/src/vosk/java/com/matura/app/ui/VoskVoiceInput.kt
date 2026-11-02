@@ -152,7 +152,12 @@ class VoskVoiceInput(private val context: Context) {
     private val dziennik = VoiceLog()
 
     private fun zapiszWDzienniku(co: String) {
-        synchronized(dziennik) { zapiszWDzienniku(co) }
+        // Dopisanie do dziennika, nie wolanie samego siebie. Poprzednia wersja rekurowala
+        // bez warunku stopu, wiec KAZDE z dziesieciu wywolan konczylo sie StackOverflowError
+        // — i to w chwili startu nasluchu, czyli zanim rozpoznawanie offline mialo szanse ruszyc.
+        // Wzorzec jak w glownym VoiceInput: czas podaje wolajacy, zamek chroni ArrayDeque
+        // przed jednoczesnym zapisem z watku nasluchu i odczytem z watku glownego.
+        synchronized(dziennik) { dziennik.dodaj(System.currentTimeMillis(), co) }
     }
 
     @Volatile private var chceNasluchu = false
