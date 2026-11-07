@@ -256,7 +256,7 @@ class GameEngineTest {
 
     /**
      * Tempo z OPCJI. Tester zglosil, ze przy dluzszych haslach nie zdazyl dopisac
-     * odpowiedzi — SLOW ma dawac wyraznie wiecej czasu, FAST mniej, a punktacja
+     * odpowiedzi: SLOW ma dawac wyraznie wiecej czasu, FAST mniej, a punktacja
      * zostaje ta sama.
      */
     @Test
@@ -494,7 +494,7 @@ class GameEngineTest {
         assertEquals(2, e.lives)
         val missed = e.missedWords.single()
         assertEquals("agile", missed.prompt)
-        // Tlumaczenie tak, jak stoi w zestawie — z ogonkami, nie w postaci znormalizowanej.
+        // Tlumaczenie tak, jak stoi w zestawie: z ogonkami, nie w postaci znormalizowanej.
         assertEquals("zręczny", missed.solution)
         assertEquals(1, missed.times)
         assertEquals(missed, e.snapshot().missedWords.single())
@@ -514,7 +514,7 @@ class GameEngineTest {
     @Test
     fun `two entries sharing a prompt stay apart on the review list`() {
         // "uprzejmy" jest w zestawach tlumaczeniem i `kind`, i `polite`. Klucz po samym
-        // hasle zlalby je w jeden wpis i pokazal cudza odpowiedz — 115 polskich i 120
+        // hasle zlalby je w jeden wpis i pokazal cudza odpowiedz: 115 polskich i 120
         // angielskich promptow powtarza sie w BuiltInSets, wiec to nie jest przypadek brzegowy.
         val e = engine(lives = 5)
         e.debugAddMonster("uprzejmy", "kind", x = GameEngine.CANNON_X, y = GameEngine.CANNON_Y)

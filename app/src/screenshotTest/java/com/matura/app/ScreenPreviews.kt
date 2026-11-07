@@ -16,7 +16,7 @@ import com.matura.app.ui.rememberPixelFont
 import com.matura.app.ui.rememberSprites
 
 /**
- * Ekrany renderowane na JVM przez Layoutlib — bez emulatora i bez telefonu.
+ * Ekrany renderowane na JVM przez Layoutlib, bez emulatora i bez telefonu.
  *
  * Powod: Google ostrzega, ze Android 16 zignoruje `android:screenOrientation="portrait"`
  * na ekranach od 600dp w gore, wiec gra trafi na tablety i skladane w ukladzie, ktorego
@@ -82,7 +82,7 @@ fun KlawiaturaTablet() = GameKeyboard(
 /**
  * Ekran KONIEC GRY z pelna lista do powtorki. Codex zauwazyl na PR #3, ze w poziomie
  * staly uklad tego ekranu (419 dp) nie miesci sie w oknie telefonu (411 dp) i przyciski
- * wyjezdzaja poza ekran — a to jedyna droga wyjscia. Te dwa podglady to pokazuja.
+ * wyjezdzaja poza ekran, a to jedyna droga wyjscia. Te dwa podglady to pokazuja.
  */
 private val koniecGry = GameSnapshot(
     monsters = emptyList(),

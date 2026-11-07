@@ -70,7 +70,7 @@ class Sprites(
 
     /**
      * The pack describes the colour variants as difficulty tiers, so the body is chosen
-     * purely by the level a monster spawned at. Armour is never baked into the body —
+     * purely by the level a monster spawned at. Armour is never baked into the body:
      * it is the separate `armor_plate` overlay, which the pack calls "pancerz (nakładka)".
      */
     fun art(level: Int, variant: Int): MonsterArt {
@@ -172,7 +172,7 @@ fun rememberSprites(): Sprites {
  * Fills the whole draw area with repeating tiles, mixing the variants the pack ships so
  * the ground does not read as one stamp repeated.
  *
- * Tile size and offsets are integers and the step equals the drawn size exactly —
+ * Tile size and offsets are integers and the step equals the drawn size exactly:
  * rounding each tile independently leaves one-pixel gaps that show up as a grid of
  * dark seams across the field.
  */
@@ -231,7 +231,7 @@ fun DrawScope.drawSprite(
 }
 
 /**
- * Draws a sprite rotated about a pivot, with the sprite's left edge at the pivot —
+ * Draws a sprite rotated about a pivot, with the sprite's left edge at the pivot:
  * how the pack expects the turret barrel to be mounted on its base.
  */
 fun DrawScope.drawSpriteRotatedFromPivot(
@@ -257,7 +257,7 @@ fun DrawScope.drawSpriteRotatedFromPivot(
     }
 }
 
-/** Image composable that never smooths — for sprites inside normal Compose layouts. */
+/** Image composable that never smooths: for sprites inside normal Compose layouts. */
 @Composable
 fun PixelImage(
     sprite: ImageBitmap,

@@ -765,7 +765,7 @@ function importSet(){
   const set={id:'u'+Date.now(), title, a:'?', b:'?', entries:filtered};
   customSets.push(set);
   localStorage.setItem(STORE_SETS,JSON.stringify(customSets));
-  $('importMsg').textContent=`Dodano „${title}" — ${filtered.length} par` + (single&&filtered.length<entries.length ? ` (odrzucono ${entries.length-filtered.length} wielowyrazowych)`:'');
+  $('importMsg').textContent=`Dodano „${title}": ${filtered.length} par` + (single&&filtered.length<entries.length ? ` (odrzucono ${entries.length-filtered.length} wielowyrazowych)`:'');
   $('paste').value=''; $('setTitle').value='';
   renderSetPick();
 }

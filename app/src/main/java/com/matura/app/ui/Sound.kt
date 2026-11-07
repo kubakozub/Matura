@@ -6,7 +6,7 @@ import com.matura.app.game.FlashKind
 
 /**
  * OPTIONS offers enable/disable sound. There are no audio assets in this build, so
- * feedback is a handful of short system tones — cheap, and it keeps the APK free of
+ * feedback is a handful of short system tones: cheap, and it keeps the APK free of
  * binary blobs that would have to be licensed.
  */
 class Sfx {

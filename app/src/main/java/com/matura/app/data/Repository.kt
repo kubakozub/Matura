@@ -12,7 +12,7 @@ import java.io.File
 
 /**
  * Local persistence. Everything is one JSON document in the app's private files
- * directory — the design document's accounts, shared sets and global leaderboards
+ * directory: the design document's accounts, shared sets and global leaderboards
  * need a server, which this build deliberately does not have, so "play anonymously"
  * is the only path and all data stays on the device.
  */

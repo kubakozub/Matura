@@ -10,7 +10,7 @@ import com.matura.app.ui.MaturaApp
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         // Android 15 wymusza rysowanie od krawedzi do krawedzi. Wlaczamy to jawnie,
-        // zeby na starszych systemach zachowanie bylo takie samo — inaczej odstepy
+        // zeby na starszych systemach zachowanie bylo takie samo: inaczej odstepy
         // pod pasek nawigacji dzialalyby tylko na czesci telefonow.
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)

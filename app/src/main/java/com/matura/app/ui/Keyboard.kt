@@ -23,7 +23,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /**
- * The restricted keyboard from the design document — A-Z, space, backspace and a
+ * The restricted keyboard from the design document, A-Z, space, backspace and a
  * cursor block, nothing else. Letter caps are drawn to match the pack's key styling
  * (bone face, ink outline, a hard shadow underneath); the four function keys are
  * sprites from the pack, which already include their own key cap.
@@ -49,7 +49,7 @@ fun GameKeyboard(
             .background(Palette.Surface)
             .border(3.dp, Palette.Ink)
             // Tester zglosil, ze spacja "jest minimalnie za nisko" i trudno w nia
-            // trafic — zjadal ja pasek gestow. Odsuniecie od paska nawigacji robi
+            // trafic: zjadal ja pasek gestow. Odsuniecie od paska nawigacji robi
             // teraz safeDrawingPadding() w MaturaApp, wspolnie dla wszystkich
             // ekranow; tutaj zostaje tylko luz pod dolnym wierszem, ktory i tak
             // jest wyzszy niz reszta klawiatury.

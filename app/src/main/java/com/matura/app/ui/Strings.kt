@@ -53,8 +53,8 @@ class Str(private val lang: UiLanguage) {
     val confirmDelete get() = pick("Na pewno?", "Sure?")
     val deleteHint
         get() = pick(
-            "Wbudowanych zestawów nie da się usunąć. Własne kasujesz koszem — dwa razy, żeby nie zrobić tego przypadkiem.",
-            "Built-in sets cannot be removed. Your own go with the bin — twice, so it does not happen by accident."
+            "Wbudowanych zestawów nie da się usunąć. Własne kasujesz koszem: dwa razy, żeby nie zrobić tego przypadkiem.",
+            "Built-in sets cannot be removed. Your own go with the bin: twice, so it does not happen by accident."
         )
     val swapLanguages get() = pick("Zamień strony", "Swap sides")
     val builtIn get() = pick("wbudowany", "built-in")
@@ -62,8 +62,8 @@ class Str(private val lang: UiLanguage) {
     val playedLabel get() = pick("rozegrań", "plays")
     val commaHint
         get() = pick(
-            "Kilka tłumaczeń rozdziel przecinkiem — każde będzie zaliczone.",
-            "Separate alternative translations with commas — each one is accepted."
+            "Kilka tłumaczeń rozdziel przecinkiem: każde będzie zaliczone.",
+            "Separate alternative translations with commas, each one is accepted."
         )
     val needTwoEntries
         get() = pick(
@@ -81,9 +81,9 @@ class Str(private val lang: UiLanguage) {
     val speedNote
         get() = pick(
             "Tempo ustawia szybkość potworków. Na WOLNO masz więcej czasu na wpisanie " +
-                "dłuższych haseł — punkty liczą się tak samo.",
+                "dłuższych haseł: punkty liczą się tak samo.",
             "Speed sets how fast monsters walk. On SLOW you get more time for longer " +
-                "answers — scoring is unchanged."
+                "answers: scoring is unchanged."
         )
     val language get() = pick("Język", "Language")
     val direction get() = pick("Kierunek tłumaczenia", "Translation direction")
@@ -92,8 +92,8 @@ class Str(private val lang: UiLanguage) {
     val dirRandom get() = pick("losowo", "random")
     val soundNote
         get() = pick(
-            "Dźwięk gra prostymi tonami generowanymi na urządzeniu — nie ma plików audio.",
-            "Sound uses simple tones generated on the device — there are no audio assets."
+            "Dźwięk gra prostymi tonami generowanymi na urządzeniu: nie ma plików audio.",
+            "Sound uses simple tones generated on the device: there are no audio assets."
         )
 
     val score get() = pick("Punkty", "Score")
@@ -109,7 +109,7 @@ class Str(private val lang: UiLanguage) {
     val reviewTitle get() = pick("DO POWTÓRKI", "TO REVIEW")
     val reviewClean get() = pick("Ani jednego pudła.", "Not a single miss.")
     val bestStreakLabel get() = pick("Najdłuższa seria", "Best streak")
-    val noScores get() = pick("Brak wyników — zagraj pierwszą grę.", "No scores yet — play your first game.")
+    val noScores get() = pick("Brak wyników: zagraj pierwszą grę.", "No scores yet: play your first game.")
     val gamesPlayed get() = pick("Rozegrane gry", "Games played")
     val totalKills get() = pick("Łącznie zabić", "Total kills")
     val bestScore get() = pick("Najlepszy wynik", "Best score")
@@ -117,8 +117,8 @@ class Str(private val lang: UiLanguage) {
     val locked get() = pick("zablokowane", "locked")
     val emptySetWarning
         get() = pick(
-            "Ten zestaw nie ma hasła z tłumaczeniem — uzupełnij go w SETS.",
-            "This set has no usable rows — fill it in under SETS."
+            "Ten zestaw nie ma hasła z tłumaczeniem: uzupełnij go w SETS.",
+            "This set has no usable rows: fill it in under SETS."
         )
     val topSet get() = pick("Najpopularniejszy zestaw", "Most played set")
     val bestRuns get() = pick("Najlepsze przebiegi", "Best runs")

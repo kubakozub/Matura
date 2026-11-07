@@ -319,11 +319,11 @@ internal fun GameOverOverlay(
             .fillMaxSize()
             .background(Palette.Ink.copy(alpha = 0.86f)),
     ) {
-        // Przyciski musza byc widoczne zawsze — to jedyna droga wyjscia z tego ekranu.
+        // Przyciski musza byc widoczne zawsze: to jedyna droga wyjscia z tego ekranu.
         // Na telefonie w poziomie okno ma 411 dp, a caly uklad z pelna lista potrzebuje
         // wiecej, wiec cos musi ustapic i moze to byc wylacznie lista. Dlatego dostaje
         // `weight(1f, fill = false)`: bierze to, co zostanie po elementach o stalej
-        // wysokosci, i ani piksela wiecej. Zadnych stalych liczbowych — pierwsze podejscie
+        // wysokosci, i ani piksela wiecej. Zadnych stalych liczbowych: pierwsze podejscie
         // odejmowalo zgadniete 300 dp i bylo za male, bo font bitmapowy zajmuje wiecej,
         // niz wynika z samego `glyphHeight`.
         Column(
@@ -362,7 +362,7 @@ internal fun GameOverOverlay(
 }
 
 /**
- * The words that reached the cannon, each with the answer spelled out in full — hyphens,
+ * The words that reached the cannon, each with the answer spelled out in full: hyphens,
  * diacritics and all. A tester asked for exactly this: a list of what got through
  * "wraz z ich tlumaczeniem", to repeat straight after the run instead of hunting for the
  * words in the set. The list scrolls inside a fixed height, so a long run can never push
@@ -530,7 +530,7 @@ private fun DrawScope.drawField(
  * Centres one line of bitmap text horizontally on [cx], with its baseline box above [bottomY].
  *
  * Monsters enter from just outside the canvas, so a label centred on the sprite would hang off
- * the edge — until 0.7.0 a long word like "disciplined" read as "plined" for the first couple of
+ * the edge: until 0.7.0 a long word like "disciplined" read as "plined" for the first couple of
  * seconds, which is exactly the time the player needs to start typing. The label is therefore
  * kept inside the canvas; only the sprite walks in from off-screen.
  */

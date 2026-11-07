@@ -36,7 +36,7 @@ data class Monster(
     var armored: Boolean,
     val variant: Int,
     var incoming: Int = 0,
-    /** Difficulty level at spawn time — picks the sprite, so it must not drift mid-life. */
+    /** Difficulty level at spawn time: picks the sprite, so it must not drift mid-life. */
     val spawnLevel: Int = 1,
     /** Counts down after a hit so the UI can show the impact frame. */
     var hitFlash: Float = 0f,
@@ -96,7 +96,7 @@ data class GameSnapshot(
     val flash: FlashKind?,
     /** Seconds left on the "new level" banner; zero when it should not be shown. */
     val levelUpBanner: Float,
-    /** Words that got through to the cannon — the review list on the game-over screen. */
+    /** Words that got through to the cannon: the review list on the game-over screen. */
     val missedWords: List<MissedWord> = emptyList(),
 )
 
@@ -142,7 +142,7 @@ class GameEngine(
         const val CANNON_RADIUS = 0.06f
 
         // Tempo obnizone w 0.7.0. Testerzy zglaszali, ze przy dluzszych haslach
-        // potworek dochodzil do dzialka, zanim dalo sie dokonczyc pisanie —
+        // potworek dochodzil do dzialka, zanim dalo sie dokonczyc pisanie:
         // wolniejszy marsz i rzadsze fale daja czas na wpisanie calego slowa.
         private const val BASE_SPEED = 0.024f
         private const val SPEED_PER_LEVEL = 0.0042f
@@ -216,7 +216,7 @@ class GameEngine(
     private data class PlayableWord(
         val prompt: String,
         val answers: List<String>,
-        /** The counterpart exactly as the set spells it — with hyphens and diacritics. */
+        /** The counterpart exactly as the set spells it, with hyphens and diacritics. */
         val solution: String,
     )
 
@@ -244,13 +244,13 @@ class GameEngine(
     // nie pojawialo sie ponownie". Losowanie ze zwracaniem potrafilo pokazac jedno haslo
     // pieciokrotnie, a innego nie pokazac wcale. Worek tasuje caly zestaw i dobiera bez
     // zwracania; dopiero po jego wyczerpaniu tasuje od nowa. Slowa nadal wracaja w ciagu
-    // rozgrywki — o to chodzi w zestawach po ok. 20 hasel — ale rowno, po kolejce.
+    // rozgrywki: o to chodzi w zestawach po ok. 20 hasel, ale rowno, po kolejce.
     private val bag = ArrayDeque<PlayableWord>()
     private var lastDrawn: String? = null
 
     private fun refillBag() {
         val shuffled = playable.shuffled(random).toMutableList()
-        // Nowa kolejka nie zaczyna sie haslem, ktorym skonczyla sie poprzednia — inaczej
+        // Nowa kolejka nie zaczyna sie haslem, ktorym skonczyla sie poprzednia: inaczej
         // na styku dwoch kolejek to samo slowo wypadaloby dwa razy pod rzad.
         if (shuffled.size > 1 && shuffled.first().prompt == lastDrawn) {
             val other = 1 + random.nextInt(shuffled.size - 1)
@@ -356,7 +356,7 @@ class GameEngine(
         cursor = typed.length
     }
 
-    /** Monsters whose answer starts with what is currently typed — these get highlighted. */
+    /** Monsters whose answer starts with what is currently typed: these get highlighted. */
     fun highlightedIds(): Set<Long> {
         if (typed.isBlank()) return emptySet()
         return monsters.filter { Matching.isPrefixOfAny(typed, it.answers) }.map { it.id }.toSet()

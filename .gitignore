@@ -23,7 +23,7 @@ warmup.log
 docs/*.apk
 
 # Obrazy referencyjne podgladow: 1,5 MB, ktore zmieniaja sie przy kazdej poprawce
-# ukladu. Ta sama zasada co przy APK — binaria rozdymaja .git. Generuje je
+# ukladu. Ta sama zasada co przy APK: binaria rozdymaja .git. Generuje je
 # `./gradlew :app:updateDebugScreenshotTest` i sluza do ogladania, nie do historii.
 app/src/debug/screenshotTest/
 
