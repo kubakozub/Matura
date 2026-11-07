@@ -1,227 +1,242 @@
 # Matura: CLASSIC
 
-[![Pobierz z Google Play](https://img.shields.io/badge/Google%20Play-pobierz-a8e05a?style=for-the-badge&logo=googleplay&logoColor=101322&labelColor=101322)](https://play.google.com/store/apps/details?id=com.matura.app&referrer=utm_source%3Dgithub%26utm_medium%3Dreadme%26utm_campaign%3Drepo)
-[![Strona i demo w przeglądarce](https://img.shields.io/badge/matura.uk-demo%20w%20przegl%C4%85darce-101322?style=for-the-badge&labelColor=a8e05a)](https://matura.uk)
+[![Get it on Google Play](https://img.shields.io/badge/Google%20Play-download-a8e05a?style=for-the-badge&logo=googleplay&logoColor=101322&labelColor=101322)](https://play.google.com/store/apps/details?id=com.matura.app&referrer=utm_source%3Dgithub%26utm_medium%3Dreadme%26utm_campaign%3Drepo)
+[![Site and browser demo](https://img.shields.io/badge/matura.uk-browser%20demo-101322?style=for-the-badge&labelColor=a8e05a)](https://matura.uk)
 
-**Aplikacja jest w Google Play: darmowa, bez reklam i bez konta.** Grę można też przetestować bez instalacji w przeglądarce na [matura.uk](https://matura.uk).
+**The app is on Google Play: free, no ads, no account.** It can also be tried without
+installing anything, in the browser, at [matura.uk](https://matura.uk).
 
-[![Zwiastun gry MATURA: 32 s na YouTube](https://matura.uk/assets/zwiastun.527946e5.png)](https://www.youtube.com/watch?v=B8ScJBjyoMg)
+[![MATURA trailer, 32 s on YouTube](https://matura.uk/assets/zwiastun.527946e5.png)](https://www.youtube.com/watch?v=B8ScJBjyoMg)
 
-*Zwiastun (32 s): kliknij obrazek, żeby obejrzeć na YouTube.*
+*Trailer, 32 s: click the image to watch it on YouTube.*
 
-Gra do nauki angielskiego słownictwa, zbudowana wprost z dokumentu projektowego
-*Verbume: Verbum + Game*. Android, Kotlin, Jetpack Compose. Tryb CLASSIC z pełną progresją.
+A game for learning English vocabulary, built directly from the design document
+*Verbume: Verbum + Game*. Android, Kotlin, Jetpack Compose. CLASSIC mode with full
+progression. The vocabulary covers the Polish *matura* school leaving exam at basic level,
+so the answers are Polish and the prompts are English.
 
-**Wersja 0.9.0** · 102 zestawy · 2084 hasła · 14 działów matury podstawowej
+**Version 0.9.0** · 102 sets · 2084 entries · 14 topic areas of the basic exam
 
-> Aplikacja nazywała się wcześniej **Verbume**. Zmieniła się nazwa i identyfikator
-> pakietu (`com.verbume.app` → `com.matura.app`); mechanika, słownictwo i grafika
-> zostały bez zmian.
+> The app used to be called **Verbume**. The name and the package identifier changed
+> (`com.verbume.app` became `com.matura.app`); the mechanics, the vocabulary and the
+> artwork did not.
 
-## Co nowego w 0.9.0
+## New in 0.9.0
 
-- **Uklad na duze ekrany.** Android 16 ignoruje `android:screenOrientation="portrait"` na
-  ekranach od 600 dp, wiec gra i tak trafi na tablety i skladane w poziomie. Wpis zniknal
-  z manifestu, a `PlayScreen` przy oknie szerszym niz wyzszym przechodzi na uklad
-  **dwukolumnowy**: plansza po lewej, pasek odpowiedzi i klawiatura po prawej. Ulozone
-  jedno pod drugim, na telefonie 891×411 dp plansza schodzila do paska 13% wysokosci,
-  a sama klawiatura zjadala ponad polowe ekranu.
-- **Podsumowanie po grze na calym oknie.** Ekran KONIEC GRY rysuje sie na calym ekranie,
-  nie na samej planszy: w poziomie plansza to polowa szerokosci i lista DO POWTORKI
-  by sie w niej nie zmiescila.
-- **Podglady ekranow renderowane na JVM.** `./gradlew :app:updateDebugScreenshotTest`
-  rysuje szesc ukladow (telefon w pionie i poziomie, skladany, tablet, sama klawiatura)
-  przez Layoutlib, bez emulatora i bez urzadzenia. To one pokazaly, ze poziom byl zepsuty.
-  Obrazy laduja w `app/build/outputs/screenshotTest-results/` i **nie sa wersjonowane**:
-  waza 1,5 MB i zmieniaja sie przy kazdej poprawce ukladu, a APK juz raz rozdal `.git`.
+- **A layout for large screens.** Android 16 ignores
+  `android:screenOrientation="portrait"` on screens of 600 dp and up, so the game reaches
+  tablets and foldables in landscape whatever the manifest says. The entry is gone, and
+  `PlayScreen` switches to a **two column** layout when the window is wider than it is
+  tall: the board on the left, the answer bar and keyboard on the right. Stacked
+  vertically, on an 891 by 411 dp phone the board had been squeezed into a strip 13% of
+  the height while the keyboard alone took more than half the screen.
+- **The post game summary uses the whole window.** The GAME OVER screen now draws over the
+  full screen rather than only over the board: in landscape the board is half the width,
+  and the TO REVIEW list would not have fitted inside it.
+- **Screen previews rendered on the JVM.**
+  `./gradlew :app:updateDebugScreenshotTest` draws six layouts (phone portrait and
+  landscape, foldable, tablet, keyboard alone) through Layoutlib, with no emulator and no
+  device. Those previews are what revealed the landscape layout was broken. The images
+  land in `app/build/outputs/screenshotTest-results/` and are **deliberately not
+  versioned**: they weigh 1.5 MB and change with every layout fix, and an APK has already
+  inflated `.git` once.
 
-## Co nowego w 0.8.0
+## New in 0.8.0
 
-Znowu wszystko z uwag testerów.
+Again, all of it from tester feedback.
 
-- **Hasło z łącznikiem można wpisać.** Tester wylosował „otwarty" i nie miał jak
-  odpowiedzieć `open-minded`: klawiatura ma tylko A-Z, a łącznik i tak zamienia się
-  w normalizacji na spację. Do przyjmowanych odpowiedzi dochodzi wariant **bez
-  odstępu**, więc zaliczają się i `open minded`, i `openminded`, a podświetlanie
-  prefiksu działa w obu. Dotyczy to wszystkich 665 haseł wielowyrazowych, nie tylko
-  37 z łącznikiem.
-- **Lista DO POWTÓRKI po grze.** Ekran KONIEC GRY pokazuje pod wynikiem każde hasło,
-  które doszło do działka, wraz z tłumaczeniem w oryginalnej pisowni: z ogonkami
-  i łącznikiem, nie w postaci znormalizowanej. To samo słowo przegrane dwa razy to
-  jedna pozycja z licznikiem `x2`. Lista przewija się we własnej ramce o stałej
-  wysokości, więc długa rozgrywka nie zepchnie przycisków poza ekran.
-- **Koniec z kumulacją tych samych słów.** Losowanie było ze zwracaniem, więc jedno
-  hasło potrafiło wracać bez przerwy, a inne nie paść ani razu. Teraz działa worek:
-  cały zestaw jest tasowany i dobierany bez zwracania, a nowe tasowanie następuje
-  dopiero po jego wyczerpaniu. Nowa kolejka nie zaczyna się tym, czym skończyła się
-  poprzednia. Powtórki w obrębie rozgrywki zostają: o nie chodzi w zestawach po
-  około dwadzieścia haseł, ale rozkładają się równo.
+- **Hyphenated entries can be typed.** A tester drew "otwarty" and had no way to answer
+  `open-minded`: the keyboard holds only A-Z, and a hyphen is folded to a space during
+  normalisation anyway. A **no space** variant was added to the accepted answers, so both
+  `open minded` and `openminded` count, and prefix highlighting works for both. This
+  applies to all 665 multi word entries, not only the 37 containing a hyphen.
+- **A TO REVIEW list after the game.** Under the score, the GAME OVER screen lists every
+  entry that reached the cannon, together with its translation in the original spelling,
+  with diacritics and hyphen rather than in normalised form. The same word lost twice is
+  one row with an `x2` counter. The list scrolls inside its own fixed height frame, so a
+  long game cannot push the buttons off screen.
+- **No more pile up of the same words.** The draw used to be with replacement, so one
+  entry could keep returning while another never appeared at all. It now works as a bag:
+  the whole set is shuffled and drawn without replacement, and it is reshuffled only once
+  exhausted. A new queue does not begin with whatever the previous one ended on. Repeats
+  within a single game remain, which is the point of sets of roughly twenty entries, but
+  they are now spread evenly.
 
-Demo w przeglądarce dostało te same trzy zmiany, żeby dalej odpowiadało silnikowi.
+The browser demo received the same three changes, so that it still matches the engine.
 
-## Co nowego w 0.7.0
+## New in 0.7.0
 
-Wszystkie trzy zmiany wynikają wprost z uwag z testów.
+All three changes follow directly from test feedback.
 
-- **Wolniejsze tempo.** Bazowa prędkość potworków spadła z `0.030` do `0.024`, przyrost
-  na poziom z `0.0055` do `0.0042`, a fale są rzadsze (`3.8 s` zamiast `3.4 s`, minimum
-  `1.4 s` zamiast `1.0 s`). Przy dłuższych hasłach potworek dochodził do działka, zanim
-  dało się dokończyć pisanie.
-- **Tempo jako ustawienie.** OPCJE → *Tempo*: `WOLNO` (×0,75), `NORMALNIE` (×1),
-  `SZYBKO` (×1,3). Mnożnik skaluje całą krzywą prędkości, razem z przyrostem na poziom.
-  Punktacja się nie zmienia: wynik z WOLNO liczy się tak samo.
-- **Spacja była za nisko.** Dolny wiersz klawiatury na części telefonów leżał pod
-  paskiem gestów. Dolny wiersz jest teraz wyższy (56 dp zamiast 48 dp), spacja szersza
-  (waga 6,6 zamiast 5,5), a boczne wypełniacze zniknęły.
-- **Jedno miejsce na chrom systemu.** `MaturaApp` woła `safeDrawingPadding()`, więc od
-  korzenia w dół treść omija pasek stanu, pasek nawigacji, wycięcie w ekranie i otwartą
-  klawiaturę systemową. Wcześniej odsuwała się tylko klawiatura gry: MENU, OPCJE, SETS
-  i edytor kończyły się stałym odstępem i ostatni przycisk potrafił wpaść pod pasek
-  gestów. Na Androidzie 15 zegarek systemowy leżał dodatkowo na sercach i liczniku
-  amunicji.
+- **A slower pace.** Base monster speed dropped from `0.030` to `0.024`, the per level
+  increment from `0.0055` to `0.0042`, and the waves are sparser (`3.8 s` rather than
+  `3.4 s`, with a floor of `1.4 s` rather than `1.0 s`). With longer entries a monster was
+  reaching the cannon before the word could be finished.
+- **Pace as a setting.** OPTIONS, then *Pace*: `SLOW` (times 0.75), `NORMAL` (times 1),
+  `FAST` (times 1.3). The multiplier scales the entire speed curve, the per level increment
+  included. Scoring does not change: a score made on SLOW counts the same.
+- **The space bar sat too low.** On some phones the bottom keyboard row lay under the
+  gesture bar. That row is now taller (56 dp rather than 48 dp), the space bar is wider
+  (weight 6.6 rather than 5.5), and the side fillers are gone.
+- **One place that handles system chrome.** `MaturaApp` calls `safeDrawingPadding()`, so
+  from the root down the content avoids the status bar, the navigation bar, a display
+  cutout and the open system keyboard. Previously only the in game keyboard moved out of
+  the way: MENU, OPTIONS, SETS and the editor ended with a fixed gap, and the last button
+  could fall under the gesture bar. On Android 15 the system clock additionally sat on top
+  of the hearts and the ammunition counter.
 
-- Demo w przeglądarce: **[kubakozub.github.io/Matura](https://kubakozub.github.io/Matura/)**
-- Pełna dokumentacja projektowa: [`docs/Matura-dokumentacja.pdf`](docs/Matura-dokumentacja.pdf)
+- Browser demo: **[kubakozub.github.io/Matura](https://kubakozub.github.io/Matura/)**
+- Full design documentation, in Polish: [`docs/Matura-dokumentacja.pdf`](docs/Matura-dokumentacja.pdf)
 
----
+## How it plays
 
-## Jak się gra
+A cannon stands in the middle of the board. Monsters arrive from the sides with English
+words above their heads. You type the Polish translation: the cannon turns and fires. A
+monster that reaches the cannon costs a life.
 
-Na środku planszy stoi działko. Z boków nadchodzą potworki z angielskimi słowami nad głową.
-Wpisujesz polskie tłumaczenie: działko obraca się i strzela. Potworek, który dojdzie do
-działka, zabiera życie.
+Typing matches on a prefix, so `cie` highlights both `ciekawość` and `cierpki`. Enter
+fires if the text is an exact match, and when several entries match, the target is the one
+nearest the cannon.
 
-Wpisywanie działa po przedrostku: `cie` podświetla i `ciekawość`, i `cierpki`. Enter strzela,
-jeśli tekst pasuje dokładnie; przy kilku pasujących celem zostaje ten najbliżej działka.
+## What is implemented
 
-## Co jest zaimplementowane
+**Gameplay (CLASSIC)**: points 1 to 6 and 9 of the design document
 
-**Rozgrywka (CLASSIC)**: punkty 1 to 6 i 9 dokumentu
-
-| Element z dokumentu | Stan |
+| Item from the document | State |
 |---|---|
-| Działko na środku z ruchomą lufą | jest, lufa celuje w potworka, którego aktualnie wpisujesz |
-| Potworki wychodzące z boków ekranu | jest |
-| Podświetlanie po prefiksie | jest, z testem odtwarzającym przykład z dokumentu |
-| Pole tekstowe + ograniczona klawiatura (A-Z, spacja, backspace, kursor) | jest |
-| Życia (domyślnie 3, konfigurowalne 1 to 5) | jest |
-| Licznik amunicji, najsłabsza nieskończona | jest, `∞ / N` |
-| Punkty (lewy dół) i poziom trudności (prawy dół) | jest |
-| Skrzynie z amunicją na wyższych poziomach | jest, od poziomu 2, zbierasz wpisując tłumaczenie |
-| Pancerz: pierwszy pocisk go zbija, potrzebne drugie tłumaczenie | jest, od poziomu 3 |
-| Mocniejsze naboje zabijają opancerzonego jednym strzałem | jest, dobierane automatycznie z zapasu |
-| Mnożniki x2 / x3 / x4 / x5 za serię | jest, progi na 3, 6, 9 i 12 trafieniach z rzędu |
-| Rosnąca trudność: szybsze potworki, częstszy spawn | jest, nowy poziom co 8 zabić |
+| A cannon in the centre with a moving barrel | yes, the barrel aims at the monster you are currently typing |
+| Monsters entering from the sides of the screen | yes |
+| Prefix highlighting | yes, with a test reproducing the example from the document |
+| A text field plus a restricted keyboard (A-Z, space, backspace, cursor) | yes |
+| Lives (3 by default, configurable from 1 to 5) | yes |
+| An ammunition counter, with the weakest round unlimited | yes, `∞ / N` |
+| Score (bottom left) and difficulty level (bottom right) | yes |
+| Ammunition crates on higher levels | yes, from level 2, collected by typing the translation |
+| Armour: the first round strips it, a second translation is needed | yes, from level 3 |
+| Heavier rounds kill an armoured monster in one shot | yes, selected automatically from the stock |
+| Streak multipliers of x2, x3, x4 and x5 | yes, at 3, 6, 9 and 12 consecutive hits |
+| Rising difficulty: faster monsters, denser spawns | yes, a new level every 8 kills |
 
-**Reszta aplikacji**
+**The rest of the app**
 
-- Ekran startowy z „graj anonimowo" (punkt 7)
-- Menu: PLAY / SETS / OPTIONS / ACHIEVEMENTS / SCORES / EXIT (punkt 8)
-- SETS: lista zestawów, edytor w układzie Quizleta: numerowane wiersze, dwie kolumny z językami
-  i przyciskiem zamiany stron (punkty 10 to 11). Własne zestawy kasujesz koszem: pierwsze tapnięcie
-  uzbraja przycisk, drugie usuwa. Wbudowanych nie da się usunąć.
-- OPTIONS: dźwięk, liczba żyć, tekstury, tempo potworków, język interfejsu (PL/EN),
-  kierunek tłumaczenia (punkt 12)
-- ACHIEVEMENTS: 8 odznak liczonych z Twoich statystyk
-- SCORES: lokalny ranking, najlepsze przebiegi, najpopularniejszy zestaw (punkt 13)
-- **102 zestawy, 2084 hasła**: słownictwo pod zakres tematyczny matury podstawowej, podzielone
-  na 14 działów (Człowiek, Miejsce zamieszkania, Edukacja, Praca, Życie prywatne, Żywienie,
-  Zakupy, Podróże, Kultura, Sport, Zdrowie, Nauka i technika, Przyroda, Życie społeczne).
-  Każdy zestaw ma 20 to 25 haseł, żeby jedna rozgrywka pokazała każde słowo kilka razy.
-- **Grafika pixel-art**: 97 sprite'ów skalowanych wyłącznie nearest-neighbour, w `drawable-nodpi`,
-  żeby Android nie rozmywał ich już przy wczytywaniu
-- **Font bitmapowy** `font_8x8`: cały interfejs poza dłuższą prozą rysowany glifami 5×7
-  z arkusza, z konturem +1/+1; polskie znaki jako osobne glify, nie z kroju systemowego
-- **Animacje**: dwuklatkowy chód co 200 ms, klatka zgonu przez 350 ms, błysk trafienia,
-  baner nowego poziomu
-- **Demo przeglądarkowe**: jeden plik HTML z tą samą mechaniką, do pokazania bez instalowania
+- A start screen with "play anonymously" (point 7)
+- Menu: PLAY / SETS / OPTIONS / ACHIEVEMENTS / SCORES / EXIT (point 8)
+- SETS: the list of sets and an editor laid out like Quizlet, with numbered rows, two
+  language columns and a swap sides button (points 10 and 11). Your own sets are deleted
+  with the bin: the first tap arms the button, the second removes the set. Built in sets
+  cannot be deleted.
+- OPTIONS: sound, number of lives, textures, monster pace, interface language (Polish or
+  English), direction of translation (point 12)
+- ACHIEVEMENTS: 8 badges computed from your own statistics
+- SCORES: a local leaderboard, best runs, most played set (point 13)
+- **102 sets, 2084 entries**: vocabulary for the topic range of the basic exam, split
+  across 14 areas (People, Home, Education, Work, Private life, Food, Shopping, Travel,
+  Culture, Sport, Health, Science and technology, Nature, Social life). Each set holds 20
+  to 25 entries, so that a single game shows every word several times.
+- **Pixel art**: 97 sprites scaled by nearest neighbour only, kept in `drawable-nodpi` so
+  that Android does not blur them at load time
+- **A bitmap font**, `font_8x8`: the whole interface apart from longer prose is drawn from
+  5 by 7 glyphs on a sheet, outlined by one pixel in each direction. Polish characters are
+  separate glyphs rather than being taken from the system face.
+- **Animation**: a two frame walk cycle every 200 ms, a death frame for 350 ms, a hit
+  flash, and a new level banner
+- **A browser demo**: one HTML file with the same mechanics, for showing the game without
+  installing it
 
-## Czego nie ma i dlaczego
+## What is missing, and why
 
-- **Konta, logowanie, zestawy innych użytkowników, globalne rankingi**: wymagają serwera.
-  Aplikacja jest w pełni offline, wszystko leży w prywatnym pliku JSON na urządzeniu.
-  „Play anonymously" to jedyna ścieżka.
-- **TRUE/FALSE, MULTIPLE CHOICE, TIME ATTACK**: widoczne w menu wyboru trybu jako nieaktywne.
-  Silnik jest pod nie przygotowany (dopasowywanie i model zestawu są wspólne), ale same tryby
-  nie są napisane.
-- **Automatyczne tłumaczenie przyciskiem „T"**: wymaga płatnego Google Translate API i klucza.
-- **Dźwięk**: krótkie tony generowane na urządzeniu, bez plików audio.
-- **Import z Quizleta w aplikacji**: demo przeglądarkowe przyjmuje wklejony eksport, aplikacja
-  jeszcze nie.
+- **Accounts, sign in, other people's sets, global leaderboards**: these need a server.
+  The app is fully offline and everything lives in a private JSON file on the device, so
+  "play anonymously" is the only path.
+- **TRUE/FALSE, MULTIPLE CHOICE, TIME ATTACK**: visible in the mode menu as inactive. The
+  engine is ready for them, since matching and the set model are shared, but the modes
+  themselves are not written.
+- **Automatic translation behind the "T" button**: needs the paid Google Translate API and
+  a key.
+- **Sound**: short tones generated on the device, with no audio files.
+- **Quizlet import inside the app**: the browser demo accepts a pasted export, the app
+  does not yet.
 
-## Jedna decyzja projektowa, która nie wynika wprost z dokumentu
+## One design decision that does not come from the document
 
-Klawiatura z makiety ma tylko A-Z: nie ma polskich znaków. Bez zmiany reguł nie dałoby się
-wpisać „zręczny", czyli odpowiedzi z Waszej własnej makiety. Dlatego dopasowanie odpowiedzi
-ignoruje diakrytyki, wielkość liter i nadmiarowe spacje: `ZRECZNY`, `zreczny` i `zręczny` są
-równoważne. Przecinek w kolumnie tłumaczeń rozdziela warianty: każdy jest zaliczany osobno,
-a treść w nawiasie jest opcjonalna.
+The keyboard in the mock up holds only A-Z, with no Polish characters. Without changing
+the rules it would have been impossible to type "zręczny", which is an answer from the
+mock up itself. Answer matching therefore ignores diacritics, letter case and extra
+spaces, so `ZRECZNY`, `zreczny` and `zręczny` are equivalent. A comma in the translation
+column separates variants, each of which is accepted on its own, and anything in brackets
+is optional.
 
-## Instalacja APK
+## Installing the APK
 
-APK jest podpisany kluczem debugowym, więc instaluje się bez Android Studio:
+The APK is signed with a debug key, so it installs without Android Studio:
 
-1. Przerzuć plik na telefon. Gmail odrzuca `.apk`, również w archiwum: użyj kabla, chmury
-   albo pobierz plik bezpośrednio w przeglądarce telefonu.
-2. Otwórz plik w menedżerze plików i zezwól mu na „instalowanie nieznanych aplikacji".
-3. Zainstaluj.
+1. Get the file onto the phone. Gmail rejects `.apk`, including inside an archive, so use
+   a cable, cloud storage, or download the file directly in the phone's browser.
+2. Open the file in a file manager and allow it to "install unknown apps".
+3. Install.
 
-Albo przez kabel: `adb install -r app-debug.apk`
+Or over a cable: `adb install -r app-debug.apk`
 
-Minimalny Android: 7.0 (API 24). Aplikacja jest w orientacji pionowej.
+Minimum Android: 7.0 (API 24). The app runs in portrait on phones.
 
-## Budowanie ze źródeł
+## Building from source
 
 ```bash
-echo "sdk.dir=/sciezka/do/Android/Sdk" > local.properties
-./gradlew :app:assembleDebug          # APK w app/build/outputs/apk/debug/
-./gradlew :app:bundleRelease          # AAB do Google Play w app/build/outputs/bundle/release/
-./gradlew :app:testDebugUnitTest      # 54 testy jednostkowe
+echo "sdk.dir=/path/to/Android/Sdk" > local.properties
+./gradlew :app:assembleDebug          # APK in app/build/outputs/apk/debug/
+./gradlew :app:bundleRelease          # AAB for Google Play in app/build/outputs/bundle/release/
+./gradlew :app:testDebugUnitTest      # 54 unit tests
 ```
 
-Bez `keystore.properties` paczka release wychodzi niepodpisana: podpis zakłada się
-osobno, na maszynie, która ma klucz.
+Without `keystore.properties` the release bundle comes out unsigned: signing is done
+separately, on the machine that holds the key.
 
-Android Studio: `File → Open` na katalogu repozytorium. Wymagany JDK 21 i Android SDK 36
-(kod bajtowy powstaje pod Javę 17).
+In Android Studio: `File`, then `Open`, on the repository directory. JDK 21 and Android
+SDK 36 are required (the bytecode targets Java 17).
 
-## Mapa kodu
+## Code map
 
 ```
 app/src/main/java/com/matura/app/
-  MainActivity.kt            punkt wejścia
-  model/Models.kt            zestawy, opcje, profil, wyniki, odznaki
-  data/Repository.kt         zapis do JSON
-  data/BuiltInSets.kt        generowane zestawy słownictwa (nie edytuj ręcznie)
-  game/Matching.kt           normalizacja i dopasowanie odpowiedzi
-  game/GameEngine.kt         symulacja CLASSIC, czysty Kotlin, bez Androida
-  ui/App.kt                  stos ekranów
-  ui/PlayScreen.kt           plansza, rysowanie, pętla klatek
-  ui/Keyboard.kt             ograniczona klawiatura z dokumentu
-  ui/Screens.kt              menu, zestawy, edytor, opcje, odznaki, wyniki
-  ui/Sprites.kt              rejestr sprite'ów, klatki animacji, kafelkowanie
-  ui/PixelFont.kt            renderer fontu bitmapowego font_8x8
+  MainActivity.kt            entry point
+  model/Models.kt            sets, options, profile, scores, badges
+  data/Repository.kt         persistence to JSON
+  data/BuiltInSets.kt        generated vocabulary sets (do not edit by hand)
+  game/Matching.kt           answer normalisation and matching
+  game/GameEngine.kt         the CLASSIC simulation, pure Kotlin, no Android
+  ui/App.kt                  the screen stack
+  ui/PlayScreen.kt           board, drawing, frame loop
+  ui/Keyboard.kt             the restricted keyboard from the document
+  ui/Screens.kt              menu, sets, editor, options, badges, scores
+  ui/Sprites.kt              sprite registry, animation frames, tiling
+  ui/PixelFont.kt            the font_8x8 bitmap font renderer
 app/src/test/java/com/matura/app/
-  EngineTest.kt              GameEngineTest (28) + MatchingTest (9)
-  BuiltInSetsTest.kt         10 testów pilnujących reguł słownictwa
-  PersistenceTest.kt         7 testów zapisu i odczytu
+  EngineTest.kt              GameEngineTest (28) plus MatchingTest (9)
+  BuiltInSetsTest.kt         10 tests enforcing the vocabulary rules
+  PersistenceTest.kt         7 tests of save and load
 ```
 
-`GameEngine` celowo nie zna Androida ani Compose: dzięki temu cała mechanika jest testowana
-zwykłym JUnitem, bez emulatora. Razem 54 testy.
+`GameEngine` deliberately knows nothing about Android or Compose, which is what lets the
+whole mechanic be tested with ordinary JUnit and no emulator. 54 tests in total.
 
-## Publikacja
+## Publishing
 
-`docs/` jest źródłem dla GitHub Pages: w ustawieniach repozytorium: gałąź **master**,
-folder **/docs**. APK celowo nie jest wersjonowany: jednorazowe wrzucenie go rozdmuchało
-katalog `.git` z kilkuset kilobajtów do jedenastu megabajtów.
+`docs/` is the source for GitHub Pages: in the repository settings, branch **master**,
+folder **/docs**. The APK is deliberately not versioned, because committing it once
+inflated the `.git` directory from a few hundred kilobytes to eleven megabytes.
 
-Dlatego APK wisi w **GitHub Releases**, nie w `docs/`. `docs/pobierz.html` linkuje do
-`releases/latest/download/MaturaV080.apk`, więc przy każdym wydaniu plik musi nazywać się
-dokładnie tak: inaczej przycisk pobierania zwróci 404. Do 0.7.0 link prowadził do pliku
-w `docs/`, którego tam nie było, i pobieranie po prostu nie działało.
+The APK therefore lives in **GitHub Releases** rather than in `docs/`.
+`docs/pobierz.html` links to `releases/latest/download/MaturaV080.apk`, so on every
+release the file has to carry exactly that name, or the download button returns a 404. Up
+to 0.7.0 the link pointed at a file in `docs/` that was not there, and downloading simply
+did not work.
 
-## Siostrzana aplikacja
+## Sister app
 
-**[Aleima](https://github.com/kubakozub/aleima)**: ta sama gra po angielsku, do nauki
-hiszpańskiego, ze słownictwem podzielonym według poziomów CEFR.
+**[Aleima](https://github.com/kubakozub/aleima)**: the same game in English, for learning
+Spanish, with the vocabulary split by CEFR level.
+
+## Dla uczniów
+
+Gra jest po polsku, darmowa i bez reklam: [matura.uk](https://matura.uk) albo
+[Google Play](https://play.google.com/store/apps/details?id=com.matura.app).
