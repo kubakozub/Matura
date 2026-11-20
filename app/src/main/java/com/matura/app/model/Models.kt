@@ -132,12 +132,14 @@ data class WordProgress(
  * dziennie. Repository.recordGame dopisuje tu wylacznie odznaki za gre, nigdy punkty.
  *
  * Trzy zasady, ktorych te pola pilnuja:
- *  - to sa LICZBY PRAWDZIWYCH RZECZY (zaliczenia, dni, powtorki), nie procent gotowosci i nie
- *    prognoza wyniku matury;
+ *  - to sa LICZBY PRAWDZIWYCH RZECZY (punkty za zaliczenia, dni, powtorki), nie procent
+ *    gotowosci i nie prognoza wyniku matury;
  *  - punkty nauki ([xp]) nie maja nic wspolnego z punktami za gre (Profile.bestScore): tamte
  *    daje sie takze za szybkosc i za trafienie potworka;
- *  - nic tu nie maleje poza licznikami "na dzis", ktore z definicji zaczynaja kazdy dzien od
- *    zera, i biezaca seria, ktora po dluzszej przerwie zaczyna sie od nowa (rekord zostaje).
+ *  - nic, co uczen zdobyl, tu nie maleje. Zmniejszaja sie tylko trzy rzeczy, ktore zdobycza
+ *    nie sa: liczniki "na dzis" (kazdy dzien zaczynaja od zera), biezaca seria (po przerwie
+ *    dluzszej niz zapas dni wolnych zaczyna sie od nowa, rekord zostaje) i sam zapas dni
+ *    wolnych, ktory jest po to, zeby go zuzywac.
  *
  * Dni to dni harmonogramu (Srs.dayOf, UTC), te same, ktorymi liczy sie termin powtorki:
  * jeden zegar na cala nauke. [WordProgress.NO_DAY] znaczy "nigdy" i sluzy wylacznie do porownan.
@@ -147,14 +149,24 @@ data class Dorobek(
     /** Suma punktow nauki. Nigdy nie maleje. */
     val xp: Int = 0,
 
-    /** Dzien, ktorego dotycza [slowaDzis] i [xpDzis]. */
+    /** Dzien, ktorego dotycza cztery liczniki "na dzis": [xpDzis] i trzy nastepne. */
     val dzien: Int = WordProgress.NO_DAY,
 
-    /** Zaliczenia Z PAMIECI w dniu [dzien]. To one, a nie punkty, wypelniaja cel dnia. */
-    val slowaDzis: Int = 0,
-
-    /** Punkty nauki zdobyte w dniu [dzien]. */
+    /** Punkty nauki zdobyte w dniu [dzien]. To one wypelniaja cel dnia. */
     val xpDzis: Int = 0,
+
+    /**
+     * Slowa spotkane pierwszy raz w dniu [dzien]: wyjscia z pudelka 0, z pamieci i przez
+     * rozpoznanie, takze te, za ktore dzienny limit nie dal juz punktow. Sluzy wylacznie do
+     * uwagi "dzis doszlo juz 30 nowych slow": wszystkie wroca jutro jako powtorki.
+     */
+    val noweDzis: Int = 0,
+
+    /** Rozpoznania, za ktore w dniu [dzien] byly punkty; od 0 do limitu z Nagrody. */
+    val rozpoznaneDzis: Int = 0,
+
+    /** Zaliczenia slow spoza slownika gry, za ktore w dniu [dzien] byly punkty; od 0 do limitu. */
+    val wlasneDzis: Int = 0,
 
     /**
      * Dlugosc ostatniego lancucha dni z zaliczonym celem. Zostaje w zapisie takze wtedy, gdy
@@ -165,14 +177,28 @@ data class Dorobek(
     /** Ostatni dzien, w ktorym cel dnia zostal zaliczony. */
     val seriaDzien: Int = WordProgress.NO_DAY,
 
+    /**
+     * Dni wolne w zapasie, od 0 do 2. Opuszczony dzien zuzywa jeden i seria trwa dalej; bez
+     * zapasu seria zaczyna sie od nowa. Kazdy uczen zaczyna z jednym, kolejny dochodzi za
+     * kazde 7 dni serii. Jawny, policzalny zapas zamiast cichego "jeden dzien sie wybacza":
+     * przy nieograniczonym wybaczaniu "seria 7" wychodzila z siedmiu dni nauki w trzynastu.
+     */
+    val wolne: Int = 1,
+
     /** Najdluzszy lancuch w historii. */
     val rekordSerii: Int = 0,
 
     /** Ile bylo dni z zaliczonym celem, lacznie; nie musza isc po kolei. */
     val dniNauki: Int = 0,
 
-    /** Ile bylo powtorek w terminie zaliczonych z pamieci, lacznie. */
+    /**
+     * Ile bylo zaplaconych zaliczen z pamieci slow, ktore WROCILY w terminie: pierwsza
+     * powtorka (pudelko 2), utrwalenie (pudelko 3) i kazda nastepna powtorka w terminie.
+     */
     val powtorki: Int = 0,
+
+    /** Ile slow ze slownika gry doszlo pierwszy raz do utrwalenia MIMO wczesniejszej pomylki. */
+    val naprawione: Int = 0,
 
     /**
      * Zdobyte odznaki: nazwa stalej com.matura.app.learn.Odznaka -> dzien zdobycia. Zero znaczy
@@ -180,6 +206,13 @@ data class Dorobek(
      * czescia zapisu, tak jak nazwy stalych [Achievement].
      */
     val odznaki: Map<String, Int> = emptyMap(),
+
+    /**
+     * Odznaki zdobyte, ale jeszcze niepokazane uczniowi (te same nazwy, co w [odznaki]).
+     * Wyjscie w polowie rundy nie moze zgubic ogloszenia: odznaka czeka tu, az pokaze ja ekran
+     * wyniku albo ekran osiagniec, i dopiero wtedy Repository czysci ten zbior.
+     */
+    val odznakiNowe: Set<String> = emptySet(),
 )
 
 @Serializable
@@ -231,11 +264,12 @@ data class Options(
     val systemKeyboard: Boolean = false,
 
     /**
-     * Cel dnia: ile zaliczen Z PAMIECI ma przyniesc jeden dzien nauki. Dozwolone wartosci to
-     * 5, 10 i 20 (com.matura.app.learn.Nagrody.CELE_DNIA); inna liczba w pliku jest czytana
-     * jak domyslna. Piec to tyle, ile nowych slow wprowadza jedna sesja "Dzisiejsze 5 minut".
+     * Cel dnia w PUNKTACH NAUKI: ile ma ich przyniesc jeden dzien, zeby wszedl do serii.
+     * Dozwolone wartosci to 30, 60 i 120 (com.matura.app.learn.Nagrody.CELE_DNIA); inna liczba
+     * w pliku jest czytana jak domyslna. Trzydziesci to trzy nowe slowa podane z pamieci albo
+     * szesc powtorek w terminie.
      */
-    val celDnia: Int = 5,
+    val celDnia: Int = 30,
 
     /**
      * Dzien egzaminu jako KALENDARZOWY dzien epoki (dni od 1970-01-01), a nie dzien
@@ -371,7 +405,7 @@ data class SaveData(
     /**
      * Ksiega dorobku: punkty nauki, cel dnia, seria i odznaki. Wypelnia ja wylacznie
      * Repository.recordAttempt (tym samym zapisem co [progress]) oraz Repository.recordGame
-     * (same odznaki). Stary plik tego pola nie ma: migracja zapisu (Repository.migrate,
+     * (same odznaki); Repository.potwierdzOdznaki tylko odhacza odznaki juz pokazane. Stary plik tego pola nie ma: migracja zapisu (Repository.migrate,
      * krok 3 -> 4) zaklada wtedy ksiege z pudelek, do ktorych uczen naprawde doszedl, a nie
      * z punktow za gry.
      */

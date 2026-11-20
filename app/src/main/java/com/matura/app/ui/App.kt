@@ -203,7 +203,7 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                     // biezaco, przekroczenie polnocy UTC w trakcie gry przestawiloby plan rundy.
                     val dzisiaj = Srs.dayOf(System.currentTimeMillis())
                     val finish: (com.matura.app.model.ScoreRecord) -> Unit = { record ->
-                        repo.recordGame(record.copy(mode = s.mode), set.id, System.currentTimeMillis())
+                        repo.recordGame(record.copy(mode = s.mode), set.id)
                         refresh()
                     }
                     // Spokojna runda z codziennej sesji dostaje zapas zyc, zeby nauka nowego
