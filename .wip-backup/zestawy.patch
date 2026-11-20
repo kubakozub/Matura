@@ -29,7 +29,7 @@ index 9ba7a55..3d4ef60 100644
              proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
              // brak keystore.properties -> paczka wychodzi niepodpisana,
 diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
-index 05a3a2e..11342a5 100644
+index 05a3a2e..b0fe625 100644
 --- a/app/src/main/AndroidManifest.xml
 +++ b/app/src/main/AndroidManifest.xml
 @@ -14,6 +14,13 @@
@@ -46,7 +46,7 @@ index 05a3a2e..11342a5 100644
      <!-- Bez tego Android 11+ nie pokazuje aplikacji zadnej uslugi rozpoznawania mowy. -->
      <queries>
          <intent>
-@@ -25,21 +32,45 @@
+@@ -25,21 +32,46 @@
          <intent>
              <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
          </intent>
@@ -81,9 +81,10 @@ index 05a3a2e..11342a5 100644
 +             Restart niczego tu nie wnosil: interfejs jest w calosci w Compose, ktory sam czyta
 +             na nowo konfiguracje i gestosc, a grafiki leza w drawable-nodpi. Pilnuja tego
 +             ZmianaKonfiguracjiTest i MainActivityNaEkranieTest.
-+             Lista nie jest pelna. Zmiana karty SIM (mcc, mnc), pogrubienia czcionki
-+             (fontWeightAdjustment), rodzaju ekranu dotykowego (touchscreen) i trybu kolorow
-+             (colorMode) dalej koncza sie nowa instancja. -->
++             Lista nie jest pelna. Pogrubienie czcionki (fontWeightAdjustment), zmiana rodzaju
++             ekranu dotykowego (touchscreen) i trybu kolorow (colorMode) dalej koncza sie nowa
++             instancja, a na Androidzie 7 takze zmiana karty SIM (mcc, mnc; od Androida 8 system
++             sam dopisuje te dwie flagi kazdej Activity). -->
          <activity
              android:name=".MainActivity"
              android:exported="true"
@@ -151,10 +152,10 @@ index f9ed98c..1cf3e8f 100644
 +            intent?.hasCategory(Intent.CATEGORY_LAUNCHER) == true
  }
 diff --git a/app/src/main/java/com/matura/app/data/Repository.kt b/app/src/main/java/com/matura/app/data/Repository.kt
-index 690d3d3..6809110 100644
+index 690d3d3..1e07ed6 100644
 --- a/app/src/main/java/com/matura/app/data/Repository.kt
 +++ b/app/src/main/java/com/matura/app/data/Repository.kt
-@@ -414,12 +414,30 @@ class Repository(private val dir: File) {
+@@ -414,12 +414,33 @@ class Repository(private val dir: File) {
       * Przedtem kazdy blad parsowania szedl od razu do danych domyslnych, a pierwszy zapis
       * (juz samo podanie imienia na ekranie startowym) nadpisywal uszkodzony plik w miejscu
       * i kasowal resztki, z ktorych dalo sie jeszcze cokolwiek wylowic.
@@ -166,7 +167,10 @@ index 690d3d3..6809110 100644
 +     * kopii po cichu gubil wtedy ostatni zapis, choc lezal obok.
 +     *
 +     * Odczyt dalej niczego nie pisze: plik tymczasowy zostaje na miejscu, a plik glowny
-+     * odtwarza dopiero nastepny zapis.
++     * odtwarza dopiero nastepny zapis. Do tego czasu najnowszy stan lezy na dysku tylko w pliku
++     * tymczasowym, a [writeAtomically] zaczyna od nadpisania wlasnie jego: ubicie w trakcie
++     * TEGO jednego zapisu cofa wiec do kopii. Zamkniecie tej luki wymaga zmiany w zapisie,
++     * nie w odczycie.
       */
      private fun readBestAvailable(): SaveData {
          read(file)?.let { return it }
@@ -234,10 +238,10 @@ index 0000000..45949cb
 +}
 diff --git a/app/src/test/java/com/matura/app/GlownaPetla.kt b/app/src/test/java/com/matura/app/GlownaPetla.kt
 new file mode 100644
-index 0000000..7142b6e
+index 0000000..5b0c1db
 --- /dev/null
 +++ b/app/src/test/java/com/matura/app/GlownaPetla.kt
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,28 @@
 +package com.matura.app
 +
 +import android.os.Looper
@@ -255,8 +259,13 @@ index 0000000..7142b6e
 + * NASTEPNY test ekranu z automatycznym zegarem czeka 60 s i pada z AppNotIdleException
 + * ("Compose did not get idle"). Winny test przechodzi, padaja niewinne po nim.
 + *
++ * Zmierzone osobno dla StartAktywnosciTest, ZmianaKonfiguracjiTest i MainActivityNaEkranieTest:
++ * bez tego wywolania pierwszy test ekranu uruchomiony po kazdym z nich wisi 60 s i pada,
++ * z nim przechodzi. W pelnym przebiegu wygladalo to jak 21 awarii w cudzych testach.
++ *
 + * Testy ekranow oparte o createComposeRule albo ActivityScenario tego nie potrzebuja:
-+ * ActivityScenario oproznia petle po kazdym kroku cyklu zycia.
++ * ActivityScenario sam czeka na pusta petle przy kazdej zmianie stanu ekranu, takze przy
++ * zamykaniu.
 + */
 +internal fun wykonajToCoCzekaWGlownejPetli() {
 +    shadowOf(Looper.getMainLooper()).idle()
@@ -906,10 +915,10 @@ index 0000000..0886090
 +}
 diff --git a/app/src/testDebug/java/com/matura/app/MainActivityNaEkranieTest.kt b/app/src/testDebug/java/com/matura/app/MainActivityNaEkranieTest.kt
 new file mode 100644
-index 0000000..bcdbe26
+index 0000000..0dee1b5
 --- /dev/null
 +++ b/app/src/testDebug/java/com/matura/app/MainActivityNaEkranieTest.kt
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,152 @@
 +package com.matura.app
 +
 +import android.content.Context
@@ -920,6 +929,7 @@ index 0000000..bcdbe26
 +import androidx.compose.ui.test.onNodeWithText
 +import androidx.compose.ui.test.performClick
 +import androidx.compose.ui.test.performTextInput
++import androidx.compose.ui.unit.LayoutDirection
 +import androidx.test.core.app.ApplicationProvider
 +import com.matura.app.data.Repository
 +import com.matura.app.data.RepositoryHolder
@@ -937,6 +947,7 @@ index 0000000..bcdbe26
 +import org.robolectric.Robolectric
 +import org.robolectric.RobolectricTestRunner
 +import org.robolectric.annotation.Config
++import java.util.Locale
 +import kotlin.math.roundToInt
 +
 +/**
@@ -976,7 +987,7 @@ index 0000000..bcdbe26
 +        PixelFont.LINE_HEIGHT * maxOf(1, (glifDp * gestosc / PixelFont.GLYPH_H).roundToInt())
 +
 +    @Test
-+    fun `wpisywany zestaw przezywa zmiane czcionki, gestosci i rozmiaru ekranu`() {
++    fun `wpisywany zestaw przezywa zmiane czcionki, gestosci, rozmiaru ekranu i jezyka systemu`() {
 +        Robolectric.buildActivity(MainActivity::class.java).use { kontroler ->
 +            kontroler.setup()
 +            val ekran = kontroler.get()
@@ -1020,6 +1031,16 @@ index 0000000..bcdbe26
 +            assertEquals(2f, gestosc.density, 0.001f)
 +            assertEquals(1.3f, gestosc.fontScale, 0.001f)
 +            assertEquals(wierszPx(13, 2f), naglowekEdytora().size.height)
++
++            // Jezyk systemu pisany od prawej: ekran odwraca sie w miejscu, bez nowej instancji.
++            assertEquals(LayoutDirection.Ltr, naglowekEdytora().layoutInfo.layoutDirection)
++            kontroler.configurationChange(Configuration(po).apply { setLocale(Locale.forLanguageTag("ar-EG")) })
++            rule.waitForIdle()
++
++            assertSame("MainActivity zostala zbudowana od nowa", ekran, kontroler.get())
++            assertEquals(LayoutDirection.Rtl, naglowekEdytora().layoutInfo.layoutDirection)
++            rule.onNodeWithText(tytulZestawu).assertExists()
++            rule.onNodeWithText("went").assertExists()
 +        }
 +    }
 +

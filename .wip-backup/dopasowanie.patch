@@ -1,5 +1,5 @@
 diff --git a/app/src/main/java/com/matura/app/game/VoiceMatch.kt b/app/src/main/java/com/matura/app/game/VoiceMatch.kt
-index cc03694..6d89aa9 100644
+index cc03694..ef7797e 100644
 --- a/app/src/main/java/com/matura/app/game/VoiceMatch.kt
 +++ b/app/src/main/java/com/matura/app/game/VoiceMatch.kt
 @@ -8,17 +8,24 @@ package com.matura.app.game
@@ -81,7 +81,7 @@ index cc03694..6d89aa9 100644
              t = t.replace("w", "u")                       // "hows" = house
          }
          return DOUBLED.replace(t, "$1").trim()
-@@ -88,19 +106,173 @@ object VoiceMatch {
+@@ -88,19 +106,210 @@ object VoiceMatch {
  
      /** Szkielet spolgloskowy - ratuje trafienia, gdy ASR pomyli same samogloski. */
      fun skel(s: String): String =
@@ -181,38 +181,61 @@ index cc03694..6d89aa9 100644
 +    //
 +    // "mature" i "immature" roznia sie dwiema literami na osiem i dziela caly szkielet
 +    // spolgloskowy, wiec scorery widza w nich prawie to samo slowo, a znacza cos odwrotnego.
-+    // Para, w ktorej jedna strona to druga z przedrostkiem z tej listy, nie trafia nigdy
-+    // "mniej wiecej": takie slowo trzeba powiedziec dokladnie. Lista jest jedna dla obu
-+    // jezykow, bo zestaw wlasny moze miec dowolny, a poza prawdziwymi zaprzeczeniami
-+    // regula dotyka tylko par, ktore i tak sa roznymi slowami ("side" i "inside").
++    // Slowo z przedrostkiem z tej listy nie trafia w slowo bez niego ani odwrotnie. Lista
++    // jest jedna dla obu jezykow, bo zestaw wlasny moze miec dowolny, a poza prawdziwymi
++    // zaprzeczeniami regula dotyka tylko par, ktore i tak sa roznymi slowami ("side"
++    // i "inside").
 +    private val NEGATIONS = listOf("nie", "un", "in", "im", "ir", "il", "dis", "non", "anti")
 +
-+    /** Czy [long] to [short] z przedrostkiem zaprzeczenia, pisanym lacznie albo osobno. */
-+    private fun negates(long: String, short: String): Boolean {
-+        if (short.isEmpty() || long.length <= short.length || !long.endsWith(short)) return false
-+        val head = long.length - short.length
-+        val prefix = if (long[head - 1] == ' ') long.substring(0, head - 1) else long.substring(0, head)
-+        return prefix in NEGATIONS
++    /**
++     * Czy [negated] to zaprzeczenie [plain]: zaczyna sie przedrostkiem, ktorego [plain] nie
++     * ma, a reszta sama trafilaby w [plain]. Reszta nie musi byc identyczna: uczen mowi
++     * "nieodpowiedzialna", silnik oddaje "dojrzali", i taka koncowka nie moze przenosic
++     * slowa na druga strone zaprzeczenia.
++     *
++     * Zdjecie przedrostka musi przy tym slowa do siebie ZBLIZYC. "imitation" uslyszane
++     * zamiast "invitation" to pomylka w pierwszej sylabie, a nie zaprzeczenie: bez "im"
++     * pasuje gorzej niz z nim.
++     */
++    private fun negates(negated: Form, plain: Form): Boolean {
++        val rest = negated.withoutNegation ?: return false
++        if (plain.key.startsWith(negated.negation)) return false
++        if (rest.key == plain.key) return true
++        return likeness(rest, plain) >= need(letters(plain.text)) &&
++            sim(rest.text, plain.text) > sim(negated.text, plain.text)
 +    }
  
 -    fun score(hyp: String, cand: String, polish: Boolean): Double {
 -        if (hyp == cand) return 1.0
 -        val direct = sim(hyp, cand)
++    /** Najdluzszy kawalek wypowiedzi czytany osobno: odpowiedzi z zestawu sa krotsze. */
++    private const val LONGEST_PART = 4
++
 +    /**
-+     * Odpowiedzi, w ktore ta wypowiedz nie moze trafic wcale, bo sama zawiera je razem
-+     * z zaprzeczeniem: w "nie lubic" pada tez samo "lubic" i bez tej listy ono wlasnie
-+     * trafialoby dokladnie, jako jedno ze slow wypowiedzi.
++     * Hipotezy dla [decide]: calosc, sklejka i kazdy kawalek wypowiedzi do [LONGEST_PART]
++     * slow. [hypotheses] konczy na parach, wiec "mother in law" powiedziane z rodzajnikiem
++     * przegrywalo z para "in law" i trafialo w "in-laws".
++     *
++     * Kawalek, ktory w wypowiedzi stoi zaraz po zaprzeczeniu, nie jest osobna hipoteza:
++     * w "nie lubic" pada tez samo "lubic" i trafialoby dokladnie, chociaz wypowiedz znaczy
++     * cos odwrotnego.
 +     */
-+    private fun negatedBy(hypotheses: List<Form>): Set<String> {
-+        val out = HashSet<String>()
-+        for (h in hypotheses) {
-+            for (prefix in NEGATIONS) {
-+                if (h.key.length <= prefix.length || !h.key.startsWith(prefix)) continue
-+                val rest = h.key.substring(prefix.length).trimStart()
-+                if (rest.isNotEmpty()) out.add(rest)
++    private fun readings(whole: String): List<String> {
++        val words = whole.split(' ')
++        if (words.size == 1) return listOf(whole)
++        val out = LinkedHashSet<String>()
++        out.add(whole)
++        for (from in words.indices) {
++            if (from > 0 && words[from - 1] in NEGATIONS) continue
++            var part = words[from]
++            out.add(part)
++            for (to in from + 1 until minOf(words.size, from + LONGEST_PART)) {
++                part += " " + words[to]
++                out.add(part)
 +            }
 +        }
-+        return out
++        out.add(words.joinToString(""))
++        return out.toList()
 +    }
 +
 +    /**
@@ -224,6 +247,15 @@ index cc03694..6d89aa9 100644
 +        val key: String = if (polish) text else american(text)
 +        val phon: String by lazy(LazyThreadSafetyMode.PUBLICATION) { phon(text, polish) }
 +        val skel: String by lazy(LazyThreadSafetyMode.PUBLICATION) { skel(text) }
++
++        /** Przedrostek zaprzeczenia, od ktorego napis sie zaczyna, pisany lacznie albo osobno. */
++        val negation: String = NEGATIONS.firstOrNull { key.length > it.length && key.startsWith(it) } ?: ""
++
++        /** Napis bez tego przedrostka; null, gdy przedrostka nie ma. */
++        val withoutNegation: Form? by lazy(LazyThreadSafetyMode.PUBLICATION) {
++            val rest = key.substring(negation.length).trimStart()
++            if (negation.isEmpty() || rest.isEmpty()) null else Form(rest, polish)
++        }
 +    }
 +
 +    fun score(hyp: String, cand: String, polish: Boolean): Double =
@@ -231,7 +263,12 @@ index cc03694..6d89aa9 100644
 +
 +    private fun score(hyp: Form, cand: Form): Double {
 +        if (hyp.key == cand.key) return 1.0
-+        if (negates(hyp.key, cand.key) || negates(cand.key, hyp.key)) return 0.0
++        if (negates(hyp, cand) || negates(cand, hyp)) return 0.0
++        return likeness(hyp, cand)
++    }
++
++    /** Trzy scorery: zapis, uproszczenie fonetyczne i szkielet spolgloskowy. */
++    private fun likeness(hyp: Form, cand: Form): Double {
 +        val direct = sim(hyp.text, cand.text)
          // Urwana wypowiedz ("ko" zamiast "kot") jest krotsza od celu. Przy duzej
          // roznicy dlugosci ufamy WYLACZNIE zapisowi - luzniejsze scorery fonetyczne
@@ -263,7 +300,7 @@ index cc03694..6d89aa9 100644
      }
  
      /**
-@@ -122,12 +294,15 @@ object VoiceMatch {
+@@ -122,12 +331,15 @@ object VoiceMatch {
      }
  
      fun match(transcripts: List<String>, candidates: List<String>, polish: Boolean): Result {
@@ -281,7 +318,7 @@ index cc03694..6d89aa9 100644
                      if (s > best.score) {
                          if (best.answer != null && best.answer != cand) second = best
                          best = Hit(s, cand)
-@@ -140,20 +315,313 @@ object VoiceMatch {
+@@ -140,20 +352,339 @@ object VoiceMatch {
          return Result(best, second)
      }
  
@@ -387,7 +424,7 @@ index cc03694..6d89aa9 100644
 +     *    pada tylko wtedy, gdy stoi ona na planszy i ma przewage nad rywalem: najlepsza
 +     *    odpowiedzia, ktorej trafiony cel nie przyjmuje, z planszy albo spoza niej. Drugi
 +     *    zapis tej samej odpowiedzi rywalem nie jest. Wypowiedz z kilku slow czytamy
-+     *    najpierw w calosci, a dopiero potem jako jedno z jej slow z dopowiedzeniem.
++     *    najpierw w calosci, a dopiero potem jako jej kawalek z dopowiedzeniem.
 +     * 3. Wynik czesciowy strzela tylko przy pewnosci [PARTIAL_SCORE] i tylko wtedy, gdy
 +     *    odpowiedz nie moze byc poczatkiem ani kawalkiem dluzszej odpowiedzi innego celu
 +     *    ("bluza" czeka, gdy w zestawie jest "bluza sportowa"). Kazdy inny wynik
@@ -415,7 +452,7 @@ index cc03694..6d89aa9 100644
 +        val heard = transcripts.map { Matching.normalize(it) }.filter { it.isNotEmpty() }
 +        if (heard.isEmpty() || board.isEmpty()) return Decision(Reason.NOTHING)
 +        val vocabulary = Vocabulary(board, others, polish)
-+        val verdict = vocabulary.said(heard) ?: vocabulary.nearest(heard)
++        val verdict = vocabulary.nearest(heard)
 +        if (isFinal) return verdict
 +        val answer = verdict.answer
 +        val fires = answer != null && verdict.score >= PARTIAL_SCORE && !vocabulary.mayGrow(answer)
@@ -428,8 +465,10 @@ index cc03694..6d89aa9 100644
 +        val key: String get() = form.key
 +        /** Cel z planszy, ktory ma dokladnie ten napis wsrod odpowiedzi. */
 +        var boardId: Long? = null
-+        /** Najlepszy wynik po wszystkich hipotezach. */
++        /** Najlepszy wynik po wszystkich hipotezach, hipoteza, ktora go dala, i jej wypowiedz. */
 +        var all = 0.0
++        var heardAs = ""
++        var utterance = ""
 +        /** Najlepszy wynik po samej calej wypowiedzi i jej sklejce. */
 +        var whole = 0.0
 +    }
@@ -437,6 +476,20 @@ index cc03694..6d89aa9 100644
 +    /** Czy [short] jest poczatkiem albo calym slowem dluzszej odpowiedzi [long]. */
 +    private fun partOf(short: String, long: String): Boolean =
 +        long.length > short.length && (long.startsWith(short) || " $long ".contains(" $short "))
++
++    /** [phrase] bez slow [part]; null, gdy [part] nie stoi w nim jako cale slowa obok innych. */
++    private fun without(phrase: String, part: String): String? {
++        val padded = " $phrase "
++        val at = padded.indexOf(" $part ")
++        if (at < 0 || part.length >= phrase.length) return null
++        return (padded.substring(0, at) + padded.substring(at + part.length + 1)).trim()
++    }
++
++    /**
++     * Od tego podobienstwa dopowiedziane slowo uchodzi za przekrecone slowo dluzszej
++     * odpowiedzi: "low" przy "law school" tak, "the" przy "law school" nie.
++     */
++    private const val SAME_REST = 0.6
 +
 +    /** Zamkniety slownik jednej decyzji: odpowiedzi planszy i reszty zestawu. */
 +    private class Vocabulary(board: List<Target>, others: List<Target>, val polish: Boolean) {
@@ -515,40 +568,50 @@ index cc03694..6d89aa9 100644
 +        fun nearest(heard: List<String>): Decision {
 +            // Alternatywy silnika roznia sie zwykle jednym slowem, wiec wiekszosc hipotez sie
 +            // powtarza: kazda liczymy przeciw slownikowi raz.
-+            val forms = HashMap<String, Form>()
 +            val rows = HashMap<String, DoubleArray>()
 +            for (whole in heard) {
 +                val joined = whole.replace(" ", "")
-+                val hypotheses = hypotheses(whole).map { text -> forms.getOrPut(text) { Form(text, polish) } }
-+                val negated = negatedBy(hypotheses)
-+                for (h in hypotheses) {
-+                    val row = rows.getOrPut(h.text) {
++                for (text in readings(whole)) {
++                    val row = rows.getOrPut(text) {
++                        val h = Form(text, polish)
 +                        DoubleArray(candidates.size) { scoreThatMatters(h, candidates[it].form) }
 +                    }
-+                    val isWhole = h.text == whole || h.text == joined
++                    val isWhole = text == whole || text == joined
 +                    for ((i, c) in candidates.withIndex()) {
 +                        val s = row[i]
-+                        if (s <= 0.0 || c.key in negated) continue
-+                        if (s > c.all) c.all = s
++                        if (s > c.all) {
++                            c.all = s
++                            c.heardAs = text
++                            c.utterance = whole
++                        }
 +                        if (isWhole && s > c.whole) c.whole = s
 +                    }
 +                }
 +            }
 +            val byAll = best { it.all } ?: return Decision(Reason.TOO_FAR)
-+            // Wypowiedz z kilku slow da sie czytac na dwa sposoby: w calosci albo jako jedno
-+            // z jej slow z dopowiedzeniem ("the dog", "pies to"). Calosc ma pierwszenstwo.
++            // Wypowiedz z kilku slow da sie czytac na dwa sposoby: w calosci albo jako jej
++            // kawalek z dopowiedzeniem ("the dog", "pies to"). Calosc ma pierwszenstwo.
 +            //
-+            // Najlepsza odpowiedz pasuje do CALEJ wypowiedzi: pojedyncze slowa nie sa wtedy
++            // Najlepsza odpowiedz pasuje do CALEJ wypowiedzi: kawalki wypowiedzi nie sa wtedy
 +            // nawet rywalami. "zwolnjenie lekarskie" to "zwolnienie lekarskie", choc pada
 +            // w nim tez prawie dokladne "zwolnienie" z innego wiersza.
 +            if (byAll.whole >= byAll.all) return judge(byAll) { it.whole }
-+            // Najlepsza pasuje tylko do jednego ze slow, ale jest kawalkiem dluzszej
-+            // odpowiedzi innego celu, a calosc te dluzsza wyraznie przypomina: w "bluza
-+            // sportowe" pada dokladne "bluza", ale powiedziano "bluza sportowa".
++            // Najlepsza pasuje tylko do jednego ze slow, ale to slowo jest czescia dluzszej
++            // odpowiedzi innego celu: w "bluza sportowe" pada dokladne "bluza", a powiedziano
++            // "bluza sportowa". Dluzsza przejmuje wypowiedz, gdy reszta wypowiedzi przypomina
++            // reszte tej odpowiedzi. Rodzajnik ani wtracenie tego nie robia: "the school"
++            // to "school", a nie "law school".
 +            val takers = takers(byAll.key)
-+            val longer = best { c -> if (partOf(byAll.text, c.text) && isRival(c, takers)) c.whole else 0.0 }
-+            if (longer != null && longer.whole >= need(letters(longer.text))) return judge(longer) { it.whole }
++            val longer = best { c -> if (without(c.text, byAll.text) != null && isRival(c, takers)) c.whole else 0.0 }
++            if (longer != null && restMatches(longer, byAll)) return judge(longer) { it.whole }
 +            return judge(byAll) { it.all }
++        }
++
++        /** Czy to, co w wypowiedzi stoi obok [word], przypomina to, co stoi obok niego w [longer]. */
++        private fun restMatches(longer: Candidate, word: Candidate): Boolean {
++            val expected = without(longer.text, word.text) ?: return false
++            val heard = without(word.utterance, word.heardAs) ?: return false
++            return likeness(Form(heard, polish), Form(expected, polish)) >= SAME_REST
 +        }
 +
 +        /**
@@ -720,10 +783,10 @@ index 2bcd997..0006f41 100644
   * Czy po powrocie z systemowego okna zgody wolno wlaczyc nasluch.
 diff --git a/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt b/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt
 new file mode 100644
-index 0000000..0874552
+index 0000000..cb6556f
 --- /dev/null
 +++ b/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt
-@@ -0,0 +1,653 @@
+@@ -0,0 +1,751 @@
 +package com.matura.app
 +
 +import com.matura.app.data.BuiltInSets
@@ -885,6 +948,14 @@ index 0000000..0874552
 +        }
 +    }
 +
++    @Test fun nearMissOfASingleWordIsAcceptedAsBefore() {
++        // ten sam stopien pomylki w jednym slowie trafial zawsze, takze z "nieodpowiedzialny"
++        // w tym samym zestawie
++        val d = scene("v000", true, "responsible").hear("odpowiedzialne")
++        assertShot("odpowiedzialny", d)
++        assertTrue(d.toString(), d.score > 0.9 && d.rival.score < 0.6)
++    }
++
 +    @Test fun boardFromTheReviewAcceptsPewniSiebie() {
 +        val d = scene("v000", true, "self-confident", "mature", "modest").hear("pewni siebie")
 +        assertShot("pewny siebie", d)
@@ -948,6 +1019,37 @@ index 0000000..0874552
 +        assertEquals("bluza sportowa", d.nearest)
 +    }
 +
++    @Test fun fillerNextToTheAnswerDoesNotMakeItALongerAnswer() {
++        // "the school" jest prawie tak blisko "law school" jak samo "school" z rodzajnikiem
++        assertShot("school", custom(false, board = listOf("school"), others = listOf("law school")).hear("the school"))
++        assertShot("school", custom(false, board = listOf("school", "law school")).hear("the school"))
++        assertNoShot(Reason.OTHER_NEAREST, custom(false, board = listOf("law school"), others = listOf("school")).hear("the school"))
++        assertShot("kuchnia", custom(true, board = listOf("kuchnia"), others = listOf("mała kuchnia")).hear("ta kuchnia"))
++        // to samo w zestawach wbudowanych: "tower block", "high ceiling", "christmas eve", "nie lubic"
++        assertShot("block", scene("v024", false, "block", "tower block").hear("the block"))
++        assertShot("ceiling", scene("v018", false, "ceiling", "high ceiling").hear("it is ceiling"))
++        assertShot("christmas", scene("v049", false, "Christmas", "Christmas Eve").hear("christmas the"))
++        assertShot("lubic", scene("v015", true, "like", "dislike").hear("no lubić"))
++        // wtracenie sklejone z odpowiedzia przypomina inne haslo: "kelner ta" to nie "kelnerka"
++        assertShot("kelner", custom(true, board = listOf("kelner", "kelnerka")).hear("kelner ta"))
++        assertShot("friend", custom(false, board = listOf("friend", "friendship")).hear("friend it is"))
++        // przekrecone slowo dluzszej odpowiedzi to co innego niz wtracenie
++        assertNoShot(Reason.OTHER_NEAREST, custom(false, board = listOf("school"), others = listOf("law school")).hear("low school"))
++        assertShot("law school", custom(false, board = listOf("school", "law school")).hear("low school"))
++    }
++
++    @Test fun threeWordAnswerSaidWithAnArticleIsReadInFull() {
++        // hipotezy konczyly sie na parach: "in law" trafialo w "in-laws", a "detached house"
++        // przebijalo "semi-detached house"
++        val family = scene("v043", false, "mother-in-law", "in-laws")
++        assertShot("mother in law", family.hear("the mother in law"))
++        assertShot("in laws", family.hear("the in laws"))
++        val houses = scene("v024", false, "semi-detached house", "detached house")
++        assertShot("semi detached house", houses.hear("a semi detached house"))
++        assertShot("detached house", houses.hear("a detached house"))
++        assertNoShot(Reason.OTHER_NEAREST, scene("v024", false, "detached house").hear("a semi detached house"))
++    }
++
 +    @Test fun wordsOfTheUtteranceAreNotRivalsOfItsWholeReading() {
 +        // v040 ma tez wiersz "zwolnienie", prawie dokladnie obecny w wypowiedzi
 +        val d = scene("v040", true, "sick leave").hear("zwolnjenie lekarskie")
@@ -984,6 +1086,7 @@ index 0000000..0874552
 +        Triple("social", "anti-social", false),
 +        Triple("dojrzały", "niedojrzały", true), Triple("cierpliwy", "niecierpliwy", true),
 +        Triple("lubić", "nie lubić", true), Triple("znosić", "nie znosić", true),
++        Triple("ma", "nie ma", true),
 +    )
 +
 +    @Test fun oppositesNeverMatchWhenOnlyOneIsInTheSet() {
@@ -1001,12 +1104,41 @@ index 0000000..0874552
 +        }
 +    }
 +
++    @Test fun inflectedOrGarbledOppositeNeverMatchesEither() {
++        // do 0.9.18 kazda z tych par trafiala: przedrostek to dwie albo trzy litery dlugiego slowa
++        val pairs = listOf(
++            Triple("nieodpowiedzialna", "odpowiedzialny", true),
++            Triple("odpowiedzialna", "nieodpowiedzialny", true),
++            Triple("dojrzali", "niedojrzały", true),
++            Triple("nie zgadzać siem", "zgadzać się", true),
++            Triple("matura", "immature", false),
++            Triple("unfriendli", "friendly", false),
++            Triple("friendli", "unfriendly", false),
++        )
++        for ((said, onBoard, polish) in pairs) {
++            val d = custom(polish, board = listOf(onBoard)).hear(said)
++            assertFalse("$said -> $onBoard: $d", d.accepted)
++        }
++        // dopoki przedrostek jest po obu stronach, to zwykla pomylka w slowie
++        assertShot("nieodpowiedzialny", custom(true, board = listOf("nieodpowiedzialny")).hear("nieodpowiedzialna"))
++        assertShot("interesting", custom(false, board = listOf("interesting")).hear("interestin"))
++        assertShot("understand", custom(false, board = listOf("understand")).hear("understant"))
++        // pomylka w pierwszej sylabie to nie zaprzeczenie: bez "im" slowo pasuje gorzej
++        assertShot("invitation", custom(false, board = listOf("invitation")).hear("imitation"))
++    }
++
 +    @Test fun negatedUtteranceNeverHitsThePlainWordThroughOneOfItsWords() {
 +        // w "nie lubic" pada dokladne "lubic", ale wypowiedz znaczy cos odwrotnego
 +        assertFalse(custom(true, board = listOf("lubić")).hear("nie lubić").accepted)
 +        assertFalse(custom(true, board = listOf("lubić")).hear("no nie lubić").accepted)
 +        assertFalse(custom(false, board = listOf("smoker")).hear("non smoker").accepted)
 +        assertFalse(custom(false, board = listOf("happy")).hear("un happy").accepted)
++        // takze wtedy, gdy silnik przekreci slowo po zaprzeczeniu
++        assertFalse(custom(true, board = listOf("lubić")).hear("nie lubik").accepted)
++        assertFalse(custom(true, board = listOf("zgadzać się")).hear("nie zgadzać siem").accepted)
++        assertFalse(custom(false, board = listOf("happy")).hear("un hapy").accepted)
++        // slowo sprzed zaprzeczenia zostaje soba
++        assertShot("lubic", custom(true, board = listOf("lubić")).hear("lubić nie"))
 +        // zwykle dopowiedzenie zaprzeczeniem nie jest
 +        assertShot("lubic", custom(true, board = listOf("lubić")).hear("no lubić"))
 +        assertShot("happy", custom(false, board = listOf("happy")).hear("so happy"))
@@ -1303,6 +1435,35 @@ index 0000000..0874552
 +                misses.size <= allowedMisses.getValue(polish),
 +            )
 +            assertTrue(tried > 250)
++        }
++    }
++
++    @Test fun fillerSweep_wordAddedBeforeOrAfterStillHitsOwnRowAndNoOther() {
++        // Zmierzone: kazda z 2084 odpowiedzi trafia z kazdym z tych wtracen, przed i po.
++        val fillers = mapOf(true to listOf("to", "no", "ta", "jest"), false to listOf("the", "a", "an", "to"))
++        for (polish in listOf(true, false)) {
++            var tried = 0
++            val misses = ArrayList<String>()
++            val wrong = ArrayList<String>()
++            for (set in catalogue) {
++                val all = rows(set, polish)
++                for (own in all) {
++                    val rest = all.filter { it !== own }
++                    for (filler in fillers.getValue(polish)) {
++                        for (said in listOf(filler + " " + own.answers.first(), own.answers.first() + " " + filler)) {
++                            tried++
++                            val alone = VoiceMatch.decide(listOf(said), listOf(own), rest, polish, true)
++                            if (!alone.accepted) misses.add("${set.id} '$said': ${alone.reason} ${alone.nearest}")
++                            val full = VoiceMatch.decide(listOf(said), all, emptyList(), polish, true)
++                            val answer = full.answer ?: continue
++                            if (answer !in own.answers) wrong.add("${set.id} '$said' -> $full")
++                        }
++                    }
++                }
++            }
++            println("wtracenia, polski=$polish: trafione ${tried - misses.size} z $tried, pudla: ${misses.take(20)}")
++            assertTrue("strzal w inny wiersz (polski=$polish): ${wrong.take(20)}", wrong.isEmpty())
++            assertTrue("polski=$polish: wiecej pudel niz zmierzono: ${misses.take(20)}", misses.size <= 4)
 +        }
 +    }
 +

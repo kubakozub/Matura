@@ -1,5 +1,5 @@
 diff --git a/app/src/main/java/com/matura/app/data/Repository.kt b/app/src/main/java/com/matura/app/data/Repository.kt
-index 03beec4..c56dabb 100644
+index 03beec4..5405238 100644
 --- a/app/src/main/java/com/matura/app/data/Repository.kt
 +++ b/app/src/main/java/com/matura/app/data/Repository.kt
 @@ -3,12 +3,14 @@ package com.matura.app.data
@@ -177,9 +177,8 @@ index 03beec4..c56dabb 100644
              profile = p.copy(
                  gamesPlayed = p.gamesPlayed + 1,
                  totalKills = p.totalKills + record.kills,
--                bestScore = maxOf(p.bestScore, record.score),
+                 bestScore = maxOf(p.bestScore, record.score),
 -                bestStreak = maxOf(p.bestStreak, record.bestStreak),
-+                bestScore = if (doRankingu) maxOf(p.bestScore, record.score) else p.bestScore,
 +                bestStreak = if (doRankingu) maxOf(p.bestStreak, record.bestStreak) else p.bestStreak,
              ),
              // Leaderboard lokalny: top 50 osobno dla kazdego trybu, zeby wyniki
@@ -310,7 +309,7 @@ index 0353cf8..13f8743 100644
   * DLACZEGO WLASNA ARYTMETYKA. minSdk to 24, a java.time jest w Androidzie od API 26; wciaganie
   * biblioteki zastepczej dla trzech dzialan na liczbach byloby przesada. Przesuniecie strefy
 diff --git a/app/src/main/java/com/matura/app/learn/Nagrody.kt b/app/src/main/java/com/matura/app/learn/Nagrody.kt
-index c37aa78..7762c71 100644
+index c37aa78..4bb7dec 100644
 --- a/app/src/main/java/com/matura/app/learn/Nagrody.kt
 +++ b/app/src/main/java/com/matura/app/learn/Nagrody.kt
 @@ -1,6 +1,5 @@
@@ -640,7 +639,7 @@ index c37aa78..7762c71 100644
 +     * najnizszego celu dnia: samymi trybami wyboru celu nie da sie zaliczyc, zawsze trzeba
 +     * choc kilku slow wpisanych albo powiedzianych z pamieci.
 +     */
-+    const val LIMIT_ROZPOZNAN = 6
++    const val LIMIT_ROZPOZNAN = 5
 +
 +    /**
 +     * Za ile zaliczen slow SPOZA slownika gry sa dziennie punkty. Wlasna lista to tez nauka,
