@@ -272,8 +272,13 @@ class VoiceRegresjaTest {
             "dwa osobne 'kolano' to dwie odpowiedzi, choćby padly tuz po sobie",
             zaliczycWypowiedz("kolano", "kolano", 2, 1),
         )
-        assertTrue("inne slowo w tej samej wypowiedzi liczy sie normalnie",
+        // Do 0.9.18 inne slowo w tej samej wypowiedzi liczylo sie normalnie i wynik czesciowy
+        // z koncowym potrafily zestrzelic dwa rozne potwory. Wypowiedz, ktora juz zaliczyla,
+        // nie zalicza nic wiecej.
+        assertFalse("inne slowo w TEJ SAMEJ wypowiedzi juz nie zalicza",
             zaliczycWypowiedz("plecy", "kolano", 1, 1))
+        assertTrue("inne slowo w nastepnej wypowiedzi liczy sie normalnie",
+            zaliczycWypowiedz("plecy", "kolano", 2, 1))
 
         // Wynik czesciowy i koncowy tej samej wypowiedzi maja TEN SAM numer...
         start()

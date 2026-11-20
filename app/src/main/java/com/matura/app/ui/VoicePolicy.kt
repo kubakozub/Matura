@@ -1,5 +1,7 @@
 package com.matura.app.ui
 
+import com.matura.app.learn.Trudne
+
 /**
  * Decyzje trybu glosowego BEZ Androida — czysta logika, testowalna zwyklym JUnitem.
  *
@@ -338,6 +340,50 @@ fun policzStrony(
 }
 
 /**
+ * Czy dana strona zestawu jest polska, czyli w jakim jezyku uczen odpowiada, gdy odpowiedzia
+ * jest ta strona (kierunki stale).
+ *
+ * Do 0.9.18 rozstrzygal sam kierunek: haslo to angielski, tlumaczenie to polski. Edytor ma
+ * jednak przycisk, ktory zamienia kolumny razem z ich podpisami, i w takim zestawie silnik
+ * sluchal po polsku angielskich odpowiedzi: uczen mowil "knee", a pasek pokazywal polski
+ * zlepek liter. Jezyk bierze sie wiec z DEKLARACJI zestawu dla strony odpowiedzi, tak jak
+ * w Trudne.stronaDoWymowy.
+ *
+ * Gdy ta strona nie deklaruje ani polskiego, ani angielskiego, a druga tak, to jest w tym
+ * drugim z dwoch jezykow gry (silnik i tak dostaje tylko pl-PL albo en-US). Dopiero gdy nie
+ * deklaruje zadna, zostaje regula kierunku.
+ *
+ * Ta sama funkcja sluzy kierunkowi losowemu: listy polskich i angielskich odpowiedzi dla
+ * [odpowiedziPoPolsku] trzeba zbierac wedlug niej, a nie wedlug kolumny.
+ *
+ * @param haslo true = pytamy o strone hasel (uczen odpowiada haslem przy
+ *        Direction.DEF_TO_TERM), false = o strone tlumaczen (Direction.TERM_TO_DEF)
+ * @param jezykHasel WordSet.termLanguage
+ * @param jezykTlumaczen WordSet.definitionLanguage
+ */
+fun stronaPolska(haslo: Boolean, jezykHasel: String, jezykTlumaczen: String): Boolean {
+    val hasla = polskiZDeklaracji(jezykHasel)
+    val tlumaczenia = polskiZDeklaracji(jezykTlumaczen)
+    val ta = if (haslo) hasla else tlumaczenia
+    val druga = if (haslo) tlumaczenia else hasla
+    return ta ?: druga?.not() ?: !haslo
+}
+
+/**
+ * Jezyk z podpisu kolumny zestawu: true = polski, false = angielski, null = inny albo nie
+ * wiadomo (edytor wpisuje "?" w miejsce pustego podpisu). Angielskie nazwy sa te same co
+ * przy wymowie, zeby glos i lektor nie rozeszly sie co do tego, ktora strona jest angielska.
+ */
+fun polskiZDeklaracji(nazwaJezyka: String): Boolean? = when {
+    nazwaJezyka.trim().lowercase() in NAZWY_POLSKIEGO -> true
+    Trudne.czyAngielski(nazwaJezyka) -> false
+    else -> null
+}
+
+/** Lista jawna, jak w Trudne.czyAngielski: zgadywanie jezyka po nazwie konczy sie gorzej. */
+private val NAZWY_POLSKIEGO = setOf("polski", "polskie", "polish", "pl", "pol", "pl-pl")
+
+/**
  * Czy przestawic jezyk silnika W TRAKCIE nasluchu.
  *
  * Jezyk ustala sie raz, przy voice.start(), a plansza w trybie losowym zmienia sklad w trakcie
@@ -500,15 +546,27 @@ fun stanSesji(
  * odpowiedzia) bywaly liczone raz. Numer wypowiedzi rosnie przy kazdym startListening, wiec
  * rozstrzyga PRZEBIEG, a nie zegar.
  *
+ * Wypowiedz, ktora juz zaliczyla, nie zalicza nic wiecej, obojetne jaka odpowiedzia. Do 0.9.18
+ * odmowa dotyczyla tylko TEJ SAMEJ odpowiedzi, a inna z tym samym numerem liczyla sie
+ * normalnie. Wynik czesciowy "bluza" i koncowy "bluza sportowa" jednej wypowiedzi strzelaly
+ * wtedy do dwoch roznych potworow, a po smierci pierwszego wynik koncowy dopasowywal sie do
+ * tego, co na planszy zostalo. Cena: dwie odpowiedzi powiedziane jednym tchem daja jedno
+ * zaliczenie, druga trzeba powiedziec po przerwie.
+ *
+ * @param odpowiedz odpowiedz, ktora ma byc zaliczona. Nie rozstrzyga juz o niczym; zostaje,
+ *        bo ekran podaje ja razem z numerem.
+ * @param ostatniaOdpowiedz ostatnio zaliczona odpowiedz; pusta = w tej rundzie glos nie
+ *        zaliczyl jeszcze nic, wiec [ostatniaWypowiedz] nie jest numerem zadnej wypowiedzi
  * @param wypowiedz numer biezacej wypowiedzi (VoiceInput.wypowiedz); wartosci ujemne rezerwuje
  *        okno systemowe, ktore ma wlasna numeracje i nigdy nie koliduje z nasluchem w grze.
  */
+@Suppress("UNUSED_PARAMETER")
 fun zaliczycWypowiedz(
     odpowiedz: String,
     ostatniaOdpowiedz: String,
     wypowiedz: Int,
     ostatniaWypowiedz: Int,
-): Boolean = !(odpowiedz == ostatniaOdpowiedz && wypowiedz == ostatniaWypowiedz)
+): Boolean = ostatniaOdpowiedz.isEmpty() || wypowiedz != ostatniaWypowiedz
 
 /**
  * Czy po powrocie z systemowego okna zgody wolno wlaczyc nasluch.

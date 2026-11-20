@@ -116,6 +116,31 @@ class VoiceMatchTest {
         )
     }
 
+    /**
+     * Gra pyta przez decide(). Na planszy z jednym celem na odpowiedz i bez reszty zestawu
+     * ma ono rozstrzygac kazdy przypadek tak samo jak match(), razem z czterema
+     * przypadkami z osobnych testow nizej.
+     */
+    @Test fun decideResolvesEveryCaseLikeMatch() {
+        val standalone = listOf(
+            Case(listOf("dog"), null, emptyList(), false),
+            Case(listOf("moze"), "morze", listOf("morze", "samochod"), true),
+            Case(listOf("nite"), "night", listOf("night", "teacher"), false),
+            Case(listOf("nauczycel"), "nauczyciel", pl, true),
+        )
+        val bad = ArrayList<String>()
+        for (c in cases + standalone) {
+            val board = c.board.mapIndexed { i, answer -> VoiceMatch.Target(i.toLong(), listOf(answer)) }
+            val d = VoiceMatch.decide(c.said, board, emptyList(), c.polish, isFinal = true)
+            val target = c.want?.let { c.board.indexOf(it).toLong() }
+            if (d.answer != c.want || d.answer != heard(c.said, c.board, c.polish) || d.targetId != target) {
+                bad.add("${c.said.first()} chcialem=${c.want} dostalem=$d")
+            }
+        }
+        assertTrue("niezgodne: $bad", bad.isEmpty())
+        assertEquals(53, cases.size)
+    }
+
     @Test fun emptyBoardNeverFires() {
         assertEquals(null, heard(listOf("dog"), emptyList(), false))
     }

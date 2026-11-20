@@ -1,10 +1,17 @@
 package com.matura.app
 
+import com.matura.app.game.Matching
+import com.matura.app.model.Entry
+import com.matura.app.model.WordSet
 import com.matura.app.ui.SilenceDetector
 import com.matura.app.ui.VoiceLabel
 import com.matura.app.ui.VoiceMode
 import com.matura.app.ui.VoicePath
 import com.matura.app.ui.VoicePolicy
+import com.matura.app.ui.odpowiedziPoPolsku
+import com.matura.app.ui.polskiZDeklaracji
+import com.matura.app.ui.stronaPolska
+import com.matura.app.ui.zaliczycWypowiedz
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -185,5 +192,110 @@ class VoicePolicyTest {
         nadProgiem.onEmptyCycle()
         repeat(6) { nadProgiem.onRms(-1.4f) }
         assertFalse(nadProgiem.onEmptyCycle())
+    }
+
+    // ---- jedna wypowiedz, jedno zaliczenie -----------------------------------
+
+    @Test
+    fun wypowiedzKtoraZaliczyla_nieZaliczaNicWiecej() {
+        assertFalse("ta sama odpowiedz", zaliczycWypowiedz("bluza", "bluza", 4, 4))
+        assertFalse("inna odpowiedz", zaliczycWypowiedz("bluza sportowa", "bluza", 4, 4))
+        assertTrue("nastepna wypowiedz, inna odpowiedz", zaliczycWypowiedz("bluza sportowa", "bluza", 5, 4))
+        assertTrue("nastepna wypowiedz, ta sama odpowiedz", zaliczycWypowiedz("bluza", "bluza", 5, 4))
+        // okno systemowe liczy swoje wypowiedzi na minusie
+        assertFalse(zaliczycWypowiedz("plecy", "kolano", -2, -2))
+        assertTrue(zaliczycWypowiedz("plecy", "kolano", -3, -2))
+        assertTrue(zaliczycWypowiedz("plecy", "kolano", -1, 1))
+    }
+
+    /** Ekran zaczyna od "nic nie zaliczono": pusta odpowiedz i numer 0. To nie jest wypowiedz. */
+    @Test
+    fun pierwszaOdpowiedzRundy_zaliczaPrzyKazdymNumerze() {
+        assertTrue(zaliczycWypowiedz("kolano", "", 1, 0))
+        assertTrue("silnik, ktory numeruje od zera", zaliczycWypowiedz("kolano", "", 0, 0))
+        assertTrue(zaliczycWypowiedz("kolano", "", -1, 0))
+    }
+
+    // ---- jezyk odpowiedzi z deklaracji zestawu -------------------------------
+
+    @Test
+    fun stronaPolska_zestawWbudowany() {
+        assertFalse("odpowiedzia jest haslo", stronaPolska(haslo = true, "English", "Polski"))
+        assertTrue("odpowiedzia jest tlumaczenie", stronaPolska(haslo = false, "English", "Polski"))
+    }
+
+    /** Przycisk zamiany w edytorze przestawia kolumny razem z podpisami. */
+    @Test
+    fun stronaPolska_poZamianieKolumn() {
+        assertTrue(stronaPolska(haslo = true, "Polski", "English"))
+        assertFalse(stronaPolska(haslo = false, "Polski", "English"))
+    }
+
+    @Test
+    fun polskiZDeklaracji_znaNazwyObuJezykow() {
+        for (nazwa in listOf("Polski", "polski", "Polish", "polish", "PL", "pl", " Polski ", "POLSKI", "pl-PL")) {
+            assertEquals(nazwa, true, polskiZDeklaracji(nazwa))
+        }
+        for (nazwa in listOf("English", "english", "Angielski", "angielski", "EN", "en", " English ", "ENGLISH", "en-GB")) {
+            assertEquals(nazwa, false, polskiZDeklaracji(nazwa))
+        }
+        for (nazwa in listOf("", "?", "Deutsch", "niemiecki", "polski i angielski", "plus")) {
+            assertEquals(nazwa, null, polskiZDeklaracji(nazwa))
+        }
+    }
+
+    @Test
+    fun stronaPolska_jednaStronaBezDeklaracji_jestDrugimJezykiemGry() {
+        // edytor zapisuje "?" w miejsce pustego podpisu
+        assertFalse(stronaPolska(haslo = false, "Polski", "?"))
+        assertTrue(stronaPolska(haslo = true, "Polski", "?"))
+        assertTrue(stronaPolska(haslo = true, "?", "English"))
+        assertFalse(stronaPolska(haslo = false, "?", "English"))
+        assertTrue(stronaPolska(haslo = false, "English", "moje slowka"))
+    }
+
+    @Test
+    fun stronaPolska_zadnaDeklaracja_zostajeRegulaKierunku() {
+        assertFalse("haslo liczy sie za angielskie", stronaPolska(haslo = true, "?", "?"))
+        assertTrue("tlumaczenie liczy sie za polskie", stronaPolska(haslo = false, "?", "?"))
+        assertFalse(stronaPolska(haslo = true, "Deutsch", "Latina"))
+        assertTrue(stronaPolska(haslo = false, "Deutsch", "Latina"))
+    }
+
+    @Test
+    fun stronaPolska_obieStronyWTymSamymJezyku() {
+        assertTrue(stronaPolska(haslo = true, "Polski", "polski"))
+        assertTrue(stronaPolska(haslo = false, "Polski", "polski"))
+        assertFalse(stronaPolska(haslo = true, "English", "EN"))
+        assertFalse(stronaPolska(haslo = false, "English", "EN"))
+    }
+
+    /**
+     * Zestaw wlasny po zamianie kolumn, tak jak zlozy go ekran gry. Do 0.9.18 przy kierunku
+     * domyslnym silnik sluchal tu po polsku angielskich odpowiedzi.
+     */
+    @Test
+    fun zestawPoZamianieKolumn_sluchaWJezykuOdpowiedzi() {
+        val zestaw = WordSet(
+            id = "wlasny",
+            title = "Cialo",
+            termLanguage = "Polski",
+            definitionLanguage = "English",
+            entries = listOf(Entry("kolano", "knee"), Entry("plecy", "back"), Entry("głowa", "head")),
+        )
+        val haslaPolskie = stronaPolska(haslo = true, zestaw.termLanguage, zestaw.definitionLanguage)
+        val tlumaczeniaPolskie = stronaPolska(haslo = false, zestaw.termLanguage, zestaw.definitionLanguage)
+        // kierunek domyslny (haslo -> tlumaczenie): uczen mowi "knee", silnik ma sluchac en-US
+        assertFalse(tlumaczeniaPolskie)
+        // kierunek odwrotny: uczen mowi "kolano"
+        assertTrue(haslaPolskie)
+
+        // kierunek losowy: strony zestawu zbierane wedlug deklaracji, nie wedlug kolumny
+        val hasla = zestaw.entries.flatMap { Matching.acceptedAnswers(it.term) }.toSet()
+        val tlumaczenia = zestaw.entries.flatMap { Matching.acceptedAnswers(it.definition) }.toSet()
+        val polskie = (if (haslaPolskie) hasla else emptySet()) + (if (tlumaczeniaPolskie) tlumaczenia else emptySet())
+        val angielskie = (if (haslaPolskie) emptySet() else hasla) + (if (tlumaczeniaPolskie) emptySet() else tlumaczenia)
+        assertEquals(true, odpowiedziPoPolsku(listOf("kolano", "plecy", "head"), polskie, angielskie))
+        assertEquals(false, odpowiedziPoPolsku(listOf("knee", "back", "glowa"), polskie, angielskie))
     }
 }

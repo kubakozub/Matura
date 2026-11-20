@@ -1901,6 +1901,18 @@ class VoiceInput(private val context: Context) {
         // Slad stosu zostaje w buildzie debug: powod mowi KTO, stos mowi SKAD.
         if (BuildConfig.DEBUG && listening) Log.i(TAG, "stop: wolajacy", Throwable("slad"))
         dziennik.dodaj(System.currentTimeMillis(), opisStopu(powod))
+        // Podpis z trwajacego nasluchu ("probuje innego silnika mowy...", podpowiedz o cichym
+        // mikrofonie) po wylaczeniu nie opisuje juz niczego, a zostawal pod zgaszonym paskiem
+        // do nastepnego startu. Kasujemy go tylko wtedy, gdy to wywolanie naprawde gasi
+        // nasluch: po koncu drabinki, braku zgody i zajetym mikrofonie podpis jest wynikiem,
+        // ktory uczen ma przeczytac, i pozniejsza pauza nie moze go zabrac. Wywolanie bez
+        // podanego powodu zostawia podpis tak jak dotad.
+        if (listening) {
+            when (powod) {
+                PowodStop.DOTKNIECIE, PowodStop.PAUZA, PowodStop.TLO, PowodStop.EKRAN -> status = ""
+                PowodStop.DRABINKA, PowodStop.ZGODA, PowodStop.MIKROFON, PowodStop.NIEZNANY -> Unit
+            }
+        }
         wantListening = false
         listening = false
         czekamNaSilnik = false
