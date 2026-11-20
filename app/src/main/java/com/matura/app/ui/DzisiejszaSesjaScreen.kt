@@ -121,9 +121,9 @@ fun DzisiejszaSesjaScreen(
                 }
             }
 
-            // "DALEJ" istnieje osobno od uruchomienia kroku, bo krok konczy sie na INNYM
-            // ekranie (powtorka, runda gry) i uczen wraca tutaj — musi miec czym przejsc
-            // do nastepnego punktu trasy, takze wtedy, gdy krok chce pominac.
+            // "DALEJ" istnieje osobno od uruchomienia kroku. Ukonczona runda przesuwa trase
+            // sama, ale runda przegrana albo porzucona zostawia krok biezacym: uczen musi miec
+            // czym przejsc do nastepnego punktu trasy, takze wtedy, gdy krok chce pominac.
             if (krok != null && krok.rodzaj != RodzajKroku.PODSUMOWANIE) {
                 item {
                     Spacer(Modifier.height(8.dp))
@@ -382,23 +382,31 @@ class SesjaStr(private val lang: UiLanguage) {
     val sessionStepSummary get() = pick("PODSUMOWANIE", "SUMMARY")
 
     /**
-     * OPISY KROKOW MUSZA ZGADZAC SIE Z App.kt: krok POWTORKA i krok GRA uruchamiaja DOKLADNIE
-     * to samo — runde KLASYCZNA na tym samym slownictwie (jedna galaz `push(Screen.Play(...))`),
-     * a jedyna roznica jest liczba zyc (spokojny krok dostaje ich dziewiec).
+     * OPISY KROKOW MUSZA ZGADZAC SIE Z App.kt: krok POWTORKA i krok GRA uruchamiaja runde
+     * KLASYCZNA na tym samym slownictwie (jedna galaz `push(Screen.Play(...))`). Obie sa
+     * skonczone (GameConfig.finite): zamykaja sie same, gdy kazde slowo dostalo poprawna
+     * odpowiedz. Powtorka jest zawsze spokojna (GameConfig.calm): zycia nie ubywaja, a slowo,
+     * ktore doszlo do dziala, pokazuje odpowiedz i wraca. Runda gry jest spokojna tylko wtedy,
+     * gdy na trasie sa nowe slowa (KrokSesji.spokojny); bez nich ma zycia jak zwykla gra.
      *
-     * Do 0.9.18 stalo tu "spokojnie i bez zyc" oraz "tym razem w grze", czyli obietnica dwoch
-     * roznych mechanik i rundy bez zyc. Uczen dostawal zwykla strzelanke z sercami w HUD,
-     * a po dziewieciu przegapionych potworkach — czaszke z napisem KONIEC GRY.
+     * Historia tych zdan: w 0.9.18 spokojna runda byla zwykla gra z dziewiecioma zyciami
+     * i konczyla sie czaszka z napisem KONIEC GRY, wiec teksty mowily o zapasie zyc. Teraz
+     * zachowanie istnieje w silniku i teksty opisuja je wprost. Opis rundy gry mowi tylko to,
+     * co jest prawda w obu jej wariantach; o wariancie spokojnym mowi plakietka [sessionCalm].
      */
     val sessionStepReviewDesc
         get() = pick(
-            "Słowa zaplanowane na dziś, spokojnie — runda z zapasem dziewięciu żyć.",
-            "The words due today, taken calmly — a round with nine lives to spare.",
+            "Słowa zaplanowane na dziś, bez utraty żyć. Słowo, które dojdzie do działka, " +
+                "pokaże odpowiedź i wróci. Koniec, gdy na każde odpowiesz poprawnie.",
+            "The words planned for today, with no lives to lose. A word that gets through " +
+                "shows its answer and comes back. It ends once you have answered every word.",
         )
     val sessionStepGameDesc
         get() = pick(
-            "To samo słownictwo jeszcze raz, w kolejnej rundzie gry.",
-            "The same vocabulary once more, in another game round.",
+            "To samo słownictwo jeszcze raz. Runda kończy się sama, gdy na każde słowo padnie " +
+                "poprawna odpowiedź.",
+            "The same vocabulary once more. The round ends by itself once every word has had " +
+                "a correct answer.",
         )
     val sessionStepContextDesc
         get() = pick(
@@ -412,16 +420,16 @@ class SesjaStr(private val lang: UiLanguage) {
         )
 
     /**
-     * Plakietka przy spokojnej rundzie gry. Mowi LICZBE, bo tyle wlasnie robi kod: App.kt daje
-     * spokojnej rundzie `lives = maxOf(options.lives, 9)`, a suwak zyc w OPCJACH konczy sie na
-     * dziewieciu — wiec spokojna runda ma ich zawsze dokladnie dziewiec.
+     * Plakietka przy spokojnej rundzie gry. Mowi dokladnie to, co robi kod: App.kt startuje
+     * taka runde z GameConfig.calm, a wtedy na planszy nie ma serc i potworek przy dziale nie
+     * zabiera niczego, wiec rundy nie da sie przegrac.
      *
-     * Do 0.9.18 pisalo tu "BEZ ZYC", chociaz runda miala serca w HUD i konczyla sie ekranem
-     * KONIEC GRY po utracie ostatniego zycia (GameEngine ustawia gameOver przy lives <= 0).
-     * Napis ma isc za kodem: to wydanie ma byc bezpieczne, wiec zmieniamy plakietke, a nie
-     * zachowanie silnika tuz przed wysylka.
+     * Napis zmienial sie razem z kodem i ma tak zostac. Przed 0.9.18 stalo tu "BEZ ZYC" przy
+     * rundzie, ktora miala serca i konczyla sie ekranem KONIEC GRY. W 0.9.18 runda dostala
+     * dziewiec zyc na zapas i plakietka mowila "9 ZYC". Dopiero teraz silnik ma runde bez zyc
+     * i pierwotny napis jest prawda. Krotki, bo rysuje go czcionka pikselowa w waskim wierszu.
      */
-    val sessionCalm get() = pick("9 ŻYĆ", "9 LIVES")
+    val sessionCalm get() = pick("BEZ ŻYĆ", "NO LIVES")
     val sessionStart get() = pick("ZACZYNAM", "START")
     val sessionContinue get() = pick("DALEJ", "NEXT")
     val sessionFinish get() = pick("KONIEC NA DZIŚ", "DONE FOR TODAY")
@@ -430,10 +438,14 @@ class SesjaStr(private val lang: UiLanguage) {
             "Możesz wyjść w każdej chwili. Każda odpowiedź jest już zapisana, a sesja poczeka tu na Ciebie.",
             "You can leave at any time. Every answer is already saved, and the session waits for you here.",
         )
+    /**
+     * Bez liczby minut: szacunek liczy sie z dlugosci trasy i dla pieciu slow wynosi dwie
+     * minuty, a zdanie o "pieciu minutach" pokazywalo sie wtedy po dwoch.
+     */
     val sessionTimeUp
         get() = pick(
-            "Orientacyjne pięć minut minęło. To dobry moment, żeby skończyć — albo grać dalej, jeśli masz ochotę.",
-            "The rough five minutes are up. A good moment to stop — or to keep going, if you feel like it.",
+            "Szacowany czas tej trasy minął. To dobry moment, żeby skończyć, ale możesz też grać dalej.",
+            "The estimated time for this route is up. A good moment to stop, but you can also keep going.",
         )
     val sessionNothingDue
         get() = pick(

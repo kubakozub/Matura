@@ -6,15 +6,23 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import com.matura.app.data.BuiltInSets
+import com.matura.app.learn.Sesja
+import com.matura.app.model.Direction
+import com.matura.app.model.Entry
 import com.matura.app.model.GameMode
 import com.matura.app.model.Options
 import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
 import com.matura.app.model.ScoreRecord
 import com.matura.app.model.UiLanguage
+import com.matura.app.model.WordSet
 import com.matura.app.ui.AchievementsScreen
+import com.matura.app.ui.DzisiejszaSesjaScreen
 import com.matura.app.ui.MenuScreen
 import com.matura.app.ui.ModePickScreen
 import com.matura.app.ui.MultipleChoiceScreen
@@ -181,6 +189,125 @@ class PodgladEkranowTest {
         PlayScreen(
             set = BuiltInSets.all().first(), options = Options(), str = str,
             playerName = "Kuba", onExit = {}, onFinished = {}, onAttempt = {},
+        )
+    }
+
+    /**
+     * Cztery slowa, zeby runde skonczona dalo sie w podgladzie PRZEJSC klawiatura gry, a nie
+     * tylko obejrzec w biegu. "schoolmate" ma najdluzsza odpowiedz w calym katalogu: to na niej
+     * widac, czy odkryta odpowiedz i wiersz listy mieszcza sie na waskim telefonie.
+     */
+    private val malyZestaw = WordSet(
+        id = "podglad",
+        title = "Podglad",
+        entries = listOf(
+            Entry("ache", "ból", "w000000000001"),
+            Entry("schoolmate", "kolega ze szkoły, koleżanka ze szkoły", "w000000000002"),
+            Entry("salary", "pensja", "w000000000003"),
+            Entry("homework", "praca domowa", "w000000000004"),
+        ),
+    )
+
+    private fun jest(opis: String): Boolean =
+        rule.onAllNodesWithContentDescription(opis).fetchSemanticsNodes().isNotEmpty()
+
+    /** Przesuwa zegar gry, az [warunek] bedzie prawda (plansza jest rysunkiem, wiec pytamy semantyke). */
+    private fun grajAz(co: String, warunek: () -> Boolean) {
+        repeat(400) {
+            if (warunek()) return
+            rule.mainClock.advanceTimeBy(250)
+        }
+        error("po 100 s gry dalej nie ma: $co")
+    }
+
+    /** Odpowiedz wpisana klawiatura gry i zatwierdzona. */
+    private fun wpisz(odpowiedz: String) {
+        for (znak in odpowiedz) {
+            rule.onNodeWithContentDescription(if (znak == ' ') str.keySpace else znak.uppercase()).performClick()
+        }
+        rule.onNodeWithContentDescription(str.keyEnter).performClick()
+    }
+
+    /**
+     * Runda spokojna i skonczona od srodka do konca, tak jak idzie krok dziennej sesji:
+     *  - "w-toku": cztery slowa na planszy, jedno zaliczone, w rogu licznik zamiast serc;
+     *  - "odkrycie": trzy zaliczone, czwarte doszlo do dziala i plansza pokazuje odpowiedz;
+     *  - "koniec": czwarte wrocilo i dostalo odpowiedz, wiec runda zamknela sie sama.
+     */
+    @Test
+    fun gra_klasyczna_spokojna() = podglad(
+        "gra-klasyczna-spokojna",
+        kroki = listOf(
+            // Po 13 s wszystkie cztery potworki sa juz na planszy, a zaden jeszcze nie doszedl.
+            "w-toku" to { czas(13_000)(); wpisz("pensja"); czas(700)() },
+            "odkrycie" to {
+                wpisz("bol"); wpisz("praca domowa")
+                grajAz("odkryta odpowiedz") { jest("schoolmate: kolega ze szkoły, koleżanka ze szkoły") }
+                czas(400)()
+            },
+            "koniec" to {
+                // Slowo wraca na plansze najpozniej 3,8 s po tym, jak doszlo do dziala.
+                czas(4_500)()
+                wpisz("kolega ze szkoly")
+                grajAz("ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
+            },
+        ),
+    ) {
+        PlayScreen(
+            set = malyZestaw, options = Options(), str = str,
+            playerName = "Kuba", onExit = {}, onFinished = {},
+            calm = true, finite = true, onContinue = {}, onAttempt = {},
+        )
+    }
+
+    /** Runda ukonczona bez jednego przepuszczonego slowa: zdanie zamiast pustej ramki listy. */
+    @Test
+    fun gra_klasyczna_bez_bledow() = podglad(
+        "gra-klasyczna-bez-bledow",
+        kroki = listOf(
+            "koniec" to {
+                czas(13_000)()
+                wpisz("pensja"); wpisz("bol"); wpisz("praca domowa"); wpisz("kolega ze szkoly")
+                grajAz("ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
+            },
+        ),
+    ) {
+        PlayScreen(
+            set = malyZestaw, options = Options(), str = str,
+            playerName = "Kuba", onExit = {}, onFinished = {},
+            calm = true, finite = true, onAttempt = {},
+        )
+    }
+
+    /** Runda skonczona z zyciami (krok GRA bez nowych slow): serca, a pod nimi licznik. */
+    @Test
+    fun gra_klasyczna_skonczona() = podglad(
+        "gra-klasyczna-skonczona",
+        kroki = listOf("w-toku" to { czas(13_000)(); wpisz("pensja"); czas(700)() }),
+    ) {
+        PlayScreen(
+            set = malyZestaw, options = Options(lives = 5), str = str,
+            playerName = "Kuba", onExit = {}, onFinished = {},
+            finite = true, onContinue = {}, onAttempt = {},
+        )
+    }
+
+    /** Pierwszy dzien: piec nowych slow, wiec runda gry jest spokojna i ma plakietke. */
+    @Test
+    fun dzisiejsza_sesja() = podglad("dzisiejsza-sesja") {
+        val dzien = 19_875
+        val plan = Sesja.zaplanuj(
+            emptyMap(), BuiltInSets.all().first().entries.map { it.id }, Direction.TERM_TO_DEF, dzien,
+        )
+        val stan = Sesja.rozpocznij(plan) { 0L }
+        DzisiejszaSesjaScreen(
+            jezyk = UiLanguage.PL,
+            plan = plan,
+            stan = stan,
+            podsumowanie = Sesja.podsumuj(plan, stan, emptyMap(), dzien),
+            czasNaKoniec = true,
+            wznowiona = true,
+            onPrzerwij = {}, onKrok = {}, onDalej = {}, onZakoncz = {},
         )
     }
 

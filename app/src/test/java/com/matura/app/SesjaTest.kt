@@ -10,8 +10,10 @@ import com.matura.app.learn.Srs
 import com.matura.app.learn.Stage
 import com.matura.app.learn.StanSesji
 import com.matura.app.model.Direction
+import com.matura.app.model.SaveData
 import com.matura.app.model.TaskKind
 import com.matura.app.model.WordProgress
+import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -440,5 +442,389 @@ class SesjaTest {
         assertEquals(0, pods.powtorzone)
         // Pierwsza nauka to awans 0 -> 1, czyli powrot jutro.
         assertEquals(Srs.intervalDays(Srs.FIRST_BOX), pods.nastepnaPowtorkaZaDni)
+    }
+
+    // --- trasa dnia jest zamrozona ----------------------------------------------------------
+
+    /** Uczen odpowiada poprawnie na [ids]: nauka idzie do mapy postepu, slad do stanu sesji. */
+    private fun przerob(
+        ids: List<String>,
+        plan: PlanSesji,
+        stan: StanSesji,
+        progress: Map<String, WordProgress>,
+    ): Pair<StanSesji, Map<String, WordProgress>> {
+        var s = stan
+        var p = progress
+        for (id in ids) {
+            p = odpowiedz(p, id, DZIS)
+            s = Sesja.zaliczOdpowiedz(s, plan, id, Outcome.POPRAWNA)
+        }
+        return s to p
+    }
+
+    @Test
+    fun `po pierwszym kroku trasa dalej ma te same piec slow, a licznik domyka sie na 5 z 5`() {
+        // Slownik wiekszy niz jedna sesja: to on ujawnial blad. Slowa odpowiedziane poprawnie
+        // nie sa juz zalegle, wiec plan ukladany od nowa wpuszczal na ich miejsce piec kolejnych.
+        val slownik = slowa(30)
+        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
+        val pierwszaPiatka = slownik.take(Sesja.MAKS_NOWYCH)
+        assertEquals(pierwszaPiatka, plan.nowe)
+
+        val (stan, progress) = przerob(plan.nowe, plan, Sesja.rozpocznij(plan, Zegar(0L)), emptyMap())
+
+        // Kontrola: stara droga naprawde zmieniala trase. Bez tej asercji test przechodzilby
+        // takze wtedy, gdyby harmonogram w ogole nie ruszal sie po odpowiedziach.
+        val poStaremu = Sesja.zaplanuj(progress, slownik, KIERUNEK, DZIS)
+        assertEquals(slownik.subList(5, 10), poStaremu.nowe)
+
+        val poPowrocie = Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS)
+
+        assertEquals(pierwszaPiatka, poPowrocie.nowe)
+        assertTrue(poPowrocie.powtorki.isEmpty())
+        assertEquals(pierwszaPiatka, krok(poPowrocie, RodzajKroku.POWTORKA).cele)
+        // "To samo slownictwo jeszcze raz" ma byc tym samym slownictwem.
+        assertEquals(pierwszaPiatka, krok(poPowrocie, RodzajKroku.GRA).cele)
+        assertFalse("szoste slowo weszlo na trase", "w06" in poPowrocie.slownictwo)
+        assertEquals(
+            listOf(RodzajKroku.POWTORKA, RodzajKroku.GRA, RodzajKroku.PODSUMOWANIE),
+            poPowrocie.kroki.map { it.rodzaj },
+        )
+        // Na trasie sa nowe slowa, wiec runda gry zostaje spokojna takze po powrocie.
+        assertTrue(krok(poPowrocie, RodzajKroku.GRA).spokojny)
+
+        val postep = Sesja.postep(Sesja.wznow(stan, poPowrocie, Zegar(0L)), poPowrocie)
+        assertEquals(5, postep.celeZrobione)
+        assertEquals(5, postep.celeRazem)
+
+        val pods = Sesja.podsumuj(poPowrocie, stan, progress, DZIS)
+        assertEquals(5, pods.nowe)
+        assertEquals(5, pods.zaplanowane)
+    }
+
+    @Test
+    fun `trasa zostaje ta sama takze w drugim kroku i po kolejnych odpowiedziach`() {
+        val slownik = slowa(30)
+        val plan0 = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
+        var (stan, progress) = przerob(plan0.nowe, plan0, Sesja.rozpocznij(plan0, Zegar(0L)), emptyMap())
+
+        val plan1 = Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS)
+        stan = Sesja.poUkonczonejRundzie(stan, plan1, 0)
+        // Druga runda: te same slowa jeszcze raz. Awansu juz dzis nie bedzie, ale trasa stoi.
+        val poDrugiej = przerob(plan1.slownictwo, plan1, stan, progress)
+        stan = Sesja.poUkonczonejRundzie(poDrugiej.first, plan1, 1)
+        progress = poDrugiej.second
+
+        val plan2 = Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS)
+
+        assertEquals(plan1, plan2)
+        assertEquals(RodzajKroku.PODSUMOWANIE, Sesja.biezacy(stan, plan2)?.rodzaj)
+        assertEquals(5, Sesja.postep(stan, plan2).celeRazem)
+    }
+
+    @Test
+    fun `pierwszy dzien zostaje pierwszym dniem takze po pierwszej rundzie`() {
+        val slownik = slowa(30)
+        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
+        assertTrue(plan.bezHistorii)
+        val (stan, progress) = przerob(plan.nowe, plan, Sesja.rozpocznij(plan, Zegar(0L)), emptyMap())
+
+        // Slowa trasy maja juz historie, bo uczen wlasnie na nie odpowiedzial. Naglowek ekranu
+        // nie moze od tego przestac mowic, ze to pierwszy dzien z tym slownictwem.
+        assertTrue(Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS).bezHistorii)
+
+        // Historia slowa SPOZA trasy to juz co innego: uczen gral tym slownictwem poza sesja.
+        val zInnaGra = odpowiedz(progress, "w20", DZIS)
+        assertFalse(Sesja.planNaDzis(stan, zInnaGra, slownik, KIERUNEK, DZIS).bezHistorii)
+    }
+
+    @Test
+    fun `stan z innego dnia nie trzyma trasy - dzis plan powstaje na swiezo`() {
+        val slownik = slowa(30)
+        val wczoraj = DZIS - 1
+        val planWczoraj = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, wczoraj)
+        var stan = Sesja.rozpocznij(planWczoraj, Zegar(0L))
+        var progress: Map<String, WordProgress> = emptyMap()
+        for (id in planWczoraj.nowe.take(2)) {
+            progress = odpowiedz(progress, id, wczoraj)
+            stan = Sesja.zaliczOdpowiedz(stan, planWczoraj, id, Outcome.POPRAWNA)
+        }
+
+        val dzis = Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS)
+
+        assertEquals(Sesja.zaplanuj(progress, slownik, KIERUNEK, DZIS), dzis)
+        // Dwa wczorajsze slowa wracaja dzis jako powtorki, trzy nietkniete nie maja pierwszenstwa
+        // tylko dlatego, ze staly na wczorajszej trasie: dzien bez dokonczenia niczego nie rezerwuje.
+        assertEquals(listOf("w01", "w02"), dzis.powtorki)
+        assertEquals(DZIS, dzis.dzien)
+        // A stan z wczoraj po prostu ustepuje nowej sesji, bez kary i bez sladu.
+        val nowy = Sesja.wznow(stan, dzis, Zegar(7L))
+        assertEquals(DZIS, nowy.dzien)
+        assertEquals(0, nowy.krok)
+        assertTrue(nowy.zrobione.isEmpty())
+        assertEquals(dzis.powtorki, nowy.trasaPowtorki)
+        assertEquals(dzis.nowe, nowy.trasaNowe)
+    }
+
+    @Test
+    fun `zakonczona sesja nie trzyma trasy - nastepna tego samego dnia jest nowa`() {
+        val slownik = slowa(30)
+        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
+        val (stan, progress) = przerob(plan.nowe, plan, Sesja.rozpocznij(plan, Zegar(0L)), emptyMap())
+        val zakonczona = Sesja.zakoncz(stan, plan)
+
+        val nastepna = Sesja.planNaDzis(zakonczona, progress, slownik, KIERUNEK, DZIS)
+
+        assertEquals(Sesja.zaplanuj(progress, slownik, KIERUNEK, DZIS), nastepna)
+        assertEquals(slownik.subList(5, 10), nastepna.nowe)
+    }
+
+    @Test
+    fun `stan bez trasy ze starszej wersji dostaje plan na swiezo i trase przy wznowieniu`() {
+        // Tak wyglada zapis sprzed wprowadzenia trasy: ten sam dzien, krok i zrobione slowa sa,
+        // list trasy nie ma (wartosci domyslne).
+        val slownik = slowa(30)
+        var progress: Map<String, WordProgress> = emptyMap()
+        for (id in slownik.take(5)) progress = odpowiedz(progress, id, DZIS)
+        val stary = StanSesji(dzien = DZIS, krok = 1, zrobioneNowe = slownik.take(5), startMs = 99L)
+        assertTrue(stary.trasaPowtorki.isEmpty() && stary.trasaNowe.isEmpty())
+
+        val plan = Sesja.planNaDzis(stary, progress, slownik, KIERUNEK, DZIS)
+        assertEquals(Sesja.zaplanuj(progress, slownik, KIERUNEK, DZIS), plan)
+
+        val wznowiony = Sesja.wznow(stary, plan, Zegar(0L))
+        // Miejsce w trasie, zrobione slowa i chwila startu zostaja; dochodzi sama trasa.
+        assertEquals(1, wznowiony.krok)
+        assertEquals(slownik.take(5), wznowiony.zrobioneNowe)
+        assertEquals(99L, wznowiony.startMs)
+        assertEquals(plan.powtorki, wznowiony.trasaPowtorki)
+        assertEquals(plan.nowe, wznowiony.trasaNowe)
+        assertEquals(plan.kierunek, wznowiony.trasaKierunek)
+
+        // Od tej chwili trasa stoi, cokolwiek uczen odpowie.
+        val (poRundzie, poOdpowiedziach) = przerob(plan.nowe, plan, wznowiony, progress)
+        assertEquals(plan, Sesja.planNaDzis(poRundzie, poOdpowiedziach, slownik, KIERUNEK, DZIS))
+        // Slowa zrobione przed aktualizacja licza sie dalej, wiec licznik sie domyka.
+        val postep = Sesja.postep(poRundzie, plan)
+        assertEquals(postep.celeRazem, postep.celeZrobione)
+    }
+
+    @Test
+    fun `stary zapis stanu sesji bez pol trasy dalej sie wczytuje`() {
+        // Dokladnie te pola, ktore StanSesji mial przed wprowadzeniem trasy.
+        val staryJson = """{"dzien":19875,"krok":1,"zrobionePowtorki":["w01"],""" +
+            """"zrobioneNowe":["w07","w08"],"startMs":1234,"odpowiedzWToku":false,"zakonczona":false}"""
+        // Ta sama konfiguracja co w Repository.
+        val json = Json { prettyPrint = false; ignoreUnknownKeys = true; encodeDefaults = true }
+
+        val stan = json.decodeFromString(StanSesji.serializer(), staryJson)
+
+        assertEquals(
+            StanSesji(
+                dzien = DZIS,
+                krok = 1,
+                zrobionePowtorki = listOf("w01"),
+                zrobioneNowe = listOf("w07", "w08"),
+                startMs = 1234L,
+            ),
+            stan,
+        )
+        assertTrue(stan.trasaPowtorki.isEmpty())
+        assertTrue(stan.trasaNowe.isEmpty())
+
+        // To samo w calym dokumencie zapisu, bo tak ten stan lezy na dysku.
+        val dokument = json.decodeFromString(SaveData.serializer(), """{"schemaVersion":3,"sesja":$staryJson}""")
+        assertEquals(stan, dokument.sesja)
+
+        // A nowy stan przechodzi przez zapis i odczyt razem z trasa.
+        val zTrasa = stan.copy(
+            trasaPowtorki = listOf("w01"),
+            trasaNowe = listOf("w07", "w08"),
+            trasaKierunek = Direction.DEF_TO_TERM,
+        )
+        assertEquals(zTrasa, json.decodeFromString(StanSesji.serializer(), json.encodeToString(StanSesji.serializer(), zTrasa)))
+    }
+
+    @Test
+    fun `trasa trzyma kierunek, w ktorym ja ulozono, takze po zmianie ustawienia`() {
+        val slownik = slowa(10)
+        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, Direction.DEF_TO_TERM, DZIS)
+        val stan = Sesja.zaliczOdpowiedz(Sesja.rozpocznij(plan, Zegar(0L)), plan, "w01", Outcome.POPRAWNA)
+        assertEquals(Direction.DEF_TO_TERM, stan.trasaKierunek)
+
+        // Uczen przestawil kierunek w opcjach w polowie sesji. Licznik, runda i podsumowanie
+        // maja dalej mowic o tych samych slowach w tym samym kierunku.
+        val poZmianie = Sesja.planNaDzis(stan, emptyMap(), slownik, Direction.TERM_TO_DEF, DZIS)
+
+        assertEquals(Direction.DEF_TO_TERM, poZmianie.kierunek)
+        assertEquals(plan.nowe, poZmianie.nowe)
+    }
+
+    @Test
+    fun `slowo usuniete ze slownika wypada z trasy, zamiast blokowac licznik`() {
+        val slownik = slowa(10)
+        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
+        val (stan, progress) = przerob(listOf("w01"), plan, Sesja.rozpocznij(plan, Zegar(0L)), emptyMap())
+
+        // Uczen usunal wlasny zestaw ze slowami w03 i w05: zadna runda juz ich nie pokaze.
+        val bezDwoch = slownik - listOf("w03", "w05")
+        val poUsunieciu = Sesja.planNaDzis(stan, progress, bezDwoch, KIERUNEK, DZIS)
+
+        assertEquals(listOf("w01", "w02", "w04"), poUsunieciu.nowe)
+        assertEquals(3, Sesja.postep(stan, poUsunieciu).celeRazem)
+
+        // Gdy z trasy nie zostalo nic, plan powstaje na swiezo z tego, co jest.
+        val inny = slowa(4, "x")
+        assertEquals(
+            Sesja.zaplanuj(progress, inny, KIERUNEK, DZIS),
+            Sesja.planNaDzis(stan, progress, inny, KIERUNEK, DZIS),
+        )
+    }
+
+    @Test
+    fun `trasa z kierunkiem losowym w zapisie nie wywraca ekranu sesji`() {
+        // RANDOM to ustawienie, nie kierunek, wiec w trasie moze sie wziac tylko z uszkodzonego
+        // pliku. Srs.key rzuca na nim wyjatkiem, a plan sklada sie w trakcie rysowania ekranu.
+        val slownik = slowa(10)
+        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
+        val zepsuty = Sesja.zaliczOdpowiedz(Sesja.rozpocznij(plan, Zegar(0L)), plan, "w01", Outcome.POPRAWNA)
+            .copy(trasaKierunek = Direction.RANDOM)
+
+        val odzyskany = Sesja.planNaDzis(zepsuty, emptyMap(), slownik, KIERUNEK, DZIS)
+
+        assertEquals(Sesja.zaplanuj(emptyMap(), slownik, KIERUNEK, DZIS), odzyskany)
+        // Wznowienie naprawia stan: dostaje trase i kierunek z planu.
+        assertEquals(KIERUNEK, Sesja.wznow(zepsuty, odzyskany, Zegar(0L)).trasaKierunek)
+    }
+
+    @Test
+    fun `nowa sesja zapamietuje trase w kolejnosci planu`() {
+        val zalegle = slowa(3)
+        val progress = postepy(zalegle, box = 1, dueDay = DZIS - 1)
+        val plan = Sesja.zaplanuj(progress, zalegle + slowa(4, "n"), KIERUNEK, DZIS)
+
+        val stan = Sesja.rozpocznij(plan, Zegar(5L))
+
+        assertEquals(plan.powtorki, stan.trasaPowtorki)
+        assertEquals(plan.nowe, stan.trasaNowe)
+        assertEquals(KIERUNEK, stan.trasaKierunek)
+        // Plan odtworzony z zapisu jest tym samym planem, a nie podobnym.
+        assertEquals(plan, Sesja.planNaDzis(stan, progress, zalegle + slowa(4, "n"), KIERUNEK, DZIS))
+    }
+
+    // --- co wolno nazwac wznowiona sesja ----------------------------------------------------
+
+    @Test
+    fun `sesja tylko otwarta nie jest sesja do wznowienia`() {
+        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
+        val swieza = Sesja.rozpocznij(plan, Zegar(0L))
+
+        assertFalse(Sesja.czyRuszona(swieza))
+        assertFalse("plakietka WZNOWIONA nad sesja, w ktorej nic sie nie wydarzylo", Sesja.czyWznawialna(swieza, DZIS))
+
+        // Wystarczy jedna odpowiedz albo jedno przejscie dalej.
+        val poOdpowiedzi = Sesja.zaliczOdpowiedz(swieza, plan, "w01", Outcome.BLEDNA)
+        assertTrue(Sesja.czyRuszona(poOdpowiedzi))
+        assertTrue(Sesja.czyWznawialna(poOdpowiedzi, DZIS))
+        val poKroku = Sesja.dalej(swieza, plan)
+        assertTrue(Sesja.czyRuszona(poKroku))
+        assertTrue(Sesja.czyWznawialna(poKroku, DZIS))
+        // Proba przerwana to nie jest nic zrobionego.
+        assertFalse(Sesja.czyRuszona(Sesja.zaliczOdpowiedz(swieza, plan, "w01", Outcome.PRZERWANA)))
+    }
+
+    @Test
+    fun `pusta trasa nie ma czasu, ktory moglby minac`() {
+        val zestaw = slowa(4)
+        val plan = Sesja.zaplanuj(postepy(zestaw, box = 3, dueDay = DZIS + 7), zestaw, KIERUNEK, DZIS)
+        assertTrue(plan.pusty)
+        val zegar = Zegar(0L)
+        val stan = Sesja.rozpocznij(plan, zegar)
+
+        assertFalse(Sesja.czasNaKoniec(stan, plan, zegar))
+        zegar.ms = 3_600_000L
+        assertFalse(Sesja.czasNaKoniec(stan, plan, zegar))
+    }
+
+    // --- ukonczona runda sama przesuwa trase ------------------------------------------------
+
+    @Test
+    fun `ukonczona runda przesuwa trase o jeden krok`() {
+        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
+        val stan = Sesja.rozpocznij(plan, Zegar(0L))
+
+        val po = Sesja.poUkonczonejRundzie(stan, plan, 0)
+
+        assertEquals(1, po.krok)
+        assertEquals(RodzajKroku.GRA, Sesja.biezacy(po, plan)?.rodzaj)
+        assertFalse(po.zakonczona)
+    }
+
+    @Test
+    fun `po ostatniej rundzie stoi podsumowanie, a sesja nie konczy sie sama`() {
+        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
+        var stan = Sesja.rozpocznij(plan, Zegar(0L))
+        for (id in plan.nowe) stan = Sesja.zaliczOdpowiedz(stan, plan, id, Outcome.POPRAWNA)
+        stan = Sesja.poUkonczonejRundzie(stan, plan, 0)
+        stan = Sesja.zacznijOdpowiedz(stan)
+
+        val po = Sesja.poUkonczonejRundzie(stan, plan, 1)
+
+        assertEquals(2, po.krok)
+        assertEquals(RodzajKroku.PODSUMOWANIE, Sesja.biezacy(po, plan)?.rodzaj)
+        // Podsumowanie zamyka uczen, przyciskiem. Sesja zakonczona za jego plecami zniknelaby
+        // z zapisu, zanim zobaczyl, co zrobil.
+        assertFalse(po.zakonczona)
+        assertEquals(plan.nowe, po.zrobioneNowe)
+        assertTrue(po.zrobionePowtorki.isEmpty())
+        assertFalse(po.odpowiedzWToku)
+        assertEquals(stan.trasaNowe, po.trasaNowe)
+    }
+
+    @Test
+    fun `druga ukonczona runda tego samego kroku niczego juz nie przesuwa`() {
+        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
+        val poPierwszej = Sesja.poUkonczonejRundzie(Sesja.rozpocznij(plan, Zegar(0L)), plan, 0)
+
+        // JESZCZE RAZ na ekranie wyniku: ta sama runda kroku 0 ukonczona drugi raz.
+        assertEquals(poPierwszej, Sesja.poUkonczonejRundzie(poPierwszej, plan, 0))
+
+        // I w druga strone: uczen przeszedl dalej reka, zanim runda sie skonczyla.
+        val recznie = Sesja.dalej(Sesja.dalej(Sesja.rozpocznij(plan, Zegar(0L)), plan), plan)
+        assertEquals(recznie, Sesja.poUkonczonejRundzie(recznie, plan, 0))
+        assertEquals(recznie, Sesja.poUkonczonejRundzie(recznie, plan, 1))
+        // Numer kroku spoza planu to tez nie jest powod, zeby cokolwiek ruszac.
+        val start = Sesja.rozpocznij(plan, Zegar(0L))
+        assertEquals(start, Sesja.poUkonczonejRundzie(start, plan, 7))
+        assertEquals(start, Sesja.poUkonczonejRundzie(start, plan, -1))
+    }
+
+    @Test
+    fun `na podsumowaniu i po zakonczeniu ukonczona runda nie zmienia niczego`() {
+        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
+        val naPodsumowaniu = Sesja.dalej(Sesja.dalej(Sesja.rozpocznij(plan, Zegar(0L)), plan), plan)
+        assertEquals(RodzajKroku.PODSUMOWANIE, Sesja.biezacy(naPodsumowaniu, plan)?.rodzaj)
+
+        // Podsumowanie nie jest runda, wiec nie ma czego konczyc.
+        assertEquals(naPodsumowaniu, Sesja.poUkonczonejRundzie(naPodsumowaniu, plan, 2))
+
+        val zakonczona = Sesja.zakoncz(naPodsumowaniu, plan)
+        assertEquals(zakonczona, Sesja.poUkonczonejRundzie(zakonczona, plan, 2))
+
+        // Stan z innego dnia niz plan nie nalezy do tej trasy.
+        val wczorajszy = Sesja.rozpocznij(plan, Zegar(0L)).copy(dzien = DZIS - 1)
+        assertEquals(wczorajszy, Sesja.poUkonczonejRundzie(wczorajszy, plan, 0))
+    }
+
+    @Test
+    fun `krok ze zdaniami w kontekscie nie jest runda i nie przesuwa sie sam`() {
+        val plan = Sesja.zaplanuj(emptyMap(), slowa(5), KIERUNEK, DZIS, zadaniaWKontekscie = listOf("z1"))
+        val naKontekscie = Sesja.dalej(Sesja.dalej(Sesja.rozpocznij(plan, Zegar(0L)), plan), plan)
+        assertEquals(RodzajKroku.KONTEKST, Sesja.biezacy(naKontekscie, plan)?.rodzaj)
+
+        assertEquals(naKontekscie, Sesja.poUkonczonejRundzie(naKontekscie, plan, 2))
+        // Runda przed nim przesuwa sie normalnie, tez gdy za nia stoi kontekst, a nie podsumowanie.
+        val naGrze = Sesja.dalej(Sesja.rozpocznij(plan, Zegar(0L)), plan)
+        assertEquals(2, Sesja.poUkonczonejRundzie(naGrze, plan, 1).krok)
     }
 }

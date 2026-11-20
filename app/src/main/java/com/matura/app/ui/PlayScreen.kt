@@ -28,7 +28,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -54,11 +53,15 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.matura.app.BuildConfig
 import com.matura.app.game.Crate
@@ -68,6 +71,7 @@ import com.matura.app.game.GameEngine
 import com.matura.app.game.GameSnapshot
 import com.matura.app.game.LearningEvent
 import com.matura.app.game.Matching
+import com.matura.app.game.Reveal
 import com.matura.app.game.SubmitResult
 import com.matura.app.learn.Attempt
 import com.matura.app.learn.Srs
@@ -79,6 +83,7 @@ import com.matura.app.model.WordSet
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.hypot
+import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import android.Manifest
@@ -135,6 +140,17 @@ fun opisStanuMikrofonu(stan: VoiceStan, lang: UiLanguage): String = when (stan) 
 fun wstrzymacRunde(paused: Boolean, gameOver: Boolean): Boolean = !paused && !gameOver
 
 /**
+ * Czy potworek, ktory doszedl do dziala, ma byc pokazany jako STRATA: drgniecie planszy i ton
+ * bledu.
+ *
+ * Silnik zglasza [FlashKind.LIFE_LOST] takze w rundzie spokojnej, chociaz zycia tam nie ubywa
+ * (nie dostal osobnej wartosci, zeby nie ruszac dzwiekow). Runda spokojna obiecuje uczniowi,
+ * ze za nieznane slowo nic nie traci, wiec ekran nie moze w tej samej chwili trzasc plansza
+ * i grac tonu porazki. Jedyna informacja zwrotna jest wtedy pokazana odpowiedz.
+ */
+fun czyStrata(flash: FlashKind?, calm: Boolean): Boolean = flash == FlashKind.LIFE_LOST && !calm
+
+/**
  * Podpis po awarii drogi glosowej (wyczerpana drabinka silnikow, brak okna systemowego).
  *
  * Bez "gra stoi": pauza po awarii konczy sie przy pierwszym klawiszu, wiec zdanie o wstrzymaniu
@@ -167,10 +183,11 @@ fun PlayScreen(
      * Historia nauki (SaveData.progress) — zwykle dane, nie repozytorium: ekran gry nie ma
      * czytac z dysku, a silnik ma zostac testowalny bez Androida.
      *
-     * PUSTA MAPA znaczy GRA O REKORD: slowa leca losowo, dokladnie jak przed wprowadzeniem
-     * harmonogramu. Mapa niepusta wlacza dobor z powtorek. Wartosc domyslna jest wiec takze
-     * zgodnoscia wstecz: wolajacy, ktory jeszcze nie podaje historii, dostaje zachowanie
-     * sprzed tej zmiany, a nie polowicznie wlaczona nauke.
+     * PUSTA MAPA znaczy GRA O REKORD: o kolejnosci slow decyduje tasowanie, nie harmonogram.
+     * Slowa wychodza z przetasowanego worka, kazde raz na obieg (patrz GameEngine), wiec zadne
+     * nie wraca trzeci raz, zanim inne wyszlo pierwszy. Mapa niepusta wlacza dobor z powtorek.
+     * Wartosc domyslna znaczy wiec tyle, ze wolajacy, ktory nie podaje historii, dostaje zwykla
+     * gre o wynik, a nie polowicznie wlaczona nauke.
      */
     progress: Map<String, WordProgress> = emptyMap(),
     /**
@@ -178,6 +195,32 @@ fun PlayScreen(
      * w srodku silnika: caly harmonogram ma byc testowalny na granicy doby — patrz Srs.
      */
     today: Int = Srs.dayOf(System.currentTimeMillis()),
+    /**
+     * RUNDA SPOKOJNA (GameConfig.calm): potworek przy dziale nie zabiera zycia i nie konczy
+     * rundy. Ekran nie rysuje wtedy serc i nie robi z przepuszczonego slowa straty (bez
+     * drgniecia planszy i bez tonu bledu): informacja zwrotna to pokazana odpowiedz.
+     */
+    calm: Boolean = false,
+    /**
+     * RUNDA SKONCZONA (GameConfig.finite): zamyka sie sama, gdy kazde slowo dostalo poprawna
+     * odpowiedz. W rogu planszy stoi wtedy licznik zaliczonych slow.
+     */
+    finite: Boolean = false,
+    /**
+     * Runda zamknela sie sama, bo uczen odpowiedzial na wszystko (GameSnapshot.completed).
+     * Wolane raz na runde, tuz przed [onFinished]; po koncu zyc i po wyjsciu w polowie nie
+     * jest wolane wcale. Osobne od [onFinished], bo rekord gry nie mowi, DLACZEGO runda sie
+     * skonczyla, a od tego zalezy, czy trasa sesji idzie dalej.
+     */
+    onCompleted: () -> Unit = {},
+    /**
+     * Runda jest krokiem czegos wiekszego (dzienna sesja, cwiczenie trudnych slow): glownym
+     * przyciskiem ekranu wyniku jest wtedy [continueLabel] i to wolajacy decyduje, dokad
+     * prowadzi. JESZCZE RAZ schodzi na drugie miejsce, a DO MENU znika, bo z takiej rundy
+     * nie wraca sie do menu. null zostawia zwykly uklad: JESZCZE RAZ i DO MENU.
+     */
+    onContinue: (() -> Unit)? = null,
+    continueLabel: String = str.next,
     /**
      * Zapis jednej proby (Repository.recordAttempt). Domyslnie pusty, bo ekran ma dzialac
      * takze tam, gdzie nikt postepu nie zbiera — w podgladzie i w testach Compose.
@@ -191,9 +234,10 @@ fun PlayScreen(
     onAttempt: (Attempt) -> Unit,
 ) {
     var restarts by remember { mutableIntStateOf(0) }
-    // Systemowy back = czyste wyjscie do menu (bez cichego gubienia rundy na SetPick).
+    // Systemowy back = czyste wyjscie z rundy tam, dokad prowadzi wolajacy (menu, a dla rundy
+    // z sesji albo z trudnych slow ekran, z ktorego ruszyla), bez cichego gubienia rundy na SetPick.
     BackHandler { onExit() }
-    val engine = remember(set.id, restarts, options.lives, options.direction, options.speed) {
+    val engine = remember(set.id, restarts, options.lives, options.direction, options.speed, calm, finite) {
         GameEngine(
             set = set,
             config = GameConfig(
@@ -206,6 +250,8 @@ fun PlayScreen(
                 // silnik i kasowala trwajaca gre. Przekroczenie polnocy UTC — tak samo.
                 progress = progress,
                 today = today,
+                calm = calm,
+                finite = finite,
             ),
         )
     }
@@ -278,13 +324,16 @@ fun PlayScreen(
 
     LaunchedEffect(snap.flash) {
         val f = snap.flash
-        if (f != null && f != lastFlash) sfx.play(f, options.soundEnabled)
+        // Ton bledu jest tonem straty, a runda spokojna strat nie ma (patrz [czyStrata]).
+        val bezStraty = f == FlashKind.LIFE_LOST && !czyStrata(f, snap.calm)
+        if (f != null && f != lastFlash && !bezStraty) sfx.play(f, options.soundEnabled)
         lastFlash = f
     }
 
     LaunchedEffect(snap.gameOver) {
         if (snap.gameOver && !reported) {
             reported = true
+            if (snap.completed) onCompleted()
             onFinished(
                 ScoreRecord(
                     playerName = playerName,
@@ -763,7 +812,35 @@ fun PlayScreen(
     // czy jest zwykla gra o wynik: dobor slow rozni sie miedzy nimi zasadniczo i bez podpisu
     // wygladalby na kaprys losowania. Bez nowego ekranu przed gra — o trybie rozstrzyga to,
     // czy wolajacy poda historie nauki tego zestawu (patrz [progress]).
-    val podpisTrybu = if (engine.plannedLearning) t("NAUKA", "STUDY", lang) else t("REKORD", "SCORE", lang)
+    //
+    // Runda spokojna jest NAUKA takze wtedy, gdy uczen nie ma jeszcze zadnej historii (pierwsza
+    // sesja na swiezej instalacji): jej wynik nie idzie do rankingu, wiec REKORD bylby nieprawda.
+    val podpisTrybu =
+        if (engine.plannedLearning || calm) t("NAUKA", "STUDY", lang) else t("REKORD", "SCORE", lang)
+
+    // KONIEC RUNDY: ekran wyniku stoi ZAMIAST planszy, pola odpowiedzi, paska glosu i klawiatury,
+    // a nie nad nimi. Nakladka w ramce planszy byla ucinana na niskich telefonach (patrz
+    // EkranWyniku), a klawisze pod spodem zostawaly pod palcem i w drzewie czytnika ekranu.
+    // Wczesny powrot zdejmuje je z kompozycji; stan rundy i efekty zalozone wyzej zyja dalej,
+    // wiec JESZCZE RAZ tworzy nowy silnik tym samym licznikiem `restarts` co dotad.
+    if (snap.gameOver) {
+        WynikRundyKlasycznej(
+            snap = snap,
+            str = str,
+            onAgain = { restarts++ },
+            onMenu = onExit,
+            onContinue = onContinue,
+            continueLabel = continueLabel,
+        )
+        return
+    }
+
+    // Odkryta odpowiedz jest rysunkiem na Canvasie, wiec bez opisu nie istnialaby dla czytnika
+    // ekranu wcale. Minimum to obecnosc w semantyce: kto najedzie na plansze, uslyszy pare slow.
+    val odkrycie = snap.reveal
+    val opisPlanszy = if (odkrycie != null) {
+        Modifier.semantics { contentDescription = odkrycie.prompt + ": " + odkrycie.solution }
+    } else Modifier
 
     Column(
         Modifier
@@ -777,7 +854,7 @@ fun PlayScreen(
                 .padding(5.dp)
                 .border(3.dp, Palette.Ink)
         ) {
-            Canvas(Modifier.fillMaxSize()) {
+            Canvas(Modifier.fillMaxSize().then(opisPlanszy)) {
                 drawField(
                     snap, highlighted, highlightedCrates, theme, sprites, font, options,
                     muzzle, podpisTrybu,
@@ -828,10 +905,6 @@ fun PlayScreen(
                         font = font,
                     )
                 }
-            }
-
-            if (snap.gameOver) {
-                GameOverOverlay(snap, str, sprites, font, onAgain = { restarts++ }, onMenu = onExit)
             }
 
             diagnostyka?.let { tekst ->
@@ -972,45 +1045,50 @@ private fun AnswerBar(typed: String, cursor: Int, font: PixelFont) {
     }
 }
 
+/**
+ * Wynik rundy klasycznej: dwa zakonczenia na jednym ukladzie ([EkranWyniku]).
+ *
+ * Koniec zyc zostaje przy czaszce i czerwonym KONIEC GRY. Runda skonczona, ktora zamknela sie
+ * sama, dostaje zielony znak i wlasny tytul: uczen, ktory odpowiedzial na wszystko, nie moze
+ * zobaczyc ekranu porazki. Roznice niesie ikona i napis, kolor jest dodatkiem.
+ *
+ * Pod punktami stoi to, po co ten ekran jest w trybie do nauki: slowa, ktore doszly do dziala,
+ * razem z odpowiedziami.
+ */
 @Composable
-private fun GameOverOverlay(
+private fun WynikRundyKlasycznej(
     snap: GameSnapshot,
     str: Str,
-    sprites: Sprites,
-    font: PixelFont,
     onAgain: () -> Unit,
     onMenu: () -> Unit,
+    onContinue: (() -> Unit)?,
+    continueLabel: String,
 ) {
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Palette.Ink.copy(alpha = 0.86f)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            PixelImage(pixel(com.matura.app.R.drawable.skull), Modifier.size(60.dp))
-            Spacer(Modifier.height(12.dp))
-            PixelText(str.gameOver, color = Palette.Danger, glyphHeight = 18.dp, font = font)
-            Spacer(Modifier.height(16.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                PixelImage(sprites.coin, Modifier.size(26.dp))
-                Spacer(Modifier.width(9.dp))
-                PixelText("${snap.score}", color = Palette.Gold, glyphHeight = 26.dp, font = font)
-            }
-            Spacer(Modifier.height(14.dp))
-            PixelText(
-                "LVL ${snap.level}  ${str.killsLabel} ${snap.kills}  x${snap.bestStreak}",
-                color = Palette.Muted,
-                glyphHeight = 9.dp,
-                font = font,
-            )
-            Spacer(Modifier.height(24.dp))
-            Row(horizontalArrangement = Arrangement.Center) {
-                PrimaryButton(str.playAgain, onClick = onAgain)
-                Spacer(Modifier.width(12.dp))
-                GhostButton(str.toMenu, onClick = onMenu)
-            }
-        }
+    val jeszczeRaz = PrzyciskWyniku(str.playAgain, onAgain)
+    EkranWyniku(
+        ikona = pixel(
+            if (snap.completed) com.matura.app.R.drawable.checkmark else com.matura.app.R.drawable.skull
+        ),
+        tytul = if (snap.completed) str.roundComplete else str.gameOver,
+        kolorTytulu = if (snap.completed) Palette.Accent else Palette.Danger,
+        punkty = snap.score,
+        opisPunktow = str.score + " " + snap.score,
+        glowny = if (onContinue != null) PrzyciskWyniku(continueLabel, onContinue) else jeszczeRaz,
+        drugi = if (onContinue != null) jeszczeRaz else PrzyciskWyniku(str.toMenu, onMenu),
+    ) { szerokosc ->
+        Spacer(Modifier.height(8.dp))
+        PixelText(
+            "LVL ${snap.level}  ${str.killsLabel} ${snap.kills}  x${snap.bestStreak}",
+            color = Palette.Muted,
+            glyphHeight = 9.dp,
+            maxWidthDp = szerokosc,
+            // Skroty z planszy (LVL, x5) czytane na glos nic nie znacza, wiec czytnik dostaje
+            // te same trzy liczby z pelnymi nazwami.
+            opis = str.level + " " + snap.level + ", " + str.killsLabel + " " + snap.kills +
+                ", " + str.bestStreakLabel + " " + snap.bestStreak,
+        )
+        Spacer(Modifier.height(16.dp))
+        ListaDoPowtorki(snap.missedWords, str)
     }
 }
 
@@ -1089,7 +1167,8 @@ private fun DrawScope.drawField(
     }
 
     // A hit knocks the whole field about a little; keeps the camera alive without animation.
-    val shake = if (snap.flash == FlashKind.LIFE_LOST) unit * 0.006f else 0f
+    // Not in a calm round: nothing is lost there, so nothing shakes (see czyStrata).
+    val shake = if (czyStrata(snap.flash, snap.calm)) unit * 0.006f else 0f
 
     translate(
         left = if (shake > 0f) (snap.elapsed * 97f % 2f - 1f) * shake else 0f,
@@ -1173,6 +1252,102 @@ private fun DrawScope.drawField(
             drawCentredLabel(font, "LVL ${snap.level}", w / 2f, by + bh * 0.18f, fs, Palette.Ink, outline = null)
         }
     }
+
+    // Outside the shake and after everything else: this is text to be read, so it stands still
+    // and nothing is drawn over it.
+    snap.reveal?.let { drawReveal(it, font, unit, fs) }
+}
+
+/** How long before it disappears the revealed answer starts to fade, in seconds. */
+private const val REVEAL_FADE = 0.5f
+
+/**
+ * The answer the game was waiting for, shown for [GameEngine.REVEAL_TIME] after a monster has
+ * reached the cannon: the prompt, and under it the solution in gold, on a dark plate.
+ *
+ * Without it the classic mode taught nothing on first contact: an unknown word walked in, took
+ * a life and vanished, and the student never saw what it meant.
+ *
+ * WHERE: right BELOW the cannon. A monster's label is drawn above the monster, so the label of
+ * the one that arrives next (the word the student is typing right now) sits level with the
+ * cannon or above it. Measured on 60 simulated rounds per board size: a plate above the cannon
+ * lay on the label of a monster less than six seconds from the cannon in 20 to 48 percent of
+ * the frames it was visible, a plate below it in 0 to 2 percent. Below, the plate only crosses
+ * the bodies of monsters coming from the lower lanes and now and then the tail of a far label.
+ *
+ * It keeps clear of the HUD: the two bottom corners hold the score and the level, so the plate
+ * never goes lower than the row they stand in, and it is centred, away from both.
+ *
+ * Text longer than the canvas is drawn smaller, in whole steps, because the bitmap font only
+ * stays sharp at integer scales. One that does not fit even at scale 1 is centred, as a long
+ * monster label is.
+ */
+private fun DrawScope.drawReveal(reveal: Reveal, font: PixelFont, unit: Float, fs: Float) {
+    val alpha = (reveal.ttl / REVEAL_FADE).coerceIn(0f, 1f)
+    if (alpha <= 0f) return
+
+    fun textWidth(scale: Float) =
+        max(font.widthPx(reveal.prompt, scale), font.widthPx(reveal.solution, scale))
+    fun plateWidth(scale: Float) = textWidth(scale) + 6f * scale
+
+    // The plate may run from edge to edge: asking for a margin as well would drop a long answer
+    // a whole size on a board where it fits.
+    var scale = fs
+    while (scale > 1f && plateWidth(scale) > size.width) scale -= 1f
+
+    // Vertical rhythm in font pixels: accents reach 3 px above a glyph and ogonki 3 px below it,
+    // so 4 px of padding and 5 px between the lines keep every mark inside the plate.
+    val glyph = PixelFont.GLYPH_H * scale
+    val plateW = plateWidth(scale)
+    val plateH = 4f * scale + glyph + 5f * scale + glyph + 4f * scale
+    val left = clampToCanvas(size.width / 2f - plateW / 2f, plateW, 0f)
+    // Bottom HUD row, same numbers as drawHud: the plate stops above it when the board is so
+    // low that the two would meet.
+    val gap = 2f * fs
+    val hudTop = size.height - unit * 0.030f - unit * 0.048f
+    val top = (size.height * GameEngine.CANNON_Y + unit * 0.058f)
+        .coerceAtMost(hudTop - gap - plateH)
+        .coerceAtLeast(gap)
+
+    drawRect(
+        color = Palette.Ink.copy(alpha = 0.80f * alpha),
+        topLeft = Offset(left, top),
+        size = Size(plateW, plateH),
+    )
+    drawRect(
+        color = Palette.SurfaceHigh.copy(alpha = alpha),
+        topLeft = Offset(left, top),
+        size = Size(plateW, plateH),
+        style = Stroke(width = scale),
+    )
+
+    val outline = Palette.Ink.copy(alpha = alpha)
+    val promptY = top + 4f * scale
+    drawPixelText(
+        font, reveal.prompt,
+        x = size.width / 2f - font.widthPx(reveal.prompt, scale) / 2f,
+        y = promptY,
+        scale = scale,
+        color = Palette.Bone.copy(alpha = alpha),
+        outline = outline,
+    )
+    drawPixelText(
+        font, reveal.solution,
+        x = size.width / 2f - font.widthPx(reveal.solution, scale) / 2f,
+        y = promptY + glyph + 5f * scale,
+        scale = scale,
+        color = Palette.Gold.copy(alpha = alpha),
+        outline = outline,
+    )
+}
+
+/**
+ * Keeps something [width] wide inside the canvas, [margin] away from both edges. Wider than
+ * the canvas, it is centred instead, so that it runs off both sides evenly.
+ */
+private fun DrawScope.clampToCanvas(x: Float, width: Float, margin: Float): Float = when {
+    width + 2 * margin >= size.width -> (size.width - width) / 2f   // dłuższe niż ekran
+    else -> x.coerceIn(margin, size.width - width - margin)
 }
 
 /**
@@ -1195,13 +1370,7 @@ private fun DrawScope.drawCentredLabel(
 ) {
     val width = font.widthPx(text, scale)
     var x = cx - width / 2f
-    if (clampToCanvas) {
-        val margin = 2f * scale
-        x = when {
-            width + 2 * margin >= size.width -> (size.width - width) / 2f   // dłuższe niż ekran
-            else -> x.coerceIn(margin, size.width - width - margin)
-        }
-    }
+    if (clampToCanvas) x = clampToCanvas(x, width, 2f * scale)
     drawPixelText(
         font = font,
         text = text,
@@ -1257,10 +1426,31 @@ private fun DrawScope.drawHud(
     val pad = unit * 0.030f
     val iconH = unit * 0.048f
 
-    // lives, top-left
-    for (i in 0 until snap.maxLives) {
-        val sprite = if (i < snap.lives) sprites.heart else sprites.heartEmpty
-        drawSprite(sprite, pad + iconH / 2f + i * (iconH + unit * 0.012f), pad + iconH / 2f, iconH)
+    // lives, top-left. A calm round takes no lives, so hearts that can never empty would only
+    // promise a penalty that does not exist: they are not drawn at all.
+    var cornerY = pad + iconH / 2f
+    if (!snap.calm) {
+        for (i in 0 until snap.maxLives) {
+            val sprite = if (i < snap.lives) sprites.heart else sprites.heartEmpty
+            drawSprite(sprite, pad + iconH / 2f + i * (iconH + unit * 0.012f), cornerY, iconH)
+        }
+        cornerY += iconH + unit * 0.014f
+    }
+
+    // Progress of a finite round, in the same corner: how many words have had a correct answer
+    // and how many there are. It takes the place of the hearts in a calm round and stands under
+    // them otherwise (beside them it would run into the pause button with five lives or more).
+    // Both numbers are zero unless the round is finite, so this needs no separate flag.
+    if (snap.targetsTotal > 0) {
+        drawSprite(sprites.iconTarget, pad + iconH / 2f, cornerY, iconH * 0.8f)
+        drawPixelText(
+            font,
+            "${snap.targetsDone}/${snap.targetsTotal}",
+            pad + iconH + unit * 0.012f,
+            cornerY - PixelFont.GLYPH_H * fs / 2f,
+            fs,
+            Palette.Bone,
+        )
     }
 
     // ammo, top-right. Basic rounds are endless, so an "∞" readout could never change
