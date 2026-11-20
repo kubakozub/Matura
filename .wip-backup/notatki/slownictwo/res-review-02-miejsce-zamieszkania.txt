@@ -1,0 +1,38 @@
+{
+ "rows_reviewed": 222,
+ "suspects": [
+  {
+   "set_id": "v021",
+   "set_title": "Miejsce zamieszkania · Opis mieszkania",
+   "english_term": "parking garage",
+   "polish_translation": "parking podziemny",
+   "kind": "wrong_meaning",
+   "problem": "A parking garage (AmE; BrE: multi-storey car park) is \"a large building with several floors for parking cars in\" (Oxford Learner's Dictionaries); the term does not mean \"underground\". \"parking podziemny\" is specifically an underground car park. The topic itself has \"underground garage = garaż podziemny\" (v018), so this card teaches a false equivalence in both directions. Alternative fix, if the Polish sense was the intended one: keep \"parking podziemny\" and change the English to \"underground parking\".",
+   "proposed_english": "parking garage",
+   "proposed_polish": "parking wielopoziomowy",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v021",
+   "set_title": "Miejsce zamieszkania · Opis mieszkania",
+   "english_term": "ancient",
+   "polish_translation": "starożytny",
+   "kind": "wrong_meaning",
+   "problem": "Wrong sense for a set of adjectives describing a flat or house: here \"ancient\" means \"very old\" (an ancient building, an ancient sofa). In present-day Polish \"starożytny\" means \"from antiquity\" (starożytny Rzym) and is not said of a flat, a house or furniture; its old sense \"very old\" is dated. The topic-appropriate answer \"bardzo stary\" is currently marked wrong. The proposal puts that sense first and keeps \"starożytny\" as an accepted general sense. The dated label is from memory, not checked online: sjp.pwn.pl is outside this session's allowed network domains and would have to be allowed in the network settings.",
+   "proposed_english": "ancient",
+   "proposed_polish": "bardzo stary, starożytny",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v026",
+   "set_title": "Miejsce zamieszkania · Wynajem",
+   "english_term": "roommate",
+   "polish_translation": "współlokator",
+   "kind": "inconsistent",
+   "problem": "The same set also has \"flatmate = współlokator\", so two rows share an identical Polish side. Both pairs are correct, but when the Polish side is the prompt the student cannot know which word is wanted, and the typing modes accept only the row's own term (GameEngine.buildPlayable and TimeAttackScreen.buildQuestions call Matching.acceptedAnswers(e.term); only multiple choice and true/false merge answers with Matching.answersForPrompt). \"flatmate\" typed for the \"roommate\" card, or the reverse, is therefore scored as a miss. Fix: accept both words on both rows (mirror change on the \"flatmate\" row: \"flatmate, roommate\"), or merge the two rows into one card, or make the typing modes use answersForPrompt. Note that no built-in English term contains a comma today, and bundled audio is looked up by the term.",
+   "proposed_english": "roommate, flatmate",
+   "proposed_polish": "współlokator",
+   "confidence": "likely"
+  }
+ ]
+}

@@ -1,23 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Mikrofon sluzy WYLACZNIE do trybu glosowego w grze: wypowiedz jest
+         zamieniana na tekst i porownywana ze slowami na planszy. Nagranie nie
+         jest nigdzie zapisywane ani wysylane przez aplikacje. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Bez tego wpisu sama deklaracja RECORD_AUDIO robi z mikrofonu sprzet WYMAGANY
+         (aapt2 dump badging: uses-implied-feature ... reason='requested
+         android.permission.RECORD_AUDIO permission') i Google Play ukrywa aplikacje przed
+         urzadzeniami, ktore mikrofonu nie zglaszaja. Tryb glosowy jest w tej grze w pelni
+         opcjonalny — odpowiedzi wpisuje sie z klawiatury — wiec filtr odbieral aplikacje
+         uczniom bez powodu. To ta sama klasa filtrowania, co abiFilters w app/build.gradle.kts. -->
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+
+    <!-- To samo po stronie ekranu: android:screenOrientation="portrait" przy MainActivity robi
+         z ekranu pionowego sprzet WYMAGANY (aapt2 dump badging: uses-implied-feature
+         name='android.hardware.screen.portrait' reason='one or more activities have specified
+         a portrait orientation') i Google Play ukrywa aplikacje przed urzadzeniami, ktore pionu
+         nie zglaszaja. Blokada pionu to wybor ukladu ekranow, a nie wymaganie sprzetowe. -->
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
+
+    <!-- Bez tego Android 11+ nie pokazuje aplikacji zadnej uslugi rozpoznawania mowy. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <!-- Okno systemowe rozpoznawania mowy to INNY intent niz usluga wiazana.
+             Bez tego wpisu Android 11+ nie znajdzie aplikacji, ktora je obsluguje,
+             i ostatni szczebel fallbacku bylby martwy. -->
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+        <!-- Nagrania wymowy sa tylko dla hasel wbudowanych; slowa z wlasnych zestawow ucznia
+             czyta glos systemowy (TextToSpeech w audio/Pronunciation.kt). Bez tego wpisu
+             Android 11+ moze ukryc silnik mowy przed aplikacja: przycisk glosnika wtedy nic
+             nie robi i nie zglasza zadnego bledu. -->
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <!-- appCategory="game": aplikacja celuje w SDK 36, a takim aplikacjom Android 16 na ekranach
+         od 600 dp (tablet, rozlozony skladak) ignoruje blokade orientacji, chyba ze sa grami.
+         To JEST gra i jej ekrany sa ulozone pod pion, wiec blokada ma obowiazywac takze tam. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
+        android:appCategory="game"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Matura">
 
-        <!-- Bez android:screenOrientation="portrait": Android 16 i tak go ignoruje na
-             ekranach od 600dp w gore, wiec lepiej miec uklad, ktory sobie z tym radzi,
-             niz deklaracje, ktorej system nie honoruje. PlayScreen przechodzi w poziomie
-             na uklad dwukolumnowy. -->
+        <!-- configChanges: zmiany ustawien telefonu, ktore ekran przyjmuje w locie, zamiast dac
+             sie systemowi zbudowac od nowa. Ekrany trzymaja stan w zwyklym remember, wiec kazda
+             nowa instancja MainActivity to powrot na ekran z imieniem, runda urwana bez wyniku
+             i utracony wpisywany zestaw. Do 0.9.18 konczyly sie tak rzeczy codzienne: wieksza
+             czcionka (fontScale), inny rozmiar wyswietlania (density), zlozenie albo rozlozenie
+             skladaka i dzielony ekran (screenLayout, smallestScreenSize), klawiatura Bluetooth
+             (keyboard, navigation), zmiana jezyka systemu (locale, layoutDirection).
+             Restart niczego tu nie wnosil: interfejs jest w calosci w Compose, ktory sam czyta
+             na nowo konfiguracje i gestosc, a grafiki leza w drawable-nodpi. Pilnuja tego
+             ZmianaKonfiguracjiTest i MainActivityNaEkranieTest.
+             Lista nie jest pelna. Pogrubienie czcionki (fontWeightAdjustment), zmiana rodzaju
+             ekranu dotykowego (touchscreen) i trybu kolorow (colorMode) dalej koncza sie nowa
+             instancja, a na Androidzie 7 takze zmiana karty SIM (mcc, mnc; od Androida 8 system
+             sam dopisuje te dwie flagi kazdej Activity). -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|keyboardHidden|uiMode"
-            android:windowSoftInputMode="adjustNothing"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize|keyboardHidden|uiMode|screenLayout|smallestScreenSize|keyboard|navigation|density|fontScale|layoutDirection|locale"
+            android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.Matura">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

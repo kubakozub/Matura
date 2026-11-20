@@ -1,0 +1,38 @@
+{
+ "rows_reviewed": 165,
+ "suspects": [
+  {
+   "set_id": "v090",
+   "set_title": "Przyroda · Opis pogody",
+   "english_term": "chilly",
+   "polish_translation": "chłodno",
+   "kind": "inconsistent",
+   "problem": "The same set already contains \"cool / chłodno\", so two cards have an identical Polish side (the only such collision in the file). In the Polish->English direction the student sees \"chłodno\" for both cards and each accepts only its own word: typing \"chilly\" on the \"cool\" card, or \"cool\" on the \"chilly\" card, is marked wrong although it is a correct translation. Checked in the code: the typing modes (GameEngine.buildPlayable, TimeAttackScreen.buildQuestions) take accepted answers from the single row only; only multiple-choice and true/false merge rows through Matching.answersForPrompt. Proposed data fix: give \"chilly\" its own sense (rather / unpleasantly cold, colder than \"cool\"). Alternative without touching the data: let the typing modes accept every term that shares the prompt.",
+   "proposed_english": "chilly",
+   "proposed_polish": "zimnawo",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v093",
+   "set_title": "Przyroda · Wody, lasy i pora dnia",
+   "english_term": "wood",
+   "polish_translation": "zagajnik",
+   "kind": "misleading",
+   "problem": "\"zagajnik\" (a young, dense thicket) corresponds to \"copse / grove / thicket\". The standard dictionary and school translation of \"a wood / the woods\" (an area of trees smaller than a forest) is \"las\" or \"lasek\". A student who types \"lasek\" or \"las\" for \"wood\" is marked wrong and learns a non-standard equivalent instead. \"lasek\" keeps the intended contrast with \"forest / las\" in the same set; \"zagajnik\" can stay as a second accepted answer.",
+   "proposed_english": "wood",
+   "proposed_polish": "lasek, zagajnik",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v090",
+   "set_title": "Przyroda · Opis pogody",
+   "english_term": "changeable",
+   "polish_translation": "zmienna",
+   "kind": "misleading",
+   "problem": "Only the feminine inflected form is accepted (it agrees with an implied \"pogoda\"). The dictionary form of the adjective is \"zmienny\", so a student who types the base form is marked wrong; shown on its own, \"zmienna\" also reads as the noun \"variable\". It is the one adjective in this set not given in the adverb form used for all the others (słonecznie, pochmurno, wietrznie ...). Those adverb rows are not reported, because \"It's sunny - Jest słonecznie\" is the natural equivalent in a weather description. Accepting both forms removes the false negative.",
+   "proposed_english": "changeable",
+   "proposed_polish": "zmienny, zmienna",
+   "confidence": "likely"
+  }
+ ]
+}

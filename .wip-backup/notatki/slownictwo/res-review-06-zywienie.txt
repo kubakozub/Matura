@@ -1,0 +1,27 @@
+{
+ "rows_reviewed": 140,
+ "suspects": [
+  {
+   "set_id": "v053",
+   "set_title": "Żywienie · Posiłki i dania",
+   "english_term": "brunch",
+   "polish_translation": "drugie śniadanie",
+   "kind": "wrong_meaning",
+   "problem": "'Drugie śniadanie' is not brunch. Brunch is a single late-morning meal eaten instead of breakfast and lunch; Polish 'drugie śniadanie' is a small second meal eaten after breakfast (the sandwich taken to school or work), in English 'elevenses', 'second breakfast', 'mid-morning snack' or 'packed lunch'. The card teaches the wrong meaning in both directions: shown 'drugie śniadanie', the student is trained to answer 'brunch'. The standard dictionary and coursebook equivalent is 'późne śniadanie' (two words; no clash with 'breakfast → śniadanie' in the same set, and not used by any other built-in card). Basis for both findings: my own knowledge plus web-search snippets; sjp.pwn.pl, www.diki.pl and dictionary.cambridge.org are outside this session's allowed network domains, so the dictionary entries could not be opened directly.",
+   "proposed_english": "brunch",
+   "proposed_polish": "późne śniadanie",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v053",
+   "set_title": "Żywienie · Posiłki i dania",
+   "english_term": "supper",
+   "polish_translation": "wieczerza",
+   "kind": "misleading",
+   "problem": "'Wieczerza' is a dated, bookish word that survives mainly in fixed festive and religious phrases ('wieczerza wigilijna', 'Ostatnia Wieczerza'). The everyday Polish equivalent of 'supper' is 'kolacja'. The typing game accepts only the card's own cell, so a student who types 'kolacja' for 'supper' is marked wrong, and the card teaches an archaic word as if it were the normal one. A bare 'kolacja' cannot be used here: 'dinner → kolacja' is in the same set (consistent with 'have dinner → jeść kolację' in another topic), and the typing modes do not merge cards that share a prompt, so two cards would show the same Polish prompt with different expected answers. 'kolacja, wieczerza' accepts the standard answer and keeps the prompt distinct from the 'dinner' card.",
+   "proposed_english": "supper",
+   "proposed_polish": "kolacja, wieczerza",
+   "confidence": "certain"
+  }
+ ]
+}

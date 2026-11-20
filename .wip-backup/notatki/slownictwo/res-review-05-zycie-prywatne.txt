@@ -1,0 +1,93 @@
+{
+ "rows_reviewed": 145,
+ "suspects": [
+  {
+   "set_id": "v046",
+   "set_title": "Życie prywatne · Najbliższa rodzina",
+   "english_term": "sibling",
+   "polish_translation": "rodzeństwo",
+   "kind": "wrong_meaning",
+   "problem": "Number mismatch. 'Sibling' is a singular countable noun (one brother or sister); 'rodzeństwo' is a collective noun and equals 'siblings'. Shown the Polish side, a student who correctly types 'siblings' is marked wrong, and the card encourages mistakes such as 'I have no sibling' for 'nie mam rodzeństwa'. Make the English headword plural.",
+   "proposed_english": "siblings",
+   "proposed_polish": "rodzeństwo",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v046",
+   "set_title": "Życie prywatne · Najbliższa rodzina",
+   "english_term": "household",
+   "polish_translation": "gospodarstwo",
+   "kind": "misleading",
+   "problem": "The standard equivalent of 'household' is 'gospodarstwo domowe'. Bare 'gospodarstwo' is understood first as a farm (gospodarstwo rolne), so the card suggests household = farm, and a student shown the Polish side will type 'farm' and be marked wrong. The full term is two words, so it fits the length limit.",
+   "proposed_english": "household",
+   "proposed_polish": "gospodarstwo domowe",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v044",
+   "set_title": "Życie prywatne · Dzień i czas wolny",
+   "english_term": "meet friends",
+   "polish_translation": "spotykać się",
+   "kind": "misleading",
+   "problem": "The Polish side has lost the object: 'spotykać się' means 'to meet (up)', not 'meet friends'. Shown the Polish side, a student cannot know that 'friends' is required, so correct answers such as 'meet' or 'meet up' are rejected (set v045 in this topic already has 'meet' = 'spotykać'). 'Spotykać przyjaciół' matches the English exactly within two words; the alternative fix is to change the English to 'meet up' and keep 'spotykać się'.",
+   "proposed_english": "meet friends",
+   "proposed_polish": "spotykać przyjaciół",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v045",
+   "set_title": "Życie prywatne · Etapy związku i kontakty",
+   "english_term": "wedding",
+   "polish_translation": "wesele",
+   "kind": "inconsistent",
+   "problem": "Inconsistent within the topic: 'wedding' is 'wesele' here but 'ślub' in set v049 (Święta i uroczystości). 'Wedding' covers both the ceremony (ślub, the primary sense and the one that fits stages of a relationship) and the party (wesele), so whichever word a student learned, one of the two sets rejects it. Accept both words in both sets.",
+   "proposed_english": "wedding",
+   "proposed_polish": "ślub, wesele",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v049",
+   "set_title": "Życie prywatne · Święta i uroczystości",
+   "english_term": "wedding",
+   "polish_translation": "ślub",
+   "kind": "inconsistent",
+   "problem": "Other half of the v045 inconsistency: 'wedding' is 'ślub' here but 'wesele' in set v045 (Etapy związku i kontakty). 'Ślub' is correct on its own; the row only needs the same accepted answers as v045 so that the two sets no longer contradict each other.",
+   "proposed_english": "wedding",
+   "proposed_polish": "ślub, wesele",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v043",
+   "set_title": "Życie prywatne · Dalsza rodzina",
+   "english_term": "nephew",
+   "polish_translation": "bratanek",
+   "kind": "misleading",
+   "problem": "'Nephew' is equally 'bratanek' (brother's son) and 'siostrzeniec' (sister's son); neither is the default in Polish. Only the first is accepted, so the equally correct 'siostrzeniec' is marked wrong. Because the 'niece' card in the same set uses the sister's side (siostrzenica), the two cards together suggest that the English words differ by the side of the family rather than by gender. Add the second word as an alternative answer.",
+   "proposed_english": "nephew",
+   "proposed_polish": "bratanek, siostrzeniec",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v043",
+   "set_title": "Życie prywatne · Dalsza rodzina",
+   "english_term": "niece",
+   "polish_translation": "siostrzenica",
+   "kind": "misleading",
+   "problem": "'Niece' is equally 'bratanica' (brother's daughter) and 'siostrzenica' (sister's daughter). Only the second is accepted, so the equally correct 'bratanica' is marked wrong, and the pairing is asymmetric with 'nephew' = 'bratanek' in the same set. Add the second word as an alternative answer.",
+   "proposed_english": "niece",
+   "proposed_polish": "bratanica, siostrzenica",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v049",
+   "set_title": "Życie prywatne · Święta i uroczystości",
+   "english_term": "nameday",
+   "polish_translation": "imieniny",
+   "kind": "en_spelling",
+   "problem": "Learner dictionaries (Oxford, Cambridge, Collins, Merriam-Webster) spell this as two words, 'name day'; the closed form 'nameday' is non-standard and should not be copied into written work. Answer matching ignores spaces, so only the displayed form changes.",
+   "proposed_english": "name day",
+   "proposed_polish": "imieniny",
+   "confidence": "likely"
+  }
+ ]
+}

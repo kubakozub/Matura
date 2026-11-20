@@ -1,0 +1,94 @@
+STAGE 2 (voice matching rules) is done and committed: c4755d8 on wt/dopasowanie, one commit on top of 1b2d6af, worktree clean, nothing pushed. PlayScreen is untouched and still calls the flat match(); the wiring recipe is at the end.
+
+WHAT CHANGED
+
+app/src/main/java/com/matura/app/game/VoiceMatch.kt
+- New public API: data class Target(id: Long, answers: List<String>), enum Reason, data class Decision, const PARTIAL_SCORE = 0.9, fun decide(...), fun american(s). Details below.
+- score(): two additions before the three scorers. (1) English only: two strings equal in American spelling score 1.0. (2) Negation rule: a string that starts with nie, un, in, im, ir, il, dis, non or anti (glued or with a space) scores 0.0 against a string that is closer to it without the prefix than with it. Because both live in score(), the flat match() that PlayScreen calls today already follows them.
+- match(), accepts(), hypotheses(), lev, sim, phon, skel: same results as before. phon and skel now use regexes compiled once, match() computes the forms of each candidate once, accepts() reads its threshold from a private need().
+- Private: Form (text, spelling key, lazy phon and skel, negation prefix), Candidate, Vocabulary (said = rule 1, nearest = rule 2, judge, mayGrow, takers, isRival, restMatches, best), readings, negates, likeness, scoreThatMatters, without, partOf. Header comment rewritten: the closed vocabulary is the set, not the board.
+
+app/src/main/java/com/matura/app/ui/VoicePolicy.kt
+- zaliczycWypowiedz: same signature, new rule: ostatniaOdpowiedz.isEmpty() || wypowiedz != ostatniaWypowiedz. Comment updated. The first parameter no longer decides anything (kept, with @Suppress("UNUSED_PARAMETER")).
+- New stronaPolska(haslo: Boolean, jezykHasel: String, jezykTlumaczen: String): Boolean and polskiZDeklaracji(nazwaJezyka: String): Boolean? (true Polish, false English, null unknown). English names come from Trudne.czyAngielski, so VoicePolicy now imports com.matura.app.learn.Trudne (pure Kotlin, read only). Polish names: polski, polskie, polish, pl, pol, pl-pl, trimmed, any case.
+
+app/src/main/java/com/matura/app/ui/VoiceInput.kt
+- stop() only, 12 lines: status = "" for DOTKNIECIE, PAUZA, TLO, EKRAN, and only when this call ends a live session (listening was true). DRABINKA, ZGODA, MIKROFON and NIEZNANY keep it.
+
+Tests
+- NEW VoiceDecyzjaTest (44 tests), NEW VoiceStopStatusTest (9, Robolectric), VoicePolicyTest +9, VoiceMatchTest +1 (decideResolvesEveryCaseLikeMatch: the list has 53 cases, I replay them plus the 4 standalone ones through decide()).
+- Existing test changed on purpose: VoiceRegresjaTest.kryterium6. Its last assertion pinned "another word in the same utterance still counts" (assertTrue zaliczycWypowiedz("plecy","kolano",1,1)). It is now assertFalse, plus an assertTrue for the next utterance number. Nothing else in that file changed.
+- No existing test pinned the old status behaviour of stop().
+
+THE API, FOR WIRING
+
+decide(transcripts: List<String>, board: List<Target>, others: List<Target>, polish: Boolean, isFinal: Boolean): Decision
+- board: one Target per monster and per crate, id = Monster.id or Crate.id (one shared counter in GameEngine), answers = its answers list.
+- others: the rows of the set, answer side in the listening language, answers = Matching.acceptedAnswers(side). Passing ALL rows is fine: a row that is also on the board changes nothing (tested). Their ids are not read. Build this list once per set and pass the same instance: Target caches the scorer forms of its answers.
+- Decision(reason, answer, targetId, score, nearest, rival), accepted = answer != null. answer is the string to type, always in the spelling of the set, and non-null only for a shot. targetId is the first board target that accepts it. nearest and rival are for the debug overlay.
+- Reason: EXACT and NEAREST are shots. OTHER_EXACT (the utterance is a word of a row that is not on the board), OTHER_NEAREST, TOO_FAR, AMBIGUOUS, NOTHING are rejections. Every partial result that does not fire is WAIT.
+
+Recipe:
+  val haslaPolskie = remember(set) { stronaPolska(haslo = true, set.termLanguage, set.definitionLanguage) }
+  val tlumaczeniaPolskie = remember(set) { stronaPolska(haslo = false, set.termLanguage, set.definitionLanguage) }
+  wierszePolskie / wierszeAngielskie = remember(set): for each entry, the sides whose flag is true / false, mapped to VoiceMatch.Target(0, Matching.acceptedAnswers(side))
+  polskieOdpowiedzi / angielskieOdpowiedzi = the answers of those two lists as sets (this replaces the per-column sets)
+  answeringPolish(): DEF_TO_TERM -> haslaPolskie, TERM_TO_DEF -> tlumaczeniaPolskie, RANDOM unchanged
+  onHeard: keep the paused, gameOver and empty-board returns, then
+    val board = live.monsters.map { VoiceMatch.Target(it.id, it.answers) } + live.crates.map { VoiceMatch.Target(it.id, it.answers) }
+    val d = VoiceMatch.decide(alternatives, board, if (jezykNasluchuPolski) wierszePolskie else wierszeAngielskie, jezykNasluchuPolski, isFinal)
+    val answer = d.answer; if (answer == null) { if (isFinal) voiceMsg = the quoted transcript; return }
+    then zaliczycWypowiedz, type and submit exactly as today.
+The "score < 0.9" line for partials goes away: decide() does it.
+
+RULES AS IMPLEMENTED, AND WHERE I WENT BEYOND OR AWAY FROM THE BRIEF
+
+1. Whole-utterance claim: as specified (whole form, then joined form, alternatives in order, board before others).
+2. Fuzzy over board and others, winner must be on the board. Deviation: the rival is "the best answer that some board target accepting the winner does not accept", not "an answer of a target that does not accept the winner". The two agree on twins, second variants and shared answers. Mine also treats as harmless an answer that an off-board row shares with the target being shot ("staffroom" for "staff room", v036), which matches rule 1, and it is stricter when two board targets share the winner but only one accepts the rival.
+3. Negation: the brief asked for exact prefix pairs. I found that this leaves "nieodpowiedzialna" hitting "odpowiedzialny" (0.77), "dojrzali" hitting "niedojrzały", "matura" hitting "immature" (0.88) when the other polarity is not in the set, so the rule is "closer without the prefix than with it". "imitation" for "invitation" and "niedojrzali" for "niedojrzały" still match. Also beyond the brief: inside decide() the part of an utterance that follows a standalone negation word is not read on its own, so "nie lubić" or "nie lubik" cannot hit "lubić". Cost: "in summer" cannot hit "summer".
+4. Exact ties go to the longest answer.
+5. Partial: 0.9 and no shot while the answer is a proper prefix or whole-word part of an answer of another target. Deviation: a longer variant of the SAME target does not delay ("syndykat" with a gloss cell).
+Added because the sweeps demanded it:
+- An utterance of several words is read as a whole first. Parts are not rivals of a whole reading ("zwolnjenie lekarskie" was blocked by the row "zwolnienie"). A word that is part of a longer answer of another target gives way when the rest of the utterance resembles the rest of that answer at 0.6 or more: "bluza sportowe" is "bluza sportowa", "low school" is "law school", but "the school", "no lubić", "kelner ta" stay "school", "lubić", "kelner".
+- decide() reads parts of up to four words, not only words and pairs: "the mother in law" used to lose to the pair "in law" and hit "in-laws".
+- Scores that cannot change a decision (length ratio under 0.6) are not computed and appear as 0 in Decision.score.
+B. Spelling: -re by pattern after t, b, g, h (not macabre, timbre); -ise, -isation by pattern with a list of words that never take z (exercise, promise, surprise, advertise, -wise, -vise...); -yse, -ogue by pattern; -our and doubled l from stem lists, because a pattern would also touch flour, detour, bestseller, filled. Irregular list as in the brief plus licence, defence, offence, pretence, storeys, pyjama and practise/practised/practising (practise is in v076 and is not on your list). Plurals in -s of the irregular words follow. When "check" and "cheque" are both on the board the heard spelling wins; when only "cheque" is on the board and "check" is another row, "check" shoots "cheque" (otherwise it could never be said).
+C. The empty ostatniaOdpowiedz means "nothing scored yet", so an engine that numbers utterances from 0 (the offline one) does not lose its first answer.
+E. Clearing only when listening was true is my addition: after the ladder ends, a later stop(PAUZA) from the screen must not erase the message.
+
+NUMBERS
+
+Before, measured with a frozen copy of the 0.9.18 matcher on the current answer lists. After, asserted in VoiceDecyzjaTest.
+- Entries absorbed by a neighbour, whole rest of the set on the board: Polish 186 by similarity and 61 through one word of the utterance, English 139 and 62. After: 0 and 0 (2435 Polish and 2363 English utterances, every accepted variant, own row alone, whole set on the board, rest at once and in fives; zero false rejects too). The audit's 191 came from its Python port; Kotlin gives 186, the other three figures match.
+- One letter changed in the longest word of a multi-word answer: accepted 8 of 327 Polish and 0 of 277 English before, 327 and 275 after (the two misses are "mowe in" and "mowe out", closer to the row "mow"). Shots at a different entry when the own row is off the board: 74 and 66 before, 0 after. Pinned as at most 3 and 5 misses, and at least 90 percent.
+- A filler word before or after the answer, whole set on the board, 16672 utterances per language: 488 Polish and 498 English shots at a different row before, 0 after; own row hit 16176 and 16134 before, 16672 and 16672 after.
+- Spelling: 18 built-in terms have a different American form (count asserted, list in the failure message); no two terms of one set fold to the same string.
+- Property test, 12240 seeded random utterances: a shot always goes to a board target that accepts the answer, rows off the board never create or move a shot, a partial shot equals the final one.
+- Unit tests: debug 533 before, 596 after. Release 478 before, 541 after. With -Pvosk=true 559 before, 622 after. All green, no compiler warnings.
+- Mutation check on the committed code: 83 single mutations of the three source files; 81 make at least one test fail (rule 1 four ways, vocabulary and rival ownership, whole reading, rest rule, negation including each of the nine prefixes, ties, partial rule five ways, each spelling rule, zaliczycWypowiedz, stronaPolska, each stop reason). Two are expected to change nothing and do: pruning off, and the leading space of the remainder (equivalent). Script /tmp/claude-0/-home-user-Matura/0e5748ef-99b0-59e1-b03e-46ac0f545d18/scratchpad/dopasowanie/s2/mutate2.py, result /tmp/claude-0/-home-user-Matura/0e5748ef-99b0-59e1-b03e-46ac0f545d18/scratchpad/dopasowanie/s2/mut/run5.txt.
+- Cost of decide(), desktop JVM, best of 15: one-word utterance 0.02 ms for a 20-row set, 0.06 ms for 100 rows, 1.1 ms for 1000 rows (2 to 2.6 ms if the rows list is rebuilt per call); five alternatives of three words 0.3, 1.3 and 15 ms. The old match() on the board alone is 0.2 ms.
+
+WHAT A PLAYER CAN NOTICE
+
+Already now, with PlayScreen as it is:
+- One spoken answer gives one credit even when the final result names a different answer than the partial. Side effect: two answers said in one breath give one credit; the second must be said after a pause.
+- "grey" (v017) and "cosy" (v021) can now be said at all; the other 16 British terms match exactly instead of loosely, so partial results fire for them.
+- A word no longer hits its negation or the reverse ("mature" and "immature", "dojrzały" and "niedojrzały"), also with a changed ending.
+- The line under the voice bar is empty after the student switches listening off, pauses, or leaves the app.
+After decide() and stronaPolska are wired:
+- A word of the set whose row is not on the board never hits a neighbour ("shirt" for "skirt", "stopa" for "stopy", "boxer shorts" for "shorts").
+- Near misses of answers with a space, hyphen or apostrophe are accepted.
+- A partial result waits when the answer may still grow ("bluza" with "bluza sportowa" in the set).
+- A custom set with swapped columns is heard in the language of its answers.
+
+NOT CHANGED, ON PURPOSE
+- The recogniser ladder, timeouts and restarts in VoiceInput. PlayScreen, GameEngine, Trudne.
+- match() and hypotheses() keep the old algorithm (pairs only, flat rivals) as the reference for the 53 cases; until PlayScreen is wired the old absorption and the twin margin are still live in the game.
+- The thresholds in accepts().
+
+UNSURE, OR FOR WHOEVER COMES NEXT
+- The header of VoiceMatch.kt says the game's entry is decide(). That is true only after wiring.
+- Comments that will be stale after wiring, outside my files: PlayScreen.kt:315 and VoiceInput.kt:642 ("closed board"), src/vosk VoskGrammar.kt:187.
+- stop(PowodStop.NIEZNANY) keeps the status, as before; no production caller uses it.
+- Not solved: two answers in one utterance ("it is PE" hits "IT" in v033); a word that is not in the set at all can still match by consonant skeleton ("centre" scores 0.88 against "counter"); a later alternative that is exactly a word of the set decides even when the first alternative is a near miss of something else.
+- None of this was heard on a phone. The rest-of-utterance threshold (0.6) and the four-word limit are chosen from the sweeps, not from recordings.

@@ -1,0 +1,16 @@
+{
+ "rows_reviewed": 104,
+ "suspects": [
+  {
+   "set_id": "v075",
+   "set_title": "Sport · Ludzie w sporcie",
+   "english_term": "supporter",
+   "polish_translation": "zwolennik",
+   "kind": "wrong_meaning",
+   "problem": "Wrong sense for a sport set ('Ludzie w sporcie'). In sport a supporter is 'kibic' (a football supporter = kibic piłkarski); 'zwolennik' is the 'backer/advocate of an idea, party or person' sense and is not the Polish word for someone who supports a team. A student who types the correct 'kibic' is marked wrong, and the card teaches the off-topic sense. The proposed 'kibic, zwolennik' accepts the sport sense while keeping the old answer valid, and it stays distinguishable from the existing card 'fan — kibic' in the same set (a bare 'kibic' would create two cards with an identical Polish side but different expected English answers).",
+   "proposed_english": "supporter",
+   "proposed_polish": "kibic, zwolennik",
+   "confidence": "certain"
+  }
+ ]
+}

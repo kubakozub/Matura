@@ -1,0 +1,29 @@
+# Skroty SHA-256 odchudzonych modeli Vosk, ktore maja wyladowac w app/src/vosk-assets/.
+# Odtwarzane przez tools/vosk-fetch.sh z paczek upstreamu — patrz naglowek tego skryptu.
+# Sciezki wzgledem app/src/vosk-assets/.
+75370a0137f9daf8f469dedd7daa4513ae7a621f03240c6e512e2b50b656a7b6  vosk/en/am/final.mdl
+1e2228006d01d805ad1c267fee9f79709ca87ac51bd82b0e3f5c69ba543f0fc4  vosk/en/conf/mfcc.conf
+8f14cb1eeb07c762c371db648c6be688d347236155ca0f64fb13b6567a8ce81f  vosk/en/conf/model.conf
+1ddb6cc94e73d0eb23c1ce9765948391d89facc92b0f9e42c73bbb8640a6af12  vosk/en/graph/Gr.fst
+5caafba3081e1646545ac6bff0dd7a318e53dcbdc86f237909ce1d2ac1293d34  vosk/en/graph/HCLr.fst
+9ad87cc166d0998f08f758f47a6223a120dfffcbee805c4849c3aa5e6bb3c0fc  vosk/en/graph/disambig_tid.int
+da199d9c991e0e84681ddbb34627b915b26302d50a8fdaa23c51e2bc3a50b5c3  vosk/en/graph/phones/word_boundary.int
+8c5d7dd69d2122313baaf19f61f35dd3fa18b70c62ac0687e311e1c46e6daca7  vosk/en/ivector/final.dubm
+3f37faf90c375b9e4740b569398b5829ed9cc07d19be6d441f72c3b71d7efcc6  vosk/en/ivector/final.ie
+ddd83586dc5f928cda8738b922c85ffe38fc789cb5f9151a712ca12f37265382  vosk/en/ivector/final.mat
+33be09afcc80059847a275c3d043b51f1ab954c7c2438ddbbf4745e8ba144ff9  vosk/en/ivector/global_cmvn.stats
+a2f3571754b64297cb7efb2e7ca3df61995c5a45fcbb97188f90613552bb2dfe  vosk/en/ivector/online_cmvn.conf
+9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756  vosk/en/ivector/splice.conf
+9c557024c480f259b88d6ec01da10082a135cbb6b54569fc057861f8e5c04a3b  vosk/pl/am/final.mdl
+6c326fea5741c2d78be12f76eb1b36ea2ace040da9e355e4cfe6bb80e5f7d5ab  vosk/pl/conf/mfcc.conf
+8f14cb1eeb07c762c371db648c6be688d347236155ca0f64fb13b6567a8ce81f  vosk/pl/conf/model.conf
+6b251150f65e062d63b254d52ec151d0541cfe91dd05eb7b7c56f5cac08aa196  vosk/pl/graph/Gr.fst
+db9cdb6e454d59a696101b077e549bf5b21927e3c3d1520fd143ff35ff0f8196  vosk/pl/graph/HCLr.fst
+8cc6cd795f79570efed3ba1a9235bd48b8be6e74f3e18a5b1c980ee4632b0e95  vosk/pl/graph/disambig_tid.int
+262452069835201f18fd4de64c4816a2333a54c80b4114084d75e1c4eb273836  vosk/pl/graph/phones/word_boundary.int
+22c8ab79f80f25d130a076f7b3003a4f4640c055ec682dacf51efa6471102abc  vosk/pl/ivector/final.dubm
+10584cc18a6e480beb8a342a2d4cb10d832dc4681bde1b3991cc61f695795ed2  vosk/pl/ivector/final.ie
+b667eab736b6c1cfa0210d42f472aa4002af6eb28b6e12b06d61b67f4f45f120  vosk/pl/ivector/final.mat
+f1fbac6779ee8be5ce437b46558c198f3a98a47635309966caf9bc40f5e0165b  vosk/pl/ivector/global_cmvn.stats
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  vosk/pl/ivector/online_cmvn.conf
+9f0c5f7c82d18eaf25d8bce470efa9f7741f88411fe428774bc0a9bb69a24756  vosk/pl/ivector/splice.conf

@@ -1,6 +1,5 @@
 # Gradle
 .gradle/
-.kotlin/
 build/
 */build/
 local.properties
@@ -18,6 +17,12 @@ Thumbs.db
 
 # Robocze
 warmup.log
+build.log
+build3.log
+test2.log
+
+# Cache kompilatora Kotlin (zrzuty bledow)
+.kotlin/
 
 # APK trafia do docs/ ręcznie przed publikacją na Pages, nie do historii
 docs/*.apk
@@ -31,3 +36,9 @@ app/src/debug/screenshotTest/
 keystore.properties
 *.jks
 *.keystore
+.claude/
+
+# Modele rozpoznawania offline (Vosk) - 107 MB cudzych wag, NIE do historii gita.
+# Odtwarzane z paczek upstreamu przez tools/vosk-fetch.sh (wynik identyczny bajt
+# w bajt, sprawdzany skrotami z tools/vosk-models.sha256).
+app/src/vosk-assets/

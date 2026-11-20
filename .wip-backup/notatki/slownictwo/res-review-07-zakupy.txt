@@ -1,0 +1,27 @@
+{
+ "rows_reviewed": 103,
+ "suspects": [
+  {
+   "set_id": "v061",
+   "set_title": "Zakupy · Zakupy i reklamacje",
+   "english_term": "warranty",
+   "polish_translation": "gwarancja",
+   "kind": "inconsistent",
+   "problem": "Same-set collision with the row guarantee -> gwarancja: two cards show the identical Polish prompt 'gwarancja' and each accepts only its own English word. Checked in the app code: the typing modes build the accepted answers per card (/home/user/Matura/app/src/main/java/com/matura/app/game/GameEngine.kt:295, /home/user/Matura/app/src/main/java/com/matura/app/ui/TimeAttackScreen.kt:459-463), so in the PL->EN and random directions a student who types the other, equally correct synonym is marked wrong (Time Attack: time penalty, streak reset, failed attempt saved to the review schedule; classic game: a miss that resets the streak) and cannot know which of the two cards is on screen. EN->PL, the default direction, is unaffected. Both pairs are correct vocabulary and school lists give them together as 'guarantee / warranty - gwarancja', so no rewording is proposed: 'rękojmia' alone is the narrow legal sense and would reject 'gwarancja', and as an added variant it would let the multiple-choice and true/false modes offer 'warranty' as a wrong answer for 'gwarancja'. Remedies: let the typing modes accept every term whose translation equals the shown prompt, as Matching.answersForPrompt (/home/user/Matura/app/src/main/java/com/matura/app/game/Matching.kt:85) already does for the choice modes (15 same-set pairs in the whole catalogue have identical Polish sides, these two rows included); or, data only, keep one card here (British 'guarantee') and fill this slot with a different word, because every set must keep at least 20 entries.",
+   "proposed_english": "warranty",
+   "proposed_polish": "gwarancja",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v059",
+   "set_title": "Zakupy · Rodzaje sklepów",
+   "english_term": "newsagent's",
+   "polish_translation": "kiosk",
+   "kind": "inconsistent",
+   "problem": "Same-set collision with the row kiosk -> kiosk: two cards show the identical Polish prompt 'kiosk', each accepting only its own English word, so in the typing modes with the PL->EN or random direction 'kiosk' typed for this card (or 'newsagent's' typed for the other one) is marked wrong and the student cannot tell which card is on screen (same per-card matching as described for guarantee/warranty in v061; EN->PL is unaffected). The gloss itself is the usual school one, but unlike guarantee/warranty these are not synonyms: a newsagent's is a walk-in shop selling newspapers, sweets and tobacco, while English 'kiosk' is the booth, so the Polish side can separate them: 'salonik prasowy' for the shop, 'kiosk' for the booth. The standard dictionary gloss 'kiosk z gazetami' has three words (16 characters, inside the app's 25-character answer budget) and is the better choice if the two-word rule may bend for this row. Cost of either rewording: 'kiosk' typed for 'newsagent's' in EN->PL is no longer accepted; the matcher change described for guarantee/warranty removes the collision without that cost.",
+   "proposed_english": "newsagent's",
+   "proposed_polish": "salonik prasowy",
+   "confidence": "certain"
+  }
+ ]
+}

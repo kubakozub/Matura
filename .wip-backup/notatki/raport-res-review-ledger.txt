@@ -1,0 +1,68 @@
+{
+ "summary": "Seven defects found in commits c931ea4 and eb5ea0f: one high, three medium, three low. The high one lets a student rewrite built-in sets into trivial words and collect uncapped XP and catalogue badges.\n\n**What held up**\n- The clean worktree runs 678 debug tests green, matching the authors' count; release and vosk configurations were not re-run.\n- Only the allowed files changed; nothing under ui/, game/, learn/Sesja.kt, BuiltInSets, docs or build files.\n- No em or en dashes in added lines; visible titles fit the bitmap font and 24 characters; Polish strings carry diacritics.\n- Every row of tables 3.1, 3.2 and 3.3 (41 badges) matches the code, as do the goal values, cap constants, days-off rules and migration seeds.\n- The 0.9.4 fixture migrates to schema 4 with 0 XP and exactly the six legacy badges at day 0. Two cold loads are equal, and a reload after the first save is equal.\n- I found no path where XP, study days, record streak, a badge or `szczyt` goes down. A failed write leaves memory and disk unchanged. NO_DAY is always guarded before arithmetic.\n\n**Mutation check**\nI broke 16 rules in a scratch copy (never in the worktree); 11 were caught and 5 survived. Two survivors remove the own-word cap for rows added to a built-in copy (finding 4). Three are system-font texts that no test pins (finding 6). The authors' mutation log records only exit codes (every line reads `ZLAPANA(0)`), so it does not show which test caught what.\n\n**Two things that are not findings but the owner should know**\n- The accepted clock limit is worded as \"one calendar day twice\". Alternating the clock between day D and D+1 with three new words each time gave 31 goal days, streak 31 and SERIA_30 in one sitting.\n- After the kept `Srs.promote` change, a correct tile does nothing for a word in box 2 or 3, while a wrong tile still drops it to box 1.\n\n**State of the tree**\nProbe tests are deleted; `git status --short` is clean at eb5ea0f. Remaining evidence is in the scratchpad:\n- `/tmp/claude-0/-home-user-Matura/0e5748ef-99b0-59e1-b03e-46ac0f545d18/scratchpad/sonda-mut.py` (mutation list; needs a fresh scratch copy of the worktree to run)\n- `/tmp/claude-0/-home-user-Matura/0e5748ef-99b0-59e1-b03e-46ac0f545d18/scratchpad/sonda-kopia-out.txt` (added-row probe against the two surviving mutants)",
+ "findings": [
+  {
+   "id": "F1",
+   "severity": "high",
+   "file": "/home/user/Matura/.claude/worktrees/dorobek/app/src/main/java/com/matura/app/data/Repository.kt",
+   "line": 253,
+   "what": "A word counts as a catalogue word by its id alone (`attempt.entryId !in idKatalogu`). The set editor lets a student rewrite a row of a built-in set, and `EntryId.reconcile` (step 3, same row number) keeps the catalogue id on the new text. Rewritten rows therefore escape the own-word cap and count toward every catalogue badge in `Odznaki.liczniki`.",
+   "scenario": "Fresh save. Open 12 built-in sets in the editor (SetEditorScreen rebuilds rows without ids and keeps builtIn = true) and replace every row with `a0 = a0`, `a1 = a1` and so on, then save. The first row is now `Entry(a0, a0, w21267cf977a8)`: catalogue id kept. Type the 248 rows once: 2480 XP that day, no Limit.WLASNE, stage 5 (PÓŁROCZE), badges SLOWA_1, SLOWA_25, SLOWA_75. Type them again on day+1 and day+4: 14 880 XP (stage 12 of 13), plus UTRWALONE_200, ZESTAWY_8, DZIAL_1, POWTORKI_100; counters poznane 248, utrwalone 248, zestawy 12. The same 25 rows as an own set give 100 XP, Limit.WLASNE and no badge. A quieter variant also keeps the id: append `, a` to a definition (`dojrzały, a`), which makes one letter an accepted answer.",
+   "fix": "Decide catalogue membership by content as well as id. Keep a lazy map from catalogue id to `EntryId.contentKey(term, definition)` built from the bundled catalogue. In `doliczProbe` treat the attempt as own when the id is not in the catalogue or when a saved entry with that id has different content. Apply the same exclusion in `Odznaki.liczniki` (the migration badge count calls it too). Also stop the leak at the source: in `upsertSet` for a built-in set, give a row whose content no longer matches its catalogue id a fresh own id. Add hook-level tests for a rewritten row and for an added alternative answer."
+  },
+  {
+   "id": "F2",
+   "severity": "medium",
+   "file": "/home/user/Matura/.claude/worktrees/dorobek/app/src/main/java/com/matura/app/learn/Nagrody.kt",
+   "line": 308,
+   "what": "A climb back to a box already reached pays 5 XP every time. A deliberate wrong answer right after each correct one makes a known word due again the next day, so it pays daily instead of once per 7 days. The spec states that forgetting never pays better than remembering; per day it pays 7.5 times better. The property test allows this (5 XP for every further day with a credit).",
+   "scenario": "Six catalogue words brought to box 3. For 30 days: type each correctly, then answer each wrong once. Result: +900 XP, powtorki +180, 30 goal days, record streak 31, badges SERIA_30, DNI_25, POWTORKI_100, with no new word learned. The same six words answered correctly every day without the mistakes: +120 XP, 24 reviews, 4 goal days. A hint has the same effect without losing the box: one word with PODPOWIEDZ after each correct answer earned +50 XP in 10 days and stayed in box 3 (no mode emits PODPOWIEDZ today, but the design plans it).",
+   "fix": "Pay a review only once per scheduled interval. Store on WordProgress the day until which the word is paid up (day of the last paid credit plus `Srs.intervalDays` of the box it then held). A POWTORKA before that day is still recorded but pays 0 and does not count toward `powtorki`. A word forgotten on its due day still earns 5 + 5 on the way back. Tighten the property test so a key cannot earn more than 60 plus 5 per elapsed interval. This changes the table in 3.1, so it needs the owner's agreement."
+  },
+  {
+   "id": "F3",
+   "severity": "medium",
+   "file": "/home/user/Matura/.claude/worktrees/dorobek/app/src/main/java/com/matura/app/learn/Nagrody.kt",
+   "line": 253,
+   "what": "The own-set cap counts credits (10 a day), not points, and nothing bounds first-meeting credits on own rows over time. Ten fresh trivial own rows a day out-earn the honest daily session and meet the goal every day with no recall at all.",
+   "scenario": "Own set of 10 rows `a0 = a0` ... `a9 = a9`, deleted and recreated each day (new random ids), each row typed once. After 30 days: 3000 XP (stage 6, STUDNIÓWKA), 30 goal days, record streak 30, badges SERIA_30 and DNI_25, powtorki 0. Extrapolated to 167 days that is 16 700 XP, past the top stage, which the spec says a session-only student never reaches (about 12 600 XP, 75 a day). Keeping the rows instead of recreating them would give 10 credits a day averaging 20 XP; that figure is derived, not run.",
+   "fix": "Cap own-set points rather than credits, for example own words fill at most 30 XP a day, or pay a first meeting on an own row 3 XP like a recognition. This is owner decision 6; the numbers above are what the current constant actually allows."
+  },
+  {
+   "id": "F4",
+   "severity": "medium",
+   "file": "/home/user/Matura/.claude/worktrees/dorobek/app/src/test/java/com/matura/app/DorobekIntegracjaTest.kt",
+   "line": 446,
+   "what": "No test fails when the rule \"catalogue ids come from the bundled catalogue, and rows added to a saved built-in copy are capped as own words\" is broken at the hook. The only cap test uses a separate own set with `u...` ids.",
+   "scenario": "Mutation 1: `val wlasne = !EntryId.isBuiltIn(attempt.entryId)`. Mutation 2: build `idKatalogu` from `load().sets.filter { it.builtIn }`. With either one, all 245 tests of the eight ledger classes stay green. Probe on each mutant: 12 rows appended to a saved built-in copy (they get `w...` ids) pay 12 times, 120 XP, no cap. The unmutated code pays 10 and caps 2 (100 XP).",
+   "fix": "Add a test in DorobekIntegracjaTest: append 12 rows to a saved built-in copy through `upsertSet`, type them, expect 10 paid credits, 2 with Limit.WLASNE, and no SLOWA badge. Add the F1 cases next to it."
+  },
+  {
+   "id": "F5",
+   "severity": "low",
+   "file": "/home/user/Matura/.claude/worktrees/dorobek/app/src/main/java/com/matura/app/learn/Nagrody.kt",
+   "line": 596,
+   "what": "`roznica` only reports a counted day when it is the day the round ended. A goal met before UTC midnight (01:00 Polish time, 02:00 in summer) in a round that ends after it is counted in the ledger but never announced; `pierwszyDzien`, `nowaSeria`, `wolneUzyte` and `wolneDodane` stay empty too.",
+   "scenario": "First study round ever: three new words at 23:50 to 23:52 UTC, a fourth at 00:02 UTC, game recorded at 00:03, `roznica` called with the end day. Ledger: dniNauki 1, seria 1. Result: xp 40, xpDzisPo 10, celZaliczonyTeraz false, celZaliczony false, pierwszyDzien false, seriaPo 1. The block would show +40 XP, streak 1 and \"Do celu dnia brakuje 20 XP.\", and never \"Pierwszy dzień zaliczony.\"",
+   "fix": "Derive \"a day was counted in this round\" from the two ledgers alone (`b.dniNauki > a.dniNauki` and `b.seriaDzien != a.seriaDzien`) and compute the streak fields from that. Keep `celZaliczony` and `xpDzisPo` for the end day. Add a test for a round across midnight."
+  },
+  {
+   "id": "F6",
+   "severity": "low",
+   "file": "/home/user/Matura/.claude/worktrees/dorobek/app/src/test/java/com/matura/app/OdznakiTest.kt",
+   "line": 767,
+   "what": "The system-font texts taken from the spec are not pinned by any test: the ten family descriptions of 3.3, the five breakdown labels on `Zaliczenie` and the two cap sentences on `Limit`. Tests only check that descriptions end with a full stop, are shared within a family and carry the same digits in both languages.",
+   "scenario": "Three mutations kept all 245 tests green: POWTORKI_PL changed to \"Powtórki zaliczone w dowolnym trybie.\"; the NOWE label changed to \"Nowe słowa\" / \"New words\"; the own-set cap sentence ending changed to \"Kolejne się nie liczą.\" Swapping one tier's description for another family's was caught.",
+   "fix": "Add one literal table test with the ten family descriptions, five labels and two cap sentences in both languages, the same way the titles are already pinned."
+  },
+  {
+   "id": "F7",
+   "severity": "low",
+   "file": "/home/user/Matura/.claude/worktrees/dorobek/app/src/main/java/com/matura/app/data/Repository.kt",
+   "line": 254,
+   "what": "`naprawione` is counted per word and direction, while the badge description says \"Każde liczy się raz.\" / \"Each counts once.\" The authors flagged this for a decision; the probe confirms it.",
+   "scenario": "One catalogue word: a wrong answer, then three scheduled correct recalls, in TERM_TO_DEF and again in DEF_TO_TERM. Result: naprawione = 2 for one word. So 13 words repaired both ways earn \"25 PO POPRAWCE\".",
+   "fix": "In `doliczProbe` skip the repair when the other direction of the same entry already has szczyt 3 with mistakes > 0, or reword the description to say it counts per translation direction."
+  }
+ ]
+}

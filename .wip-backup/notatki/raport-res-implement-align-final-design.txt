@@ -1,0 +1,106 @@
+STAGE DONE: the draft ledger is aligned with the final design, committed, all three test configurations green.
+
+Commit eb5ea0f on branch wt/dorobek in /home/user/Matura/.claude/worktrees/dorobek, one commit on top of the draft (c931ea4), not pushed, working tree clean. Trailers: Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com> and the Claude-Session line. All twelve points of "What must change in the draft" are in; point 12 (Srs.promote) is kept as decided.
+
+FINAL TEST COUNTS
+- :app:testDebugUnitTest 678 passed, 0 failed, 0 skipped (baseline 494, draft 617)
+- :app:testReleaseUnitTest 623 passed, 0 failed (baseline 439, draft 562)
+- CI third step (:app:compileDebugKotlin :app:testDebugUnitTest -Pvosk=true): 704 passed
+- Per class: NagrodyTest 87 (was 53), OdznakiTest 32 (22), DorobekIntegracjaTest 23 (14), MigracjaTest 29 (28), KalendarzTest 21 (17), PacingTest 3 (new), SrsTest 37 (unchanged), PostepIntegracjaTest 13 (unchanged)
+- Dash check on 2b3377e..HEAD prints nothing. Note: the command as written fails in this shell's C locale (grep: "character code point value in \x{} is too large"), which looks like a pass by accident. I ran it with LC_ALL=C.UTF-8 (exit code 1, no match) and cross-checked with Python. It did catch one real slip on the way: the Write tool turned '–' escapes in OdznakiTest into literal characters; fixed before the commit.
+- Mutation check: 112 single-rule breakages of Nagrody, Odznaki, Repository and Models, each run against the eight affected test classes. 108 turned a test red at once. 2 survived and got tests (points for "today" shown for another day in roznica; a badge from a ledger counter landing one save late). 2 are equivalent changes that alter no behaviour. Script and log: /tmp/claude-0/-home-user-Matura/0e5748ef-99b0-59e1-b03e-46ac0f545d18/scratchpad/dorobek2/mutacje.py and /tmp/claude-0/-home-user-Matura/0e5748ef-99b0-59e1-b03e-46ac0f545d18/scratchpad/dorobek2/mutacje.out
+
+FILES (all under /home/user/Matura/.claude/worktrees/dorobek/app/src)
+- main/java/com/matura/app/model/Models.kt, learn/Nagrody.kt, learn/Odznaki.kt, learn/Kalendarz.kt, data/Repository.kt
+- main/java/com/matura/app/ui/App.kt: restored to its 2b3377e content (see deviation 2); no file under ui/ differs from the base any more
+- test/java/com/matura/app/: NagrodyTest.kt, OdznakiTest.kt, DorobekIntegracjaTest.kt (rewritten), MigracjaTest.kt, KalendarzTest.kt (extended), PostepIntegracjaTest.kt (one call form), PacingTest.kt (new)
+
+PUBLIC API (what the screens build on)
+
+model/Models.kt
+- WordProgress.szczyt: Int = 0 : unchanged from the draft.
+- Dorobek(xp = 0, dzien = NO_DAY, xpDzis = 0, noweDzis = 0, rozpoznaneDzis = 0, wlasneDzis = 0, seria = 0, seriaDzien = NO_DAY, wolne = 1, rekordSerii = 0, dniNauki = 0, powtorki = 0, naprawione = 0, odznaki: Map<String, Int> = {}, odznakiNowe: Set<String> = {}) : exactly the fields of C1; slowaDzis is gone.
+- Options.celDnia: Int = 30 (points), Options.maturaDzien: Int = 20944, Options.odliczanie: Boolean = true.
+- SaveData.dorobek: Dorobek = Dorobek().
+
+learn/Nagrody.kt
+- enum Zaliczenie(xp, zPamieci, powtorka, pl, en) : NOWE 10, AWANS 20, UTRWALENIE 30, POWTORKA 5, ROZPOZNANE 3, in table order; powtorka says whether it counts as a review.
+- enum Limit(pl, en) : ROZPOZNANIA, WLASNE, each with the design's sentence for the result screen.
+- enum Etap(prog, pl, en) with val numer (1..13) : the thirteen rows of 3.2, DEKLARACJA 0 to WAKACJE 15000.
+- data class Wplyw(rodzaj: Zaliczenie, xp: Int, limit: Limit?) : what one credit did; xp is 0 exactly when a limit applied.
+- data class Doliczenie(dorobek: Dorobek, wplyw: Wplyw) : result of dolicz.
+- data class PozycjaNagrody(rodzaj: Zaliczenie, ile: Int, xp: Int) : one breakdown row (ile includes capped credits).
+- data class NagrodaRundy(xp, rozpisanie: List<PozycjaNagrody>, limity: Set<Limit>, xpDzisPo, cel, celZaliczonyTeraz, celZaliczony, pierwszyDzien, nowaSeria, wolneUzyte, wolneDodane, seriaPo, dniNauki, etapPrzed, etapPo, okrazeniePrzed, okrazeniePo, odznaki: List<Odznaka>, rekord, poprzedniRekord: Int?, noweDzisPrzekroczone) plus computed nowyEtap, noweOkrazenie.
+- Nagrody.CELE_DNIA = [30, 60, 120], CEL_DOMYSLNY = 30, LIMIT_ROZPOZNAN = 5, LIMIT_WLASNYCH = 10 (the one constant for the own-set cap), MAX_WOLNYCH = 2, DNI_NA_WOLNE = 7, OKRAZENIE = 2500, DUZO_NOWYCH = 30.
+- fun celDnia(zapisany: Int): Int : goal to use; anything outside 30, 60, 120 reads as 30.
+- fun zaliczenie(przed: WordProgress, po: WordProgress, proba: Attempt): Zaliczenie? : credit for one attempt, null for nothing.
+- fun punktyNaStart(stan: WordProgress): Int : migration seed: box 1 gives 10 (3 after recognition), box 2 gives 30, box 3 gives 60.
+- fun dolicz(d: Dorobek, z: Zaliczenie, dzien: Int, cel: Int, wlasne: Boolean, naprawa: Boolean): Doliczenie : the six steps of C1 plus the goal and streak rules of C2.
+- fun seriaNaDzis(d, dzien): Int : streak to show, 0 once the reserve cannot cover the gap.
+- fun seriaCzeka(d, dzien): Int : 0, 1 or 2 missed days currently bridged by the reserve.
+- fun xpNaDzis(d, dzien): Int, fun noweNaDzis(d, dzien): Int : today's counters, 0 for another day.
+- fun celZaliczony(d, dzien): Boolean : whether the ledger counted that day.
+- fun pierscien(xpDzis: Int, cel: Int, zaliczony: Boolean): Int : 0..4; 4 only when counted, no forced first quarter.
+- fun etap(xp): Etap, fun nastepny(xp): Etap?, fun doNastepnego(xp): Int, fun okrazenie(xp): Int (0 below the top stage, 1 from 15000, plus 1 per 2500), fun pasekEtapu(xp): Pair<Int, Int> (done and span inside the stage, or inside the lap).
+- fun odliczanie(maturaDzien: Int, dzienKalendarza: Int, wlaczone: Boolean): Odliczanie? : null when off or past.
+- fun roznica(przed: SaveData, po: SaveData, wplywy: List<Wplyw>, wynik: ScoreRecord?, dzien: Int): NagrodaRundy : pure diff; breakdown only from the reported wplywy; pass wynik = null for a round that is not ranked.
+
+learn/Kalendarz.kt
+- sealed interface Odliczanie { val pl; val en } with Dzis, Jutro, Sto, Dni(ile) and STO_DNI = 100 : strings from the C3 table, bitmap font safe.
+- DataKalendarzowa and Kalendarz.przestepny, dniWMiesiacu, popraw, dzienEpoki (two overloads), data, dzienLokalny, dniDoMatury : unchanged.
+
+learn/Odznaki.kt
+- data class Liczniki(poznane, utrwalone, obieStrony, dzialy, zestawy, powtorki, naprawione, dniNauki, rekordSerii, tryby, gamesPlayed, totalKills, bestScore, bestStreak).
+- enum GrupaOdznak(pl, en) : NAUKA/LEARNING, REGULARNOSC ("REGULARNOŚĆ"/HABIT), DZIALY ("DZIAŁY"/TOPICS), GRA/GAME.
+- enum RodzinaOdznak(grupa, licznik) : SLOWA, UTRWALONE, POWTORKI, OBIE, NAPRAWA, DNI, SERIA, ZESTAWY, DZIALY, TRYBY, POKONANE, GRY, MNOZNIK, WYNIK.
+- enum Odznaka(rodzina, cel, tytulPl, tytulEn, opisPl, opisEn) with computed grupa and licznik : 41 constants, ids and thresholds exactly as table 3.3 (33 new, 8 legacy word for word). Names are frozen by a test.
+- Odznaki.PROG_DZIALU = 10, DZIEN_SPRZED_KSIEGI = 0.
+- fun liczniki(data: SaveData, katalog: List<WordSet>): Liczniki : katalog is the bundled catalogue (SampleData.builtInSets()), never the sets in the save.
+- fun stopnie(r: RodzinaOdznak): List<Odznaka>, fun nastepna(r, d: Dorobek): Odznaka?, fun postep(o, l): Int : together the "min(counter, target of the next tier)" formula.
+- fun spelniona(o, l): Boolean, fun zdobyta(o, d): Boolean, fun komplet(d): Boolean.
+- fun odblokuj(d: Dorobek, l: Liczniki, dzien: Int, poCichu: Boolean = false): Dorobek : stamps new badges and adds them to odznakiNowe (not when poCichu).
+- fun potwierdz(d: Dorobek): Dorobek : clears odznakiNowe; same instance when empty.
+
+data/Repository.kt
+- fun recordAttempt(attempt, nowMs, sladWSesji = null, naWplyw: ((Wplyw) -> Unit)? = null): Boolean : naWplyw fires only after a successful save, also for a capped credit, never for an attempt without a credit.
+- fun recordGame(record: ScoreRecord, setId: String, doRankingu: Boolean = true, nowMs: Long = System.currentTimeMillis(), potwierdzOdznaki: Boolean = false): Boolean : doRankingu third, with exactly the agreed meaning.
+- fun potwierdzOdznaki(): Boolean : one write, only when something is pending.
+- SCHEMA_VERSION = 4 (unchanged number); migration per section 6.
+
+WHERE I DID NOT FOLLOW THE FINAL DESIGN, AND WHY
+
+1. recordGame parameter order and one detail of its meaning follow the DECISION, not the design text. The design has nowMs third and says bestStreak still moves when doRankingu is false; the decision puts doRankingu third and says bestStreak is not raised. Because my parameters must have defaults, nowMs defaults to System.currentTimeMillis(): the only place in Repository where a clock is not passed in. Tests pass time explicitly.
+2. ui/App.kt. The draft had changed one line there (passing the time as third argument). With doRankingu third that line no longer compiles, so I restored the file to 2b3377e instead of editing it. Net effect: zero diff under ui/ against the base, and the App call uses the defaults (ranked, current time, no confirmation) until the screens team wires it.
+3. naWplyw is the last parameter of recordAttempt, as designed. A side effect: a session trace can no longer be passed as a trailing lambda. One existing test call changed form for this (PostepIntegracjaTest.odpowiedzWSesji). Any test in the other branch that uses a trailing lambda there will fail to compile after the merge until the lambda is moved inside the parentheses.
+4. seriaCzeka returns Int (0, 1, 2), not Boolean. C2 gives the boolean formula, C4 needs the number of bridged days for its two sentences; greater than 0 is the boolean.
+5. Odliczanie is a sealed interface with Dzis, Jutro, Sto, Dni(ile) instead of DZIS, JUTRO, STO, DNI(d), and it carries the eight strings of the C3 table (stage convention: texts live on the types I add). It sits in Kalendarz.kt; the function is Nagrody.odliczanie as designed.
+6. PacingTest does not assert "session-only reaches stage 2 on day 1". With the design's own student model (five new words at 60 percent) day one reaches 30 XP only when three of five are known: 8 of 12 seeds in my runs, day 2 in the rest. I assert "by day 2" for eight seeds. Everything else is asserted as written (stage 6 by day 25, no wait above 45 days, never stage 13, goal met on at least 160 days, 25 a day reaches stage 13 between day 50 and 100). The real Srs, Sesja.zaplanuj and Nagrody reproduce the design's simulated table closely: session only 12 500 to 12 700 XP, longest wait 33 to 37 days, stage 13 on day 70 to 73 at 25 a day and day 24 to 26 at 50 a day. The 50 a day bounds (day 15 to 40, 8 to 25 laps) are mine; the design gives none.
+7. Names of test classes: DorobekIntegracjaTest is kept (design: DorobekZapisTest), and the font guard lives in OdznakiTest (design: CzcionkaPikselowaTest) because GryStr does not exist yet. It covers every Etap title, every Odznaka title, group labels and countdown strings.
+8. Additions the design does not name, all small: RodzinaOdznak with Odznaki.stopnie and nastepna (table 3.3 speaks of families and of progress to the next tier); Odznaki.komplet; the poCichu flag of odblokuj (migration); Nagrody.noweNaDzis, DUZO_NOWYCH, MAX_WOLNYCH, DNI_NA_WOLNE, OKRAZENIE; Etap.numer; Zaliczenie.powtorka; PozycjaNagrody; NagrodaRundy.nowyEtap and noweOkrazenie.
+9. Texts kept on enums beyond what the design puts there: Zaliczenie.pl/en now use the design's breakdown wording ("Nowe z pamięci", "Pierwsza powtórka po przerwie", "Utrwalone", "Powtórki w terminie", "Rozpoznane w trybach wyboru"); they are system font labels and two exceed 24 characters, so they are no longer in the title test. Limit.pl/en are the two cap sentences; a test ties their numbers to the constants. The later team may move all of these to GryStr.
+10. Badge descriptions are per badge, not per family: every tier of a new family carries the family text, DNI_100 carries the family text plus its extra sentence, legacy badges keep their own. This is the only shape that holds all three cases.
+11. celZaliczonyTeraz in roznica additionally requires dniNauki to have grown. Without it a day that was only re-anchored after a clock change would be announced as "goal done" although nothing was counted.
+12. Not built, because this stage excludes them: C0 (dzienPoWznowieniu), stanKarty, opisKarty, wiersze, Podpisy, Udostepnianie, paryDoPoprawki, anything under ui/, the privacy text.
+
+DESIGN POINTS THAT ARE INTERNALLY INCONSISTENT OR NEED AN OWNER DECISION
+- NAPRAWA is counted by the design's formula (credit is UTRWALENIE, the word had a mistake before, catalogue word), which is per word and direction. The family description says "Każde liczy się raz". That holds for repeated repairs, but a word repaired in both directions counts twice. One condition in Repository.doliczProbe if per word is wanted.
+- The goal check runs on every credit, including one that a cap reduced to 0 XP (C1 step 6 as written). So a lowered goal can count the day on a capped credit.
+- The Srs.promote fix stays (decision); the owner still has to be told (owner decision 4).
+- 6 May 2027 is still unverified against the CKE notice; it is now printed by Odliczanie.
+
+EXISTING TESTS CHANGED IN THIS STAGE
+- PostepIntegracjaTest: the trailing lambda (point 3). The time argument the draft had added to its recordGame call is removed again, so against 2b3377e this file differs only in that one call form.
+- MigracjaTest: expectations follow the new numbers (default goal 30, seed 203 XP instead of 142, 30 instead of 20 for the moved word, SLOWA_1 instead of SLOWA_5); one test added (badges in the migration count by the bundled catalogue, not by a shortened saved copy).
+- SrsTest is untouched in this stage. No test was deleted or weakened; the replay tests of the draft are gone together with the replay.
+
+NOTES FOR THE NEXT STAGES
+- Screens need the bundled catalogue for Odznaki.liczniki: build SampleData.builtInSets() once and remember it; Repository keeps its own private lazy copy.
+- Always read through the views: seriaNaDzis and seriaCzeka (never Dorobek.seria), xpNaDzis, celZaliczony, and pierscien(xpNaDzis, celDnia(options.celDnia), celZaliczony). Pass roznica the day the round ended. Badges stamped with day 0 have no date.
+- Merging: Repository.recordGame will conflict textually with the branch that adds doRankingu (same name, position and meaning here). SCHEMA_VERSION 4 is taken; a vocabulary correction needs the refresh step inside the same number or number 5.
+- Still stale, in files I was told not to touch or that are out of scope: the header of learn/Sesja.kt (says day streaks are not counted), a comment in learn/Trudne.kt (says a fallen word cannot be told from one that never rose), and the privacy text in ui/Strings.kt with docs/prywatnosc.html (must list points, goal, streak, study days, badges and the exam date before release).
+
+KNOWN LIMITS (by design, documented in KDoc)
+- A deliberately toggled clock can count one calendar day twice, and with a clock moved back and forth a word can be credited twice in one day (5 XP each; the first-climb premiums can never be taken twice, the property test covers both cases).
+- Lowering the goal below today's points counts the day only at the next credit; until then the ring shows at most three quarters.
+- A correct choice answer on a due box 1 word still moves its due date by a day, so typing it the same day earns nothing.
+- Day, streak and review counters also grow on own sets (within the cap of 10 paid credits a day); word, set, topic and repair badges are catalogue only.

@@ -1,0 +1,2880 @@
+diff --git a/app/src/main/java/com/matura/app/data/Repository.kt b/app/src/main/java/com/matura/app/data/Repository.kt
+index 1e07ed6..77eef1d 100644
+--- a/app/src/main/java/com/matura/app/data/Repository.kt
++++ b/app/src/main/java/com/matura/app/data/Repository.kt
+@@ -121,24 +121,16 @@ class Repository(private val dir: File) {
+     /**
+      * Zapis zestawu z ZACHOWANIEM tozsamosci wpisow.
+      *
+-     * Edytor sklada liste wpisow od zera z wierszy ekranu (Screens.kt), wiec przychodzi tu
+-     * zestaw, ktorego wpisy nie maja identyfikatorow. Gdyby zapisac go wprost, kazde otwarcie
+-     * i zapisanie wlasnego zestawu — nawet bez zmiany — kasowaloby cala nauke w nim zawarta.
++     * Edytor sklada liste wpisow z wierszy ekranu (Screens.kt). Wiersz, ktory otworzyl, oddaje
++     * z jego identyfikatorem, ale wolajacy, ktory tego nie robi, przysyla wpisy bez
++     * identyfikatorow. Gdyby zapisac taki zestaw wprost, kazde otwarcie i zapisanie wlasnego
++     * zestawu, nawet bez zmiany, kasowaloby cala nauke w nim zawarta.
+      * Dopasowanie do poprzedniej wersji robi EntryId.reconcile; tam tez opisane sa jego granice.
++     *
++     * W zestawie WLASNYM tym samym zapisem idzie tez postep po zamianie kolumn: patrz
++     * [postepPoZamianieKolumn].
+      */
+-    fun upsertSet(set: WordSet) = update { d ->
+-        val idx = d.sets.indexOfFirst { it.id == set.id }
+-        val poprzednie = if (idx >= 0) d.sets[idx].entries else emptyList()
+-        val zTozsamoscia = set.copy(
+-            entries = EntryId.reconcile(poprzednie, set.entries, builtInSet = set.builtIn),
+-        )
+-        val sets = if (idx >= 0) {
+-            d.sets.toMutableList().also { it[idx] = zTozsamoscia }
+-        } else {
+-            d.sets + zTozsamoscia
+-        }
+-        d.copy(sets = sets)
+-    }
++    fun upsertSet(set: WordSet) = update { d -> zZapisanymZestawem(d, set) }
+ 
+     /** Stan nauki jednego celu; brak wpisu znaczy "pudelko 0", a nie blad. */
+     /** Zapis albo skasowanie przerwanej sesji. null konczy sesje. */
+@@ -515,6 +507,133 @@ class Repository(private val dir: File) {
+         Log.w(TAG, "$what: ${e.javaClass.simpleName}: ${e.message}")
+     }
+ 
++    /**
++     * Szkice edytora zestawow leza w tym samym katalogu co zapis, w osobnym pliku: patrz
++     * [SzkiceZestawow]. Wlasciwosc jest tutaj, bo tylko repozytorium zna katalog, a ekrany
++     * dostaja repozytorium, nie sciezke: test z katalogiem tymczasowym ma wtedy szkice u siebie.
++     */
++    val szkice = SzkiceZestawow(dir)
++
++    /**
++     * PIERWSZY zapis kopii zestawu z katalogu ("Skopiuj do moich" na liscie zestawow).
++     *
++     * Zestawy wbudowane sa tylko do odczytu: poprawka w nich zrywala powiazanie z
++     * identyfikatorami katalogu, z ktorych korzysta losowy miks i plan dnia, a nastepna korekta
++     * slownictwa i tak ja nadpisywala ([odswiezZestawyWbudowane]). Uczen dostaje wiec WLASNY
++     * zestaw zlozony z wierszy oryginalu.
++     *
++     * [kopia] przychodzi z edytora: wpis wziety z katalogu niesie jeszcze identyfikator
++     * katalogowy, wpis dopisany nie ma zadnego. Tutaj kazdy dostaje swiezy identyfikator wlasny
++     * (kopia ma zyc wlasnym zyciem, uczen bedzie ja przerabial), a stan nauki spod
++     * identyfikatora katalogowego jest KOPIOWANY pod nowy, w obu kierunkach, zeby uczen nie
++     * zaczynal znanych slow od zera. Postep slowa katalogowego zostaje nietkniety. Wszystko
++     * idzie jednym zapisem: gdy uczen wyjdzie z edytora bez zapisu, ta funkcja w ogole nie
++     * biegnie i nic nie jest kopiowane.
++     *
++     * Kolejne zapisy tej kopii to juz zwykly [upsertSet] zestawu wlasnego.
++     */
++    fun zapiszKopieZestawu(
++        kopia: WordSet,
++        random: kotlin.random.Random = kotlin.random.Random.Default,
++    ): Boolean = update { d ->
++        val pochodzenie = LinkedHashMap<String, String>()
++        val wydane = HashSet<String>()
++        val wpisy = kopia.entries.map { e ->
++            var nowy = EntryId.newUserId(random)
++            while (!wydane.add(nowy)) nowy = EntryId.newUserId(random)
++            if (e.id.isNotBlank()) pochodzenie[nowy] = e.id
++            e.copy(id = nowy)
++        }
++        val zKopia = zZapisanymZestawem(d, kopia.copy(builtIn = false, entries = wpisy))
++        zKopia.copy(progress = zeSkopiowanymPostepem(zKopia.progress, pochodzenie))
++    }
++
++    /** @param pochodzenie nowy identyfikator wpisu -> identyfikator, spod ktorego bierzemy stan nauki. */
++    private fun zeSkopiowanymPostepem(
++        progress: Map<String, WordProgress>,
++        pochodzenie: Map<String, String>,
++    ): Map<String, WordProgress> {
++        if (pochodzenie.isEmpty() || progress.isEmpty()) return progress
++        val out = HashMap(progress)
++        for ((nowy, zrodlo) in pochodzenie) {
++            // RANDOM to ustawienie, nie kierunek: Srs.key by go odrzucil.
++            for (kierunek in listOf(Direction.TERM_TO_DEF, Direction.DEF_TO_TERM)) {
++                val stan = progress[Srs.key(zrodlo, kierunek)] ?: continue
++                out[Srs.key(nowy, kierunek)] = stan
++            }
++        }
++        return out
++    }
++
++    /**
++     * Wspolny krok [upsertSet] i [zapiszKopieZestawu]: zestaw trafia na liste z uzgodnionymi
++     * identyfikatorami wpisow (nowy na koniec, istniejacy w swoje miejsce).
++     */
++    private fun zZapisanymZestawem(d: SaveData, set: WordSet): SaveData {
++        val idx = d.sets.indexOfFirst { it.id == set.id }
++        val poprzednie = if (idx >= 0) d.sets[idx].entries else emptyList()
++        val zTozsamoscia = set.copy(
++            entries = EntryId.reconcile(poprzednie, set.entries, builtInSet = set.builtIn),
++        )
++        val sets = if (idx >= 0) {
++            d.sets.toMutableList().also { it[idx] = zTozsamoscia }
++        } else {
++            d.sets + zTozsamoscia
++        }
++        // Zestawu wbudowanego to nie dotyczy: jego identyfikatory licza sie z tresci i sa
++        // wspolne z katalogiem, wiec zamiana stron w starym, edytowanym zestawie wbudowanym
++        // nie moze przestawiac postepu slow, ktore katalog dalej pokazuje po staremu.
++        val progress = if (set.builtIn) {
++            d.progress
++        } else {
++            postepPoZamianieKolumn(d.progress, poprzednie, zTozsamoscia.entries)
++        }
++        return d.copy(sets = sets, progress = progress)
++    }
++
++    /**
++     * Postep idzie za zamiana kolumn w edytorze (przycisk "Zamien strony").
++     *
++     * Klucz postepu to identyfikator wpisu i KIERUNEK, a TERM_TO_DEF znaczy "widze haslo,
++     * podaje tlumaczenie". Zamiana kolumn zostawia wierszowi jego identyfikator, wiec bez tego
++     * kroku oba zapisy opisywaly po zamianie odwrotne umiejetnosci: slowo cwiczone tylko z
++     * angielskiego na polski bylo "utrwalone" w kierunku, ktorego uczen nigdy nie probowal, a
++     * naprawde cwiczony kierunek startowal od zera.
++     *
++     * Regula: wpis, ktory ZACHOWAL identyfikator i ktorego (haslo, tlumaczenie) to poprzednie
++     * (tlumaczenie, haslo), zamienia miejscami swoje dwa zapisy. Wiersz poprawiony przy okazji
++     * zamiany nie spelnia jej i zostaje, jak byl: po tresci nie da sie go odroznic od zwyklej
++     * poprawki.
++     */
++    private fun postepPoZamianieKolumn(
++        progress: Map<String, WordProgress>,
++        poprzednie: List<Entry>,
++        zapisane: List<Entry>,
++    ): Map<String, WordProgress> {
++        if (progress.isEmpty() || poprzednie.isEmpty()) return progress
++        val dawne = poprzednie.filter { it.id.isNotBlank() }.associateBy { it.id }
++        var out: HashMap<String, WordProgress>? = null
++        val przestawione = HashSet<String>()
++        for (e in zapisane) {
++            val byl = dawne[e.id] ?: continue
++            val teraz = EntryId.contentKey(e.term, e.definition)
++            if (teraz != EntryId.contentKey(byl.definition, byl.term)) continue
++            // Wiersz o dwoch jednakowych stronach jest swoim wlasnym odbiciem: nic sie nie zmienilo.
++            if (teraz == EntryId.contentKey(byl.term, byl.definition)) continue
++            if (!przestawione.add(e.id)) continue
++            val kluczHaslo = Srs.key(e.id, Direction.TERM_TO_DEF)
++            val kluczTlumaczenie = Srs.key(e.id, Direction.DEF_TO_TERM)
++            val stanHaslo = progress[kluczHaslo]
++            val stanTlumaczenie = progress[kluczTlumaczenie]
++            if (stanHaslo == null && stanTlumaczenie == null) continue
++            val mapa = out ?: HashMap(progress).also { out = it }
++            // Brak zapisu znaczy "pudelko 0", wiec po zamianie brak tez musi przejsc na druga strone.
++            if (stanTlumaczenie != null) mapa[kluczHaslo] = stanTlumaczenie else mapa.remove(kluczHaslo)
++            if (stanHaslo != null) mapa[kluczTlumaczenie] = stanHaslo else mapa.remove(kluczTlumaczenie)
++        }
++        return out ?: progress
++    }
++
+     companion object {
+         private const val TAG = "MaturaRepo"
+ 
+diff --git a/app/src/main/java/com/matura/app/data/SzkicZestawu.kt b/app/src/main/java/com/matura/app/data/SzkicZestawu.kt
+new file mode 100644
+index 0000000..47afd09
+--- /dev/null
++++ b/app/src/main/java/com/matura/app/data/SzkicZestawu.kt
+@@ -0,0 +1,146 @@
++package com.matura.app.data
++
++import android.util.Log
++import kotlinx.serialization.Serializable
++import kotlinx.serialization.json.Json
++import java.io.File
++import java.io.FileOutputStream
++import java.io.IOException
++
++/**
++ * Jeden wiersz szkicu, tak jak stoi w edytorze: takze pusty albo wypelniony w polowie.
++ *
++ * [id] to identyfikator wpisu, z ktorego wiersz powstal, a pusty dla wiersza dopisanego w
++ * edytorze. Bez niego przywrocony szkic bylby dla zapisu lista nowych slow i gubil nauke
++ * zestawu, ktory uczen tylko poprawial.
++ */
++@Serializable
++data class WierszSzkicu(
++    val haslo: String = "",
++    val tlumaczenie: String = "",
++    val id: String = "",
++)
++
++/**
++ * Niezapisana tresc edytora zestawow.
++ *
++ * [idZestawu] to zestaw, z ktorym edytor zostal OTWARTY: null dla nowego zestawu, identyfikator
++ * zestawu wlasnego przy poprawkach, a przy kopii zestawu z katalogu identyfikator oryginalu
++ * (kopia nie ma jeszcze wlasnego, dopoki nie zostanie zapisana).
++ */
++@Serializable
++data class SzkicZestawu(
++    val idZestawu: String? = null,
++    val tytul: String = "",
++    val jezykHasel: String = "",
++    val jezykTlumaczen: String = "",
++    val wiersze: List<WierszSzkicu> = emptyList(),
++) {
++    /**
++     * Tresc w postaci, w jakiej trafilaby do zapisu: bez spacji na brzegach i bez wierszy
++     * calkiem pustych, a identyfikatory wierszy nie graja roli. Dwa szkice o tej samej tresci
++     * znacza dla ucznia to samo, wiec to te postac porownuje edytor, kiedy pyta "czy cos sie
++     * zmienilo". Wiersz wypelniony w polowie ZOSTAJE: to tez jest wpisana praca.
++     */
++    fun tresc(): SzkicZestawu = copy(
++        tytul = tytul.trim(),
++        jezykHasel = jezykHasel.trim(),
++        jezykTlumaczen = jezykTlumaczen.trim(),
++        wiersze = wiersze
++            .map { WierszSzkicu(it.haslo.trim(), it.tlumaczenie.trim()) }
++            .filter { it.haslo.isNotEmpty() || it.tlumaczenie.isNotEmpty() },
++    )
++}
++
++/** Uklad pliku szkicow. Osobna klasa, zeby w pliku lezal obiekt, a nie gola lista. */
++@Serializable
++private data class PlikSzkicow(val szkice: List<SzkicZestawu> = emptyList())
++
++/**
++ * Szkice edytora zestawow na dysku, w pliku [FILE_NAME] obok zapisu gry.
++ *
++ * Po co: stos ekranow zyje tylko w pamieci, wiec gdy uczen w polowie wpisywania zestawu
++ * przejdzie do slownika, a system ubije gre, aplikacja wstaje na ekranie startowym i wpisane
++ * wiersze znikaja. Szkic lezy na dysku i edytor proponuje go przy nastepnym otwarciu.
++ *
++ * Osobny plik, a nie pole w zapisie gry, z dwoch powodow. Edytor pisze szkic mniej wiecej co
++ * sekunde pisania, a zapis gry to caly dokument z katalogiem slow (ponad 150 kB z fsync). I
++ * uszkodzony szkic nie moze pociagnac za soba postepu nauki: tutaj nieczytelny plik po prostu
++ * sie kasuje.
++ *
++ * Plik trzyma najwyzej JEDEN szkic na zestaw (kluczem jest [SzkicZestawu.idZestawu]), a nie
++ * jeden w ogole. Przy jednym szkicu poprawka literowki w innym zestawie nadpisywalaby po
++ * cichu niedokonczony nowy zestaw, ktory czeka na przywrocenie.
++ */
++class SzkiceZestawow(private val dir: File) {
++
++    private val plik = File(dir, FILE_NAME)
++
++    private val json = Json {
++        ignoreUnknownKeys = true
++        encodeDefaults = true
++    }
++
++    /** Zapisuje szkic w miejsce poprzedniego dla tego samego zestawu. @return czy trafil na dysk. */
++    @Synchronized
++    fun zapisz(szkic: SzkicZestawu): Boolean =
++        zapiszWszystkie(wczytajWszystkie().filterNot { it.idZestawu == szkic.idZestawu } + szkic)
++
++    /** Szkic dla zestawu o tym identyfikatorze (null to nowy zestaw) albo null, gdy go nie ma. */
++    @Synchronized
++    fun wczytaj(idZestawu: String?): SzkicZestawu? =
++        wczytajWszystkie().firstOrNull { it.idZestawu == idZestawu }
++
++    /** Kasuje szkic tego zestawu; szkice innych zestawow zostaja. @return czy plik jest juz bez niego. */
++    @Synchronized
++    fun usun(idZestawu: String?): Boolean {
++        val wszystkie = wczytajWszystkie()
++        if (wszystkie.none { it.idZestawu == idZestawu }) return true
++        return zapiszWszystkie(wszystkie.filterNot { it.idZestawu == idZestawu })
++    }
++
++    /** Dla listy zestawow: przy ktorych zestawach czeka szkic. null w zbiorze to szkic NOWEGO zestawu. */
++    @Synchronized
++    fun zestawyZeSzkicem(): Set<String?> = wczytajWszystkie().map { it.idZestawu }.toSet()
++
++    private fun wczytajWszystkie(): List<SzkicZestawu> {
++        if (!plik.exists()) return emptyList()
++        return try {
++            json.decodeFromString(PlikSzkicow.serializer(), plik.readText()).szkice
++        } catch (e: Exception) {
++            // Inaczej niz przy zapisie gry: tu nie ma czego odkladac na bok. Nieczytelny szkic
++            // wracalby przy kazdym otwarciu edytora jako ten sam blad, wiec znika.
++            Log.w(TAG, "$FILE_NAME nie do odczytania, kasuje: ${e.javaClass.simpleName}: ${e.message}")
++            plik.delete()
++            emptyList()
++        }
++    }
++
++    /** Ten sam zapis dwustopniowy co w [Repository]: caly plik tymczasowy, potem zmiana nazwy. */
++    private fun zapiszWszystkie(szkice: List<SzkicZestawu>): Boolean {
++        if (szkice.isEmpty()) return !plik.exists() || plik.delete()
++        val tmp = File(dir, TEMP_NAME)
++        return try {
++            val tekst = json.encodeToString(PlikSzkicow.serializer(), PlikSzkicow(szkice))
++            FileOutputStream(tmp).use { out ->
++                out.write(tekst.toByteArray(Charsets.UTF_8))
++                out.flush()
++                out.fd.sync()
++            }
++            if (!tmp.renameTo(plik)) throw IOException("zmiana nazwy $TEMP_NAME -> $FILE_NAME nie powiodla sie")
++            true
++        } catch (e: Exception) {
++            Log.w(TAG, "nie udalo sie zapisac $FILE_NAME: ${e.javaClass.simpleName}: ${e.message}")
++            false
++        } finally {
++            if (tmp.exists()) tmp.delete()
++        }
++    }
++
++    companion object {
++        private const val TAG = "MaturaSzkic"
++
++        const val FILE_NAME = "szkic-zestawu.json"
++        const val TEMP_NAME = FILE_NAME + ".tmp"
++    }
++}
+diff --git a/app/src/main/java/com/matura/app/ui/App.kt b/app/src/main/java/com/matura/app/ui/App.kt
+index 2a098a7..12c553a 100644
+--- a/app/src/main/java/com/matura/app/ui/App.kt
++++ b/app/src/main/java/com/matura/app/ui/App.kt
+@@ -348,21 +348,62 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+                 )
+             }
+ 
+-            Screen.Sets -> SetsScreen(
+-                str = str,
+-                sets = data.sets,
+-                onBack = { pop() },
+-                onCreate = { push(Screen.Editor(null)) },
+-                onEdit = { set -> push(Screen.Editor(set.id)) },
+-                onDelete = { set -> repo.deleteSet(set.id); refresh() },
+-            )
++            Screen.Sets, is ZestawyPoZapisie -> {
++                // Wejscie do edytora zostawia pod nim zwykla liste: plakietka "ZAPISANO" ma
++                // zniknac, gdy uczen opusci ekran, a nie wrocic po kazdym "wstecz" z edytora.
++                val doEdytora: (String?) -> Unit = { id ->
++                    replaceTop(Screen.Sets)
++                    push(Screen.Editor(id))
++                }
++                SetsScreen(
++                    str = str,
++                    sets = data.sets,
++                    onBack = { pop() },
++                    onCreate = { doEdytora(null) },
++                    onEdit = { set -> doEdytora(set.id) },
++                    onDelete = { set ->
++                        // Szkic skasowanego zestawu nie ma juz do czego wrocic.
++                        if (repo.deleteSet(set.id)) repo.szkice.usun(set.id)
++                        refresh()
++                    },
++                    zapisany = (s as? ZestawyPoZapisie)?.idZestawu,
++                    // Plik szkicow czytamy raz na wejscie i po kazdej zmianie listy, nie przy
++                    // kazdym rysowaniu.
++                    szkice = remember(s, data.sets) { repo.szkice.zestawyZeSzkicem() },
++                )
++            }
+ 
+-            is Screen.Editor -> SetEditorScreen(
+-                str = str,
+-                existing = s.setId?.let { id -> data.sets.firstOrNull { it.id == id } },
+-                onBack = { pop() },
+-                onSave = { set -> repo.upsertSet(set); refresh(); pop() },
+-            )
++            is Screen.Editor -> {
++                val otwierany = s.setId?.let { id -> data.sets.firstOrNull { it.id == id } }
++                SetEditorScreen(
++                    str = str,
++                    existing = otwierany,
++                    onBack = { pop() },
++                    onSave = { set ->
++                        // Zestaw z katalogu edytor oddaje jako KOPIE, czyli nowy zestaw wlasny;
++                        // jej pierwszy zapis kopiuje tez postep slow oryginalu.
++                        val zapisany = if (otwierany?.builtIn == true) {
++                            repo.zapiszKopieZestawu(set)
++                        } else {
++                            repo.upsertSet(set)
++                        }
++                        refresh()
++                        // Edytor zamykamy TYLKO po udanym zapisie. Wczesniej zamykal sie zawsze,
++                        // a wpisany zestaw istnial wylacznie w nim: przy pelnej pamieci telefonu
++                        // uczen wracal na liste bez zestawu i bez ani jednego wpisanego wiersza.
++                        if (zapisany) {
++                            val podEdytorem = stack.dropLast(1)
++                            stack = if (podEdytorem.lastOrNull() == Screen.Sets) {
++                                podEdytorem.dropLast(1) + ZestawyPoZapisie(set.id)
++                            } else {
++                                podEdytorem
++                            }
++                        }
++                        zapisany
++                    },
++                    szkice = repo.szkice,
++                )
++            }
+ 
+             Screen.Privacy -> PrivacyScreen(str = str, onBack = { pop() })
+ 
+diff --git a/app/src/main/java/com/matura/app/ui/Common.kt b/app/src/main/java/com/matura/app/ui/Common.kt
+index 684571d..f61b2dc 100644
+--- a/app/src/main/java/com/matura/app/ui/Common.kt
++++ b/app/src/main/java/com/matura/app/ui/Common.kt
+@@ -21,7 +21,10 @@ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.ImageBitmap
++import androidx.compose.ui.layout.Layout
++import androidx.compose.ui.layout.layout
+ import androidx.compose.ui.text.font.FontFamily
++import androidx.compose.ui.unit.constrainHeight
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
+ import com.matura.app.R
+@@ -36,6 +39,52 @@ import com.matura.app.R
+  */
+ val PixelFamily = FontFamily.Monospace
+ 
++/** Najmniejszy cel dotyku z wytycznych dostepnosci (Material, WCAG 2.5.5). */
++private val NAJMNIEJSZY_CEL = 48.dp
++
++/**
++ * Klikalny cel o wysokosci co najmniej [NAJMNIEJSZY_CEL] wokol grafiki, ktora zostaje taka,
++ * jaka byla.
++ *
++ * Przycisk "Wroc" mial 37 dp wysokosci, a [GhostButton] 47 dp (zmierzone bramka
++ * TouchTargetAuditTest), i bramka trzymala dla nich limit zamiast progu. Zwykle
++ * `defaultMinSize` powiekszyloby ramke przycisku i zepchnelo w dol wszystko pod nia, na
++ * kazdym ekranie. Tutaj rosnie tylko prostokat, w ktory trafia palec i ktory widzi czytnik
++ * ekranu: grafika stoi w jego srodku, a rodzic dostaje do ukladu wysokosc samej grafiki, wiec
++ * cel wystaje po rowno nad nia i pod nia, a uklad zostaje co do piksela ten sam.
++ */
++@Composable
++private fun CelDotyku(
++    onClick: () -> Unit,
++    modifier: Modifier = Modifier,
++    grafika: @Composable () -> Unit,
++) {
++    Layout(
++        content = grafika,
++        modifier = modifier
++            .layout { measurable, constraints ->
++                val prog = NAJMNIEJSZY_CEL.roundToPx()
++                    .coerceIn(constraints.minHeight, constraints.maxHeight)
++                val cel = measurable.measure(constraints.copy(minHeight = prog))
++                // Wysokosc samej grafiki: wezel w srodku liczy ja, gdy nikt nie narzuca mu minimum.
++                val grafikaPx = measurable.minIntrinsicHeight(cel.width)
++                val zglaszana = constraints.constrainHeight(minOf(grafikaPx, cel.height))
++                layout(cel.width, zglaszana) { cel.place(0, (zglaszana - cel.height) / 2) }
++            }
++            // Klikniecie stoi PO zmianie ukladu, wiec obejmuje caly cel, a nie zgloszona wysokosc.
++            .clickable { onClick() },
++    ) { measurables, constraints ->
++        // Wymuszona szerokosc (fillMaxWidth, weight) idzie do grafiki, minimum wysokosci nie:
++        // inaczej ramka przycisku urosla by razem z celem.
++        val czesci = measurables.map { it.measure(constraints.copy(minHeight = 0)) }
++        val szerokosc = czesci.maxOfOrNull { it.width } ?: constraints.minWidth
++        val wysokosc = maxOf(czesci.maxOfOrNull { it.height } ?: 0, constraints.minHeight)
++        layout(szerokosc, wysokosc) {
++            czesci.forEach { it.place(0, (wysokosc - it.height) / 2) }
++        }
++    }
++}
++
+ @Composable
+ fun ScreenScaffold(
+     title: String?,
+@@ -52,17 +101,18 @@ fun ScreenScaffold(
+         Spacer(Modifier.height(18.dp))
+         Row(verticalAlignment = Alignment.CenterVertically) {
+             if (onBack != null) {
+-                Row(
+-                    Modifier
+-                        .background(Palette.Surface)
+-                        .border(2.dp, Palette.SurfaceHigh)
+-                        .clickable { onBack() }
+-                        .padding(horizontal = 10.dp, vertical = 8.dp),
+-                    verticalAlignment = Alignment.CenterVertically,
+-                ) {
+-                    PixelImage(pixel(R.drawable.icon_back), Modifier.size(14.dp))
+-                    Spacer(Modifier.width(7.dp))
+-                    PixelText(backLabel, color = Palette.Bone, glyphHeight = 9.dp)
++                CelDotyku(onClick = onBack) {
++                    Row(
++                        Modifier
++                            .background(Palette.Surface)
++                            .border(2.dp, Palette.SurfaceHigh)
++                            .padding(horizontal = 10.dp, vertical = 8.dp),
++                        verticalAlignment = Alignment.CenterVertically,
++                    ) {
++                        PixelImage(pixel(R.drawable.icon_back), Modifier.size(14.dp))
++                        Spacer(Modifier.width(7.dp))
++                        PixelText(backLabel, color = Palette.Bone, glyphHeight = 9.dp)
++                    }
+                 }
+                 Spacer(Modifier.width(12.dp))
+             }
+@@ -141,15 +191,16 @@ fun PrimaryButton(label: String, modifier: Modifier = Modifier, enabled: Boolean
+ 
+ @Composable
+ fun GhostButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+-    Box(
+-        modifier
+-            .background(Palette.Surface)
+-            .border(3.dp, Palette.SurfaceHigh)
+-            .clickable { onClick() }
+-            .padding(horizontal = 18.dp, vertical = 13.dp),
+-        contentAlignment = Alignment.Center,
+-    ) {
+-        PixelText(label, color = Palette.Bone, glyphHeight = 10.dp)
++    CelDotyku(onClick = onClick, modifier = modifier) {
++        Box(
++            Modifier
++                .background(Palette.Surface)
++                .border(3.dp, Palette.SurfaceHigh)
++                .padding(horizontal = 18.dp, vertical = 13.dp),
++            contentAlignment = Alignment.Center,
++        ) {
++            PixelText(label, color = Palette.Bone, glyphHeight = 10.dp)
++        }
+     }
+ }
+ 
+diff --git a/app/src/main/java/com/matura/app/ui/PixelFont.kt b/app/src/main/java/com/matura/app/ui/PixelFont.kt
+index baeee7d..de27c68 100644
+--- a/app/src/main/java/com/matura/app/ui/PixelFont.kt
++++ b/app/src/main/java/com/matura/app/ui/PixelFont.kt
+@@ -1,20 +1,31 @@
+ package com.matura.app.ui
+ 
+ import androidx.compose.foundation.Canvas
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.height
+ import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.widthIn
++import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.remember
++import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
++import androidx.compose.ui.geometry.Offset
+ import androidx.compose.ui.graphics.BlendMode
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.ColorFilter
+ import androidx.compose.ui.graphics.FilterQuality
+ import androidx.compose.ui.graphics.ImageBitmap
++import androidx.compose.ui.graphics.Shadow
+ import androidx.compose.ui.graphics.drawscope.DrawScope
+ import androidx.compose.ui.platform.LocalDensity
+ import androidx.compose.ui.res.imageResource
++import androidx.compose.ui.semantics.clearAndSetSemantics
+ import androidx.compose.ui.semantics.contentDescription
+ import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.TextStyle
++import androidx.compose.ui.text.font.FontFamily
++import androidx.compose.ui.text.style.TextOverflow
+ import androidx.compose.ui.unit.Dp
+ import androidx.compose.ui.unit.IntOffset
+ import androidx.compose.ui.unit.IntSize
+@@ -75,14 +86,96 @@ class PixelFont(private val sheet: ImageBitmap) {
+         )
+ 
+         val SUPPORTED: Set<Char> = ORDER.toSet()
++
++        /**
++         * Znaki spoza arkusza, ktore pisze sie literami arkusza, czasem dwiema. Sa tu te,
++         * ktorych nie zalatwia rozklad na litere i akcent w [zapisZnaku]: ligatury, niemieckie
++         * "ß", litery przekreslone, cudzyslowy ostrokatne, kreski i spacje o innych kodach.
++         */
++        private val ROZPISANE: Map<Char, String> = mapOf(
++            'ß' to "ss", 'ẞ' to "SS", 'æ' to "ae", 'Æ' to "AE", 'œ' to "oe", 'Œ' to "OE",
++            'ĳ' to "ij", 'Ĳ' to "IJ", 'ø' to "o", 'Ø' to "O", 'đ' to "d", 'Đ' to "D", 'ı' to "i",
++            'ﬀ' to "ff", 'ﬁ' to "fi", 'ﬂ' to "fl", 'ﬃ' to "ffi", 'ﬄ' to "ffl",
++            '«' to "'", '»' to "'", '‹' to "'", '›' to "'", '`' to "'", '´' to "'", '′' to "'",
++            '‒' to "-", '―' to "-", '−' to "-", '¿' to "?", '¡' to "!",
++            '\u00A0' to " ", '\u2009' to " ", '\u202F' to " ",
++        )
++
++        /**
++         * [zapisZnaku] dla znakow, o ktore juz ktos pytal: rozklad znaku kosztuje, a napisy nad
++         * potworkami rysuja sie co klatke.
++         */
++        private val ZAPISY = java.util.concurrent.ConcurrentHashMap<Char, String>()
++
++        /** Wynik [zapisZnaku] dla znaku, ktorego nie da sie zapisac znakami arkusza. */
++        private const val BEZ_ZAPISU = "\uFFFF"
++
++        private fun naArkuszu(c: Char) = INDEX.containsKey(c) || SUBSTITUTE.containsKey(c)
++
++        /**
++         * Jak zapisac znak spoza arkusza jego znakami: "é" jako "e", "ß" jako "ss". Zwraca
++         * [BEZ_ZAPISU], gdy sie nie da (cyrylica, emoji), a pusty napis dla samego akcentu,
++         * ktory przyszedl osobnym znakiem.
++         *
++         * Wczesniej "ostatnia deska ratunku" probowala tylko drugiej wielkosci litery, wiec
++         * kazdy znak z akcentem spoza polskich konczyl jako pusta kratka: "Zoë" jako "Zo ".
++         */
++        private fun zapisZnaku(c: Char): String = ZAPISY.getOrPut(c) {
++            ROZPISANE[c]?.let { return@getOrPut it }
++            for (inny in charArrayOf(c.lowercaseChar(), c.uppercaseChar())) {
++                if (INDEX.containsKey(inny)) return@getOrPut inny.toString()
++            }
++            // Rozklad kanoniczny: litera podstawowa i jej akcenty osobno. Akcenty odpadaja.
++            val litery = StringBuilder()
++            for (czesc in java.text.Normalizer.normalize(c.toString(), java.text.Normalizer.Form.NFD)) {
++                when (Character.getType(czesc)) {
++                    Character.NON_SPACING_MARK.toInt(),
++                    Character.COMBINING_SPACING_MARK.toInt(),
++                    Character.ENCLOSING_MARK.toInt() -> {}
++                    else -> when {
++                        naArkuszu(czesc) -> litery.append(czesc)
++                        ROZPISANE.containsKey(czesc) -> litery.append(ROZPISANE[czesc])
++                        else -> return@getOrPut BEZ_ZAPISU
++                    }
++                }
++            }
++            litery.toString()
++        }
++
++        /**
++         * [text] przepisany tak, zeby kazdy znak, ktory da sie narysowac, byl znakiem arkusza
++         * albo mial w nim zamiennik. Znak nie do zapisania zostaje, jaki byl. Napis, ktory juz
++         * sie miesci w arkuszu, wraca jako TEN SAM obiekt: tak wyglada kazdy napis wbudowany.
++         */
++        fun rozpisz(text: String): String {
++            var i = 0
++            while (i < text.length && (naArkuszu(text[i]) || text[i] == '\n')) i++
++            if (i == text.length) return text
++            val out = StringBuilder(text.length + 4).append(text, 0, i)
++            while (i < text.length) {
++                val c = text[i++]
++                if (naArkuszu(c) || c == '\n') {
++                    out.append(c)
++                } else {
++                    val zapis = zapisZnaku(c)
++                    if (zapis == BEZ_ZAPISU) out.append(c) else out.append(zapis)
++                }
++            }
++            return out.toString()
++        }
++
++        /**
++         * Czy caly [text] da sie narysowac glifami arkusza. Gdy nie, [PixelText] rysuje go
++         * czcionka systemu: napis z dziurami w miejscu liter jest gorszy niz napis inna czcionka.
++         */
++        fun daSieNarysowac(text: String): Boolean =
++            text.all { naArkuszu(it) || it == '\n' || zapisZnaku(it) != BEZ_ZAPISU }
+     }
+ 
++    /** Expects a character of [rozpisz] text; anything the sheet cannot show is a blank cell. */
+     private fun glyphIndex(c: Char): Int {
+         INDEX[c]?.let { return it }
+         SUBSTITUTE[c]?.let { s -> INDEX[s]?.let { return it } }
+-        // last resort: strip an unknown accent by falling back to the bare letter
+-        INDEX[c.lowercaseChar()]?.let { return it }
+-        INDEX[c.uppercaseChar()]?.let { return it }
+         return INDEX[' ']!!
+     }
+ 
+@@ -90,8 +183,10 @@ class PixelFont(private val sheet: ImageBitmap) {
+ 
+     /** Ink width of [text] in pixels at [scale]. */
+     fun widthPx(text: String, scale: Float, mono: Boolean = false): Float {
+-        if (text.isEmpty()) return 0f
+-        return (text.length * advance(mono) - (advance(mono) - GLYPH_W)) * scale
++        // Liczy sie dlugosc tego, co bedzie narysowane: "ß" to dwa glify.
++        val glify = rozpisz(text).length
++        if (glify == 0) return 0f
++        return (glify * advance(mono) - (advance(mono) - GLYPH_W)) * scale
+     }
+ 
+     fun lineHeightPx(scale: Float) = LINE_HEIGHT * scale
+@@ -113,7 +208,7 @@ class PixelFont(private val sheet: ImageBitmap) {
+         val tint = ColorFilter.tint(color, BlendMode.SrcIn)
+         var penX = x - OFFSET_X * scale
+         val top = (y - OFFSET_Y * scale).roundToInt()
+-        for (ch in text) {
++        for (ch in rozpisz(text)) {
+             val i = glyphIndex(ch)
+             if (ch != ' ') {
+                 val col = i % 16
+@@ -136,7 +231,7 @@ class PixelFont(private val sheet: ImageBitmap) {
+     fun wrap(text: String, maxWidth: Float, scale: Float, mono: Boolean = false): List<String> {
+         if (maxWidth <= 0f) return listOf(text)
+         val out = mutableListOf<String>()
+-        for (paragraph in text.split('\n')) {
++        for (paragraph in rozpisz(text).split('\n')) {
+             var line = StringBuilder()
+             for (word in paragraph.split(' ')) {
+                 val candidate = if (line.isEmpty()) word else "$line $word"
+@@ -195,6 +290,9 @@ fun pixelScaleFor(glyphHeight: Dp): Float {
+  * still reads better in the system font, so this is meant for labels, headings and
+  * anything short enough to control.
+  *
++ * Napis, ktorego arkusz nie umie narysowac w calosci (imie cyrylica, emoji w tytule zestawu),
++ * idzie CALY czcionka systemu: patrz [NapisCzcionkaSystemu].
++ *
+  * @param opis nazwa dla czytnika ekranu. Domyslnie sam [text], bo napis rysowany po Canvas
+  *   nie trafia do semantyki i bez tego TalkBack czytal z przyciskow MENU samo "przycisk" —
+  *   6 z 8 pozycji nie mialo ZADNEJ nazwy, a ostatnia nieopisana pozycja to WYJSCIE.
+@@ -231,6 +329,11 @@ fun PixelText(
+     // przez czternascie wersji nie dopisal go nikt.
+     val semantyka = if (opis != null) Modifier.semantics { contentDescription = opis } else Modifier
+ 
++    if (!remember(text) { PixelFont.daSieNarysowac(text) }) {
++        NapisCzcionkaSystemu(text, modifier.then(semantyka), color, outline, scale, maxWidthDp)
++        return
++    }
++
+     Canvas(modifier.then(semantyka).then(Modifier.size(w, h))) {
+         lines.forEachIndexed { i, line ->
+             drawPixelText(
+@@ -246,3 +349,47 @@ fun PixelText(
+         }
+     }
+ }
++
++/**
++ * Zastepstwo dla [PixelText], gdy w napisie jest znak bez glifu i bez zamiennika.
++ *
++ * Arkusz ma 93 glify, a uczen wpisuje imie i wlasne zestawy czym chce. Znak spoza arkusza
++ * rysowal sie jako pusta kratka, wiec "Олена" pod logo byla pusta linia, a czytnik ekranu i tak
++ * dostawal pelny napis: widzacy i niewidomy uczen mieli na ekranie co innego. Jedna obca
++ * litera wsrod pikselowych wygladalaby jak blad, dlatego zmienia sie caly napis.
++ *
++ * Jedna linia z wielokropkiem: napis jest tu gosciem w ukladzie liczonym pod staly rozmiar
++ * glifu i nie moze go rozepchnac.
++ */
++@Composable
++private fun NapisCzcionkaSystemu(
++    text: String,
++    modifier: Modifier,
++    color: Color,
++    outline: Color?,
++    scale: Float,
++    maxWidthDp: Dp?,
++) {
++    val density = LocalDensity.current
++    // Ta sama wysokosc wiersza co w foncie bitmapowym, zeby nic pod napisem nie skoczylo.
++    val wiersz = with(density) { (PixelFont.LINE_HEIGHT * scale).toDp() }
++    // Wielka litera ma miec wysokosc glifu, a w czcionkach systemu to okolo 0,7 rozmiaru pisma.
++    // Przeliczenie z pikseli omija skale czcionki systemu, tak samo jak omija ja glif.
++    val pismo = with(density) { (PixelFont.GLYPH_H * scale / 0.7f).toSp() }
++    val szerokosc = if (maxWidthDp != null) Modifier.widthIn(max = maxWidthDp) else Modifier
++    Box(modifier.height(wiersz).then(szerokosc), contentAlignment = Alignment.CenterStart) {
++        Text(
++            text = text.replace('\n', ' '),
++            color = color,
++            fontFamily = FontFamily.Monospace,
++            fontSize = pismo,
++            maxLines = 1,
++            softWrap = false,
++            overflow = TextOverflow.Ellipsis,
++            // Obrys jak w foncie bitmapowym: ten sam napis o jeden piksel arkusza nizej i w prawo.
++            style = TextStyle(shadow = outline?.let { Shadow(it, Offset(scale, scale), 0f) }),
++            // Nazwe dla czytnika niesie rodzic, tak samo jak przy rysunku na Canvas.
++            modifier = Modifier.clearAndSetSemantics { },
++        )
++    }
++}
+diff --git a/app/src/main/java/com/matura/app/ui/Screens.kt b/app/src/main/java/com/matura/app/ui/Screens.kt
+index eae274e..0d318f2 100644
+--- a/app/src/main/java/com/matura/app/ui/Screens.kt
++++ b/app/src/main/java/com/matura/app/ui/Screens.kt
+@@ -21,17 +21,23 @@ import androidx.compose.foundation.layout.width
+ import androidx.compose.foundation.lazy.LazyColumn
+ import androidx.compose.foundation.lazy.items
+ import androidx.compose.foundation.lazy.itemsIndexed
++import androidx.compose.foundation.lazy.rememberLazyListState
++import androidx.compose.foundation.selection.selectable
+ import androidx.activity.compose.BackHandler
+ import androidx.annotation.DrawableRes
+ import androidx.compose.foundation.text.BasicTextField
+ import androidx.compose.foundation.verticalScroll
+ import androidx.compose.material3.Text
+ import androidx.compose.runtime.Composable
++import androidx.compose.runtime.DisposableEffect
++import androidx.compose.runtime.LaunchedEffect
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableStateListOf
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
++import androidx.compose.runtime.rememberCoroutineScope
++import androidx.compose.runtime.rememberUpdatedState
+ import androidx.compose.runtime.setValue
+-import androidx.compose.runtime.toMutableStateList
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.graphics.Color
+@@ -39,8 +45,20 @@ import androidx.compose.ui.graphics.SolidColor
+ import androidx.compose.ui.text.TextStyle
+ import androidx.compose.ui.text.font.FontWeight
+ import androidx.compose.ui.platform.LocalContext
++import androidx.compose.ui.platform.testTag
++import androidx.compose.ui.semantics.LiveRegionMode
++import androidx.compose.ui.semantics.Role
++import androidx.compose.ui.semantics.clearAndSetSemantics
++import androidx.compose.ui.semantics.contentDescription
++import androidx.compose.ui.semantics.error
++import androidx.compose.ui.semantics.liveRegion
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.semantics.stateDescription
+ import androidx.compose.ui.unit.dp
+ import androidx.compose.ui.unit.sp
++import androidx.lifecycle.Lifecycle
++import androidx.lifecycle.LifecycleEventObserver
++import androidx.lifecycle.compose.LocalLifecycleOwner
+ import com.matura.app.BuildConfig
+ import com.matura.app.R
+ import com.matura.app.model.Achievement
+@@ -54,10 +72,22 @@ import com.matura.app.model.Speed
+ import com.matura.app.model.Texture
+ import com.matura.app.model.UiLanguage
+ import com.matura.app.data.BuiltInSets
++import com.matura.app.data.SzkicZestawu
++import com.matura.app.data.SzkiceZestawow
++import com.matura.app.data.WierszSzkicu
++import com.matura.app.learn.EntryId
+ import com.matura.app.model.WordSet
++import kotlinx.coroutines.delay
++import kotlinx.coroutines.launch
+ 
+ // ---- shared input ----------------------------------------------------------
+ 
++/**
++ * @param opis nazwa pola dla czytnika ekranu. Pole tekstowe ma w semantyce tylko swoja tresc,
++ *   wiec bez nazwy TalkBack czytal "pole edycji" i nic wiecej, takze przy pustym polu.
++ * @param blad co jest z polem nie tak, gdy trzeba je poprawic. Ramka zmienia wtedy kolor, a
++ *   czytnik ekranu dostaje tresc bledu: sam kolor nikomu, kto go nie widzi, nic nie mowi.
++ */
+ @Composable
+ fun FieldInput(
+     value: String,
+@@ -65,26 +95,38 @@ fun FieldInput(
+     placeholder: String = "",
+     modifier: Modifier = Modifier,
+     fontSize: Int = 14,
++    opis: String? = null,
++    blad: String? = null,
+ ) {
+-    Box(
+-        modifier
++    // Ramka i odstepy sa DEKORACJA pola, a nie pudelkiem wokol niego. Dzieki temu cale pole
++    // jest jednym celem dotyku o wysokosci 48 dp: wczesniej dotkniecie marginesu nie robilo
++    // nic, a klikalna byla sama linia tekstu, czyli okolo 17 dp.
++    BasicTextField(
++        value = value,
++        onValueChange = onValueChange,
++        singleLine = true,
++        textStyle = TextStyle(color = Palette.Bone, fontSize = fontSize.sp),
++        cursorBrush = SolidColor(Palette.Accent),
++        modifier = modifier
++            .defaultMinSize(minHeight = MIN_CEL_DOTYKU)
+             .background(Palette.Ink)
+-            .border(2.dp, Palette.SurfaceHigh)
+-            .padding(horizontal = 10.dp, vertical = 10.dp),
+-        contentAlignment = Alignment.CenterStart,
+-    ) {
+-        if (value.isEmpty() && placeholder.isNotEmpty()) {
+-            Text(placeholder, color = Palette.Dim, fontSize = fontSize.sp)
+-        }
+-        BasicTextField(
+-            value = value,
+-            onValueChange = onValueChange,
+-            singleLine = true,
+-            textStyle = TextStyle(color = Palette.Bone, fontSize = fontSize.sp),
+-            cursorBrush = SolidColor(Palette.Accent),
+-            modifier = Modifier.fillMaxWidth(),
+-        )
+-    }
++            .border(2.dp, if (blad != null) Palette.Danger else Palette.SurfaceHigh)
++            .semantics {
++                if (opis != null) contentDescription = opis
++                if (blad != null) error(blad)
++            },
++        decorationBox = { pole ->
++            Box(
++                Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
++                contentAlignment = Alignment.CenterStart,
++            ) {
++                if (value.isEmpty() && placeholder.isNotEmpty()) {
++                    Text(placeholder, color = Palette.Dim, fontSize = fontSize.sp)
++                }
++                pole()
++            }
++        },
++    )
+ }
+ 
+ // ---- start -----------------------------------------------------------------
+@@ -198,6 +240,26 @@ private fun topicIcon(category: String): Int = when (category) {
+     else -> R.drawable.icon_star          // zestawy wlasne
+ }
+ 
++/**
++ * Zestawy zebrane w dzialy, w kolejnosci katalogu. Zestaw bez tematu w tytule trafia do grupy
++ * [bezDzialu], zawsze na koncu. Wspolne dla wyboru zestawu do gry i dla listy ZESTAWY, zeby
++ * dzial i jego numer znaczyly w obu miejscach to samo.
++ */
++private fun List<WordSet>.wDzialach(bezDzialu: String): List<Pair<String, List<WordSet>>> =
++    groupBy { it.category ?: bezDzialu }
++        .toList()
++        .sortedBy { (name, _) -> if (name == bezDzialu) 1 else 0 }
++
++/**
++ * Numeracja jak w repetytorium: zakres tematyczny CKE ma ustalona kolejnosc, wiec numer niesie
++ * informacje. Grupa bez dzialu go nie ma.
++ */
++private fun etykietaDzialu(indeks: Int, nazwa: String, bezDzialu: String): String =
++    if (nazwa == bezDzialu) nazwa else "${indeks + 1}. $nazwa"
++
++private fun opisDzialu(str: Str, zestawy: List<WordSet>): String =
++    "${str.setsCount(zestawy.size)} · ${str.entriesCount(zestawy.sumOf { it.entries.size })}"
++
+ /**
+  * Wybor zestawu jest dwupoziomowy: najpierw temat (jak dzialy w repetytorium),
+  * dopiero w nim zestawy. Przy 102 zestawach plaska lista byla nie do przejrzenia.
+@@ -213,11 +275,7 @@ fun SetPickScreen(
+ ) {
+     val usable = sets.playable()
+     var folder by remember { mutableStateOf<String?>(null) }
+-    val groups = remember(usable, str.ownSets) {
+-        usable.groupBy { it.category ?: str.ownSets }
+-            .toList()
+-            .sortedBy { (name, _) -> if (name == str.ownSets) 1 else 0 }   // wlasne na koncu
+-    }
++    val groups = remember(usable, str.ownSets) { usable.wDzialach(bezDzialu = str.ownSets) }
+     val open = folder?.let { name -> groups.firstOrNull { it.first == name }?.second }
+ 
+     BackHandler(enabled = folder != null) { folder = null }
+@@ -242,12 +300,10 @@ fun SetPickScreen(
+                         onClick = { onPick(BuiltInSets.randomMix()) },
+                     )
+                 }
+-                // Numeracja jak w repetytorium: zakres tematyczny CKE ma ustalona
+-                // kolejnosc, wiec numer niesie informacje. Wlasne zestawy go nie maja.
+                 itemsIndexed(groups, key = { _, it -> it.first }) { i, (name, list) ->
+                     MenuButton(
+-                        label = if (name == str.ownSets) name else "${i + 1}. $name",
+-                        subtitle = "${str.setsCount(list.size)} · ${str.entriesCount(list.sumOf { it.entries.size })}",
++                        label = etykietaDzialu(i, name, bezDzialu = str.ownSets),
++                        subtitle = opisDzialu(str, list),
+                         icon = pixel(topicIcon(name)),
+                         onClick = { folder = name },
+                     )
+@@ -295,6 +351,21 @@ fun ModePickScreen(
+ 
+ // ---- sets ------------------------------------------------------------------
+ 
++/**
++ * Lista zestawow pokazana TUZ PO zapisie w edytorze: przewija sie do zapisanego zestawu i
++ * oznacza go plakietka "ZAPISANO". Wczesniej nowy zestaw ladowal pod 102 kartami katalogu, a
++ * lista otwierala sie od gory, wiec wygladalo to tak, jakby nic sie nie zapisalo.
++ *
++ * Osobny wpis na stosie nawigacji, a nie stan trzymany obok: lista i edytor to dwie galezie
++ * nawigacji (App.kt), zadna nie przezywa drugiej, a stos jest jedynym, co maja wspolne.
++ * Wyjscie z listy zdejmuje ten wpis ze stosu i plakietka znika razem z nim.
++ */
++data class ZestawyPoZapisie(val idZestawu: String) : Screen
++
++/** Znaczniki dla testow ekranu: ZAPISZ jest w edytorze dwa razy, w karcie u gory i w stopce. */
++internal const val TAG_EDYTOR_ZAPISZ = "edytor-zapisz"
++internal const val TAG_EDYTOR_KARTA_ZAPISZ = "edytor-karta-zapisz"
++
+ @Composable
+ fun SetsScreen(
+     str: Str,
+@@ -303,8 +374,28 @@ fun SetsScreen(
+     onCreate: () -> Unit,
+     onEdit: (WordSet) -> Unit,
+     onDelete: (WordSet) -> Unit,
++    zapisany: String? = null,
++    szkice: Set<String?> = emptySet(),
+ ) {
+     var pendingDelete by remember { mutableStateOf<String?>(null) }
++    // Wlasne zestawy stoja PIERWSZE, od najnowszego. Przy jednej plaskiej liscie w kolejnosci
++    // zapisu uczen musial przewinac caly katalog, zeby zobaczyc to, co sam wpisal.
++    val wlasne = remember(sets) {
++        sets.filterNot { it.builtIn }.asReversed().sortedByDescending { it.createdAt }
++    }
++    val katalog = remember(sets, str.catalogueOther) {
++        sets.filter { it.builtIn }.wDzialach(bezDzialu = str.catalogueOther)
++    }
++    var otwartyDzial by remember { mutableStateOf<String?>(null) }
++
++    val lista = rememberLazyListState()
++    LaunchedEffect(zapisany) {
++        // Pozycja 0 to naglowek, zestawy wlasne stoja od 1. Przewijamy o jedna pozycje
++        // wczesniej, zeby zapisany zestaw mial nad soba sasiada albo naglowek, a nie krawedz.
++        val nr = wlasne.indexOfFirst { it.id == zapisany }
++        if (nr > 0) lista.scrollToItem(nr)
++    }
++
+     ScreenScaffold(str.sets, onBack, str.back) {
+         Column(Modifier.fillMaxSize()) {
+             Row(
+@@ -321,217 +412,747 @@ fun SetsScreen(
+             ) {
+                 PixelImage(pixel(R.drawable.icon_plus), Modifier.size(15.dp))
+                 Spacer(Modifier.width(9.dp))
+-                PixelText(str.createSet, color = Palette.Ink, outline = null, glyphHeight = 11.dp)
++                Column {
++                    PixelText(str.createSet, color = Palette.Ink, outline = null, glyphHeight = 11.dp)
++                    // Szkic nowego zestawu nie ma karty na liscie, wiec bez tej linii uczen
++                    // po restarcie gry nie mialby skad wiedziec, ze jego wiersze czekaja.
++                    if (null in szkice) {
++                        Text(str.unfinishedDraft, color = Palette.Ink, fontSize = 12.sp)
++                    }
++                }
+             }
+             Spacer(Modifier.height(12.dp))
+-            LazyColumn(Modifier.fillMaxSize()) {
+-                items(sets, key = { it.id }) { set ->
+-                    Box(
+-                        Modifier
+-                            .fillMaxWidth()
+-                            .padding(vertical = 4.dp)
+-                            .background(Palette.Surface)
+-                            .border(3.dp, Palette.SurfaceHigh)
+-                            .padding(14.dp)
++            LazyColumn(Modifier.fillMaxSize(), state = lista) {
++                item(key = "naglowek-wlasne") { NaglowekSekcji(str.mySets) }
++                if (wlasne.isEmpty()) {
++                    item(key = "brak-wlasnych") { InfoCard(str.noOwnSets) }
++                }
++                items(wlasne, key = { it.id }) { set ->
++                    val armed = pendingDelete == set.id
++                    KartaZestawu(
++                        str = str,
++                        set = set,
++                        tytul = set.title,
++                        zapisany = set.id == zapisany,
++                        szkic = set.id in szkice,
+                     ) {
+-                        Column(Modifier.fillMaxWidth()) {
+-                            Row(
+-                                Modifier.fillMaxWidth(),
+-                                horizontalArrangement = Arrangement.SpaceBetween,
+-                                verticalAlignment = Alignment.CenterVertically,
+-                            ) {
+-                                PixelText(
+-                                    set.title,
+-                                    color = Palette.Bone,
+-                                    glyphHeight = 11.dp,
+-                                    maxWidthDp = 220.dp,
+-                                    modifier = Modifier.weight(1f),
+-                                )
+-                                if (set.builtIn) Pill(str.builtIn, Palette.Accent)
++                        PrzyciskKarty(R.drawable.icon_edit, str.edit) { onEdit(set) }
++                        Spacer(Modifier.width(8.dp))
++                        PrzyciskKarty(
++                            ikona = R.drawable.icon_trash,
++                            napis = if (armed) str.confirmDelete else str.delete,
++                            kolor = if (armed) Palette.Ink else Palette.Danger,
++                            obrys = if (armed) null else Palette.Ink,
++                            tlo = if (armed) Palette.Danger else Palette.Surface,
++                            ramka = Palette.Danger,
++                        ) {
++                            // dwa tapniecia: pierwsze uzbraja, drugie kasuje
++                            if (armed) {
++                                onDelete(set)
++                                pendingDelete = null
++                            } else {
++                                pendingDelete = set.id
+                             }
+-                            Spacer(Modifier.height(5.dp))
+-                            Text(
+-                                "${str.entriesCount(set.entries.size)} · ${str.playsCount(set.timesPlayed)} · ${set.termLanguage} → ${set.definitionLanguage}",
+-                                color = Palette.Muted,
+-                                fontSize = 11.sp,
+-                            )
+-                            Spacer(Modifier.height(11.dp))
+-                            Row {
+-                                Row(
+-                                    Modifier
+-                                        .background(Palette.Surface)
+-                                        .border(3.dp, Palette.SurfaceHigh)
+-                                        .clickable { onEdit(set) }
+-                                        .padding(horizontal = 16.dp, vertical = 13.dp),
+-                                    verticalAlignment = Alignment.CenterVertically,
++                        }
++                    }
++                }
++                if (wlasne.isNotEmpty()) {
++                    item(key = "o-kasowaniu") {
++                        Spacer(Modifier.height(6.dp))
++                        InfoCard(str.deleteHint)
++                    }
++                }
++
++                item(key = "naglowek-katalog") {
++                    Spacer(Modifier.height(20.dp))
++                    NaglowekSekcji(str.catalogue)
++                    Text(str.catalogueNote, color = Palette.Muted, fontSize = 12.sp, lineHeight = 17.sp)
++                    Spacer(Modifier.height(8.dp))
++                }
++                katalog.forEachIndexed { i, (nazwa, zestawy) ->
++                    item(key = "dzial:$nazwa") {
++                        NaglowekDzialu(
++                            str = str,
++                            etykieta = etykietaDzialu(i, nazwa, bezDzialu = str.catalogueOther),
++                            nazwa = nazwa,
++                            zestawy = zestawy,
++                            otwarty = otwartyDzial == nazwa,
++                            szkic = zestawy.any { it.id in szkice },
++                        ) { otwartyDzial = if (otwartyDzial == nazwa) null else nazwa }
++                    }
++                    if (otwartyDzial == nazwa) {
++                        items(zestawy, key = { it.id }) { set ->
++                            // Wciecie pokazuje, ze karty naleza do rozwinietego dzialu.
++                            Box(Modifier.padding(start = 10.dp)) {
++                                KartaZestawu(
++                                    str = str,
++                                    set = set,
++                                    tytul = set.shortTitle,
++                                    zapisany = false,
++                                    szkic = set.id in szkice,
+                                 ) {
+-                                    PixelImage(pixel(R.drawable.icon_edit), Modifier.size(14.dp))
+-                                    Spacer(Modifier.width(7.dp))
+-                                    PixelText(str.editSet, color = Palette.Bone, glyphHeight = 10.dp)
+-                                }
+-                                if (!set.builtIn) {
+-                                    Spacer(Modifier.width(8.dp))
+-                                    val armed = pendingDelete == set.id
+-                                    Box(
+-                                        Modifier
+-                                            .background(if (armed) Palette.Danger else Palette.Surface)
+-                                            .border(3.dp, Palette.Danger)
+-                                            .clickable {
+-                                                // dwa tapniecia: pierwsze uzbraja, drugie kasuje
+-                                                if (armed) {
+-                                                    onDelete(set)
+-                                                    pendingDelete = null
+-                                                } else {
+-                                                    pendingDelete = set.id
+-                                                }
+-                                            }
+-                                            .padding(horizontal = 16.dp, vertical = 12.dp)
+-                                    ) {
+-                                        Row(verticalAlignment = Alignment.CenterVertically) {
+-                                            PixelImage(pixel(R.drawable.icon_trash), Modifier.size(14.dp))
+-                                            Spacer(Modifier.width(7.dp))
+-                                            PixelText(
+-                                                if (armed) str.confirmDelete else str.delete,
+-                                                color = if (armed) Palette.Ink else Palette.Danger,
+-                                                outline = if (armed) null else Palette.Ink,
+-                                                glyphHeight = 10.dp,
+-                                            )
+-                                        }
+-                                    }
++                                    // Zestaw z katalogu jest tylko do odczytu: edytor otwiera
++                                    // jego KOPIE, a napis mowi to, zanim uczen dotknie przycisku.
++                                    PrzyciskKarty(R.drawable.icon_plus, str.copyToMine) { onEdit(set) }
+                                 }
+                             }
+                         }
+                     }
+                 }
+-                item {
+-                    Spacer(Modifier.height(10.dp))
+-                    InfoCard(str.deleteHint)
+-                    Spacer(Modifier.height(24.dp))
++                item(key = "koniec") { Spacer(Modifier.height(24.dp)) }
++            }
++        }
++    }
++}
++
++@Composable
++private fun NaglowekSekcji(tekst: String) {
++    PixelText(tekst, color = Palette.Accent, glyphHeight = 10.dp)
++    Spacer(Modifier.height(7.dp))
++}
++
++/**
++ * Dzial katalogu na liscie zestawow: zwiniety albo rozwiniety w miejscu. Wyglada jak
++ * [MenuButton], ale stan mowi tez czytnikowi ekranu, a znak "+" i "-" jest tylko dla oka.
++ */
++@Composable
++private fun NaglowekDzialu(
++    str: Str,
++    etykieta: String,
++    nazwa: String,
++    zestawy: List<WordSet>,
++    otwarty: Boolean,
++    szkic: Boolean,
++    onClick: () -> Unit,
++) {
++    Row(
++        Modifier
++            .fillMaxWidth()
++            .padding(vertical = 4.dp)
++            .background(Palette.Surface)
++            .border(3.dp, Palette.SurfaceHigh)
++            .clickable { onClick() }
++            .semantics { stateDescription = if (otwarty) str.topicExpanded else str.topicCollapsed }
++            .padding(horizontal = 14.dp, vertical = 13.dp),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        PixelImage(pixel(topicIcon(nazwa)), Modifier.size(26.dp))
++        Spacer(Modifier.width(12.dp))
++        Column(Modifier.weight(1f)) {
++            PixelText(etykieta, color = Palette.Bone, glyphHeight = 11.dp, maxWidthDp = 200.dp)
++            Spacer(Modifier.height(4.dp))
++            Text(opisDzialu(str, zestawy), color = Palette.Muted, fontSize = 12.sp, lineHeight = 16.sp)
++        }
++        if (szkic) {
++            Spacer(Modifier.width(8.dp))
++            Pill(str.draftPill, Palette.Gold)
++        }
++        Spacer(Modifier.width(8.dp))
++        PixelText(if (otwarty) "-" else "+", color = Palette.Muted, glyphHeight = 11.dp, opis = null)
++    }
++}
++
++@Composable
++private fun KartaZestawu(
++    str: Str,
++    set: WordSet,
++    tytul: String,
++    zapisany: Boolean,
++    szkic: Boolean,
++    przyciski: @Composable () -> Unit,
++) {
++    Box(
++        Modifier
++            .fillMaxWidth()
++            .padding(vertical = 4.dp)
++            .background(Palette.Surface)
++            .border(3.dp, if (zapisany) Palette.Accent else Palette.SurfaceHigh)
++            .padding(14.dp)
++    ) {
++        Column(Modifier.fillMaxWidth()) {
++            // Plakietki stoja NAD tytulem, a nie obok: tytul zawija sie na 220 dp i na waskim
++            // ekranie plakietka obok niego ladowala na literach.
++            if (zapisany || szkic) {
++                Row {
++                    if (zapisany) Pill(str.savedPill, Palette.Accent)
++                    if (zapisany && szkic) Spacer(Modifier.width(6.dp))
++                    if (szkic) Pill(str.draftPill, Palette.Gold)
+                 }
++                Spacer(Modifier.height(7.dp))
+             }
++            PixelText(tytul, color = Palette.Bone, glyphHeight = 11.dp, maxWidthDp = 220.dp)
++            Spacer(Modifier.height(5.dp))
++            Text(
++                "${str.entriesCount(set.entries.size)} · ${str.playsCount(set.timesPlayed)} · " +
++                    "${set.termLanguage} → ${set.definitionLanguage}",
++                color = Palette.Muted,
++                fontSize = 11.sp,
++            )
++            Spacer(Modifier.height(11.dp))
++            Row { przyciski() }
+         }
+     }
+ }
+ 
++@Composable
++private fun PrzyciskKarty(
++    @DrawableRes ikona: Int,
++    napis: String,
++    kolor: Color = Palette.Bone,
++    obrys: Color? = Palette.Ink,
++    tlo: Color = Palette.Surface,
++    ramka: Color = Palette.SurfaceHigh,
++    onClick: () -> Unit,
++) {
++    Row(
++        Modifier
++            .defaultMinSize(minHeight = MIN_CEL_DOTYKU)
++            .background(tlo)
++            .border(3.dp, ramka)
++            .clickable { onClick() }
++            .padding(horizontal = 16.dp, vertical = 12.dp),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        PixelImage(pixel(ikona), Modifier.size(14.dp))
++        Spacer(Modifier.width(7.dp))
++        PixelText(napis, color = kolor, outline = obrys, glyphHeight = 10.dp)
++    }
++}
++
++// ---- set editor ------------------------------------------------------------
++
++/** Ile po ostatniej zmianie szkic idzie na dysk: dosc dlugo, zeby nie pisac po kazdej literze. */
++private const val SZKIC_PO_MS = 1_000L
++
++/**
++ * Jeden wiersz edytora. [klucz] rozroznia wiersze na ekranie (pole trzyma kursor przy SWOIM
++ * wierszu, kiedy sasiedni znika), a [id] to identyfikator wpisu, z ktorego wiersz powstal:
++ * dzieki niemu zapis wie, ze poprawiony wiersz to dalej to samo slowo, a wiersz dopisany w
++ * miejsce skasowanego juz nie.
++ */
++private data class WierszEdytora(
++    val klucz: Int,
++    val haslo: String,
++    val tlumaczenie: String,
++    val id: String = "",
++)
++
++private val WierszEdytora.pusty get() = haslo.isBlank() && tlumaczenie.isBlank()
++private val WierszEdytora.pelny get() = haslo.isNotBlank() && tlumaczenie.isNotBlank()
++
++/** Wszystko, co uczen wpisal w edytorze. Osobna klasa, zeby szkic dalo sie wczytac jednym ruchem. */
++private class StanEdytora(poczatek: SzkicZestawu) {
++    var tytul by mutableStateOf("")
++    var jezykHasel by mutableStateOf("")
++    var jezykTlumaczen by mutableStateOf("")
++    val wiersze = mutableStateListOf<WierszEdytora>()
++    private var nastepnyKlucz = 0
++
++    init {
++        wczytaj(poczatek)
++    }
++
++    fun nowyWiersz(haslo: String = "", tlumaczenie: String = "", id: String = "") =
++        WierszEdytora(nastepnyKlucz++, haslo, tlumaczenie, id)
++
++    fun wczytaj(szkic: SzkicZestawu) {
++        tytul = szkic.tytul
++        jezykHasel = szkic.jezykHasel
++        jezykTlumaczen = szkic.jezykTlumaczen
++        wiersze.clear()
++        wiersze.addAll(szkic.wiersze.map { nowyWiersz(it.haslo, it.tlumaczenie, it.id) })
++        if (wiersze.isEmpty()) wiersze.add(nowyWiersz())
++    }
++
++    fun szkic(idZestawu: String?) = SzkicZestawu(
++        idZestawu = idZestawu,
++        tytul = tytul,
++        jezykHasel = jezykHasel,
++        jezykTlumaczen = jezykTlumaczen,
++        wiersze = wiersze.map { WierszSzkicu(it.haslo, it.tlumaczenie, it.id) },
++    )
++}
++
++/** Co stoi na gorze edytora zamiast okna dialogowego (aplikacja nie ma ani jednego). */
++private enum class KartaEdytora { BRAK, NIEZAPISANE, NIEPELNE, PUSTY, BLAD_ZAPISU }
++
++/** Skasowany wiersz do cofniecia: jego numer z ekranu i wiersze sprzed skasowania. */
++private class Cofniecie(val numer: Int, val poprzednie: List<WierszEdytora>)
++
++/**
++ * Tresc, z ktora edytor startuje. Zestaw z katalogu otwiera sie jako KOPIA: nowy zestaw wlasny
++ * z wierszami oryginalu (i ich identyfikatorami, po ktorych zapis skopiuje postep).
++ */
++private fun trescOtwarcia(existing: WordSet?, str: Str): SzkicZestawu {
++    val pusteWiersze = List(5) { WierszSzkicu() }
++    if (existing == null) return SzkicZestawu(null, "", "English", "Polski", pusteWiersze)
++    return SzkicZestawu(
++        idZestawu = existing.id,
++        // W tytule kopii kropka srodkowa staje sie lacznikiem. Dzial zestawu wynika z tytulu
++        // (WordSet.category), wiec z kropka kopia trafialaby w GRAJ do dzialu katalogu zamiast
++        // do "Moich zestawow". Font bitmapowy i tak rysuje oba znaki tak samo.
++        tytul = if (existing.builtIn) {
++            existing.title.replace('·', '-') + " " + str.copySuffix
++        } else {
++            existing.title
++        },
++        jezykHasel = existing.termLanguage,
++        jezykTlumaczen = existing.definitionLanguage,
++        wiersze = existing.entries
++            .map { WierszSzkicu(it.term, it.definition, it.id) }
++            .ifEmpty { pusteWiersze },
++    )
++}
++
++/**
++ * Edytor zestawu. Zasada, ktorej pilnuje caly ten ekran: nic, co uczen wpisal, nie znika po
++ * cichu. Stad karta przy wyjsciu z niezapisanymi zmianami, pytanie o wiersze wypelnione w
++ * polowie, pozostanie na ekranie po nieudanym zapisie, szkic na dysku i cofanie skasowanego
++ * wiersza.
++ *
++ * @param onSave zwraca, czy zestaw naprawde trafil na dysk. Edytor zamyka wolajacy, i tylko
++ *   wtedy, gdy zapis sie udal.
++ * @param szkice gdzie trzymac szkic na wypadek ubicia aplikacji; null wylacza szkice (podglady).
++ */
+ @Composable
+ fun SetEditorScreen(
+     str: Str,
+     existing: WordSet?,
+     onBack: () -> Unit,
+-    onSave: (WordSet) -> Unit,
++    onSave: (WordSet) -> Boolean,
++    szkice: SzkiceZestawow? = null,
+ ) {
+-    var title by remember { mutableStateOf(existing?.title ?: "") }
+-    var termLang by remember { mutableStateOf(existing?.termLanguage ?: "English") }
+-    var defLang by remember { mutableStateOf(existing?.definitionLanguage ?: "Polski") }
+-    val rows = remember {
+-        (existing?.entries?.takeIf { it.isNotEmpty() } ?: List(5) { Entry("", "") })
+-            .map { it.term to it.definition }
+-            .toMutableStateList()
++    val kopia = existing?.builtIn == true
++    val idSzkicu = existing?.id
++    val otwarty = remember { trescOtwarcia(existing, str) }
++    val trescOtwarta = remember { otwarty.tresc() }
++    val stan = remember { StanEdytora(otwarty) }
++
++    var karta by remember { mutableStateOf(KartaEdytora.BRAK) }
++    var oznaczNiepelne by remember { mutableStateOf(false) }
++    var cofniecie by remember { mutableStateOf<Cofniecie?>(null) }
++    // Szkic z poprzedniego razu. Dopoki uczen nie zdecyduje, edytor nie pokazuje pol: wpisanie
++    // czegokolwiek nadpisaloby na dysku szkic, o ktory wlasnie pytamy.
++    var oferowany by remember {
++        mutableStateOf(szkice?.wczytaj(idSzkicu)?.takeIf { it.tresc() != trescOtwarta })
+     }
+-    var error by remember { mutableStateOf<String?>(null) }
+ 
+-    ScreenScaffold(if (existing == null) str.createSet else str.editSet, onBack, str.back) {
+-        LazyColumn(Modifier.fillMaxSize()) {
+-            item {
++    val biezacy = stan.szkic(idSzkicu)
++    val zmieniony = biezacy.tresc() != trescOtwarta
++    // Wiersze z jedna strona, jako pozycje na liscie. Funkcja, bo pyta o nie takze dotkniecie
++    // przycisku, a ono ma widziec stan z chwili dotkniecia.
++    fun niepelneWiersze() = stan.wiersze.indices.filter { !stan.wiersze[it].pusty && !stan.wiersze[it].pelny }
++    val niepelne = niepelneWiersze()
++
++    val lista = rememberLazyListState()
++    val zakres = rememberCoroutineScope()
++    LaunchedEffect(karta) {
++        // Karta stoi na gorze listy, a uczen bywa wtedy przy trzydziestym wierszu.
++        if (karta != KartaEdytora.BRAK) lista.scrollToItem(0)
++    }
++
++    if (szkice != null && oferowany == null) {
++        // Szkic idzie na dysk chwile po ostatniej zmianie i tylko wtedy, gdy rozni sie od tego,
++        // co zostalo otwarte. Gdy uczen wrocil do stanu wyjsciowego, stary szkic znika: inaczej
++        // nastepne otwarcie proponowaloby przywrocenie czegos, co sam cofnal.
++        LaunchedEffect(biezacy) {
++            delay(SZKIC_PO_MS)
++            if (zmieniony) szkice.zapisz(biezacy) else szkice.usun(idSzkicu)
++        }
++        // Zejscie w tlo zapisuje od razu: system moze ubic gre, zanim minie sekunda, a uczen
++        // wychodzi z edytora najczesciej wlasnie po to, zeby sprawdzic slowo w slowniku.
++        val wlasciciel = LocalLifecycleOwner.current
++        val naStop by rememberUpdatedState { if (zmieniony) szkice.zapisz(biezacy) }
++        DisposableEffect(wlasciciel) {
++            val obserwator = LifecycleEventObserver { _, zdarzenie ->
++                if (zdarzenie == Lifecycle.Event.ON_STOP) naStop()
++            }
++            wlasciciel.lifecycle.addObserver(obserwator)
++            onDispose { wlasciciel.lifecycle.removeObserver(obserwator) }
++        }
++    }
++
++    /** Kazda zmiana tresci: karta i pasek cofania dotyczyly stanu sprzed niej, wiec znikaja. */
++    fun zmien(zmiana: () -> Unit) {
++        zmiana()
++        karta = KartaEdytora.BRAK
++        cofniecie = null
++    }
++
++    /**
++     * Do zestawu ida tylko wiersze pelne: na tym, ze kazdy wpis ma obie strony, stoja wszystkie
++     * tryby gry i plan dnia. Wiersz z jedna strona nie odpada jednak po cichu: zapis staje i
++     * pyta, a uczen sam wybiera, czy go uzupelni, czy zapisze bez niego.
++     */
++    fun zapisz(bezNiepelnych: Boolean = false) {
++        val pelne = stan.wiersze.filter { it.pelny }
++        when {
++            niepelneWiersze().isNotEmpty() && !bezNiepelnych -> {
++                oznaczNiepelne = true
++                karta = KartaEdytora.NIEPELNE
++            }
++            pelne.isEmpty() -> karta = KartaEdytora.PUSTY
++            else -> {
++                // Zestaw wlasny, ktory edytor poprawia; null przy nowym zestawie i przy kopii.
++                val poprawiany = existing?.takeUnless { kopia }
++                val teraz = System.currentTimeMillis()
++                val zestaw = WordSet(
++                    id = poprawiany?.id ?: "user-$teraz",
++                    title = stan.tytul.trim().ifBlank { str.untitledSet },
++                    termLanguage = stan.jezykHasel.trim().ifBlank { "?" },
++                    definitionLanguage = stan.jezykTlumaczen.trim().ifBlank { "?" },
++                    entries = pelne.map {
++                        // Kopia oddaje identyfikatory katalogu: po nich Repository kopiuje
++                        // postep i samo nadaje wlasne. W zestawie wlasnym nowy wiersz dostaje
++                        // identyfikator juz tutaj, zeby zapis nie dopasowal go po numerze
++                        // wiersza do slowa, ktore uczen przed chwila skasowal.
++                        val id = if (kopia) it.id else it.id.ifBlank { EntryId.newUserId() }
++                        Entry(it.haslo.trim(), it.tlumaczenie.trim(), id)
++                    },
++                    builtIn = false,
++                    createdAt = poprawiany?.createdAt ?: teraz,
++                    timesPlayed = poprawiany?.timesPlayed ?: 0,
++                )
++                if (onSave(zestaw)) szkice?.usun(idSzkicu) else karta = KartaEdytora.BLAD_ZAPISU
++            }
++        }
++    }
++
++    // Wstecz (przycisk i gest systemu) nie wychodzi z niezapisanymi zmianami. Przy otwartej
++    // karcie wstecz ja zamyka, tak jak zamyka sie okno: wyjsc bez zapisu mozna tylko przyciskiem.
++    fun wstecz() {
++        when {
++            oferowany != null || stan.szkic(idSzkicu).tresc() == trescOtwarta -> onBack()
++            karta == KartaEdytora.NIEZAPISANE -> karta = KartaEdytora.BRAK
++            else -> karta = KartaEdytora.NIEZAPISANE
++        }
++    }
++    BackHandler { wstecz() }
++
++    val naglowek = when {
++        existing == null -> str.createSet
++        kopia -> str.copySet
++        else -> str.editSet
++    }
++    ScreenScaffold(naglowek, { wstecz() }, str.back) {
++        val szkic = oferowany
++        if (szkic != null) {
++            KomunikatEdytora(
++                tekst = str.draftFound,
++                dopisek = str.draftSummary(szkic.tytul, szkic.tresc().wiersze.size),
++                ramka = Palette.Accent,
++            ) {
++                PrimaryButton(str.restoreDraft, Modifier.fillMaxWidth()) {
++                    // Identyfikator wiersza ma sens tylko wtedy, gdy dalej wskazuje wpis tego
++                    // zestawu; inaczej wiersz jest po prostu nowy.
++                    val znane = existing?.entries?.map { it.id }?.toSet().orEmpty()
++                    stan.wczytaj(
++                        szkic.copy(wiersze = szkic.wiersze.map { if (it.id in znane) it else it.copy(id = "") }),
++                    )
++                    oferowany = null
++                }
++                Spacer(Modifier.height(8.dp))
++                GhostButton(str.discardDraft, Modifier.fillMaxWidth()) {
++                    szkice?.usun(idSzkicu)
++                    oferowany = null
++                }
++            }
++            return@ScreenScaffold
++        }
++
++        // Stale pozycje listy: 0 karta, 1 tytul, 2 jezyki, wiersze od 3. Przewijanie do wiersza
++        // liczy od tej trojki.
++        LazyColumn(Modifier.fillMaxSize(), state = lista) {
++            item(key = "karta") {
++                when {
++                    karta == KartaEdytora.NIEZAPISANE -> KomunikatEdytora(str.unsavedChanges, Palette.Gold) {
++                        PrimaryButton(str.save, Modifier.fillMaxWidth().testTag(TAG_EDYTOR_KARTA_ZAPISZ)) {
++                            zapisz()
++                        }
++                        Spacer(Modifier.height(8.dp))
++                        GhostButton(str.discardChanges, Modifier.fillMaxWidth()) {
++                            szkice?.usun(idSzkicu)
++                            onBack()
++                        }
++                        Spacer(Modifier.height(8.dp))
++                        GhostButton(str.backToEditing, Modifier.fillMaxWidth()) {
++                            karta = KartaEdytora.BRAK
++                        }
++                    }
++                    karta == KartaEdytora.NIEPELNE && niepelne.isNotEmpty() -> {
++                        val saPelne = stan.wiersze.any { it.pelny }
++                        KomunikatEdytora(
++                            tekst = str.incompleteRows(niepelne.map { it + 1 }),
++                            dopisek = if (saPelne) null else str.needTwoEntries,
++                            ramka = Palette.Danger,
++                        ) {
++                            PrimaryButton(str.fillInRows, Modifier.fillMaxWidth()) {
++                                karta = KartaEdytora.BRAK
++                                // Do pierwszego z nich, z jednym wierszem zapasu nad nim.
++                                val pierwszy = niepelneWiersze().firstOrNull() ?: 0
++                                zakres.launch { lista.scrollToItem(2 + pierwszy) }
++                            }
++                            if (saPelne) {
++                                Spacer(Modifier.height(8.dp))
++                                GhostButton(str.saveWithoutRows(niepelne.size), Modifier.fillMaxWidth()) {
++                                    zapisz(bezNiepelnych = true)
++                                }
++                            }
++                        }
++                    }
++                    karta == KartaEdytora.PUSTY -> KomunikatEdytora(str.needTwoEntries, Palette.Danger) {}
++                    karta == KartaEdytora.BLAD_ZAPISU -> KomunikatEdytora(str.setNotSaved, Palette.Danger) {
++                        PrimaryButton(str.save, Modifier.fillMaxWidth().testTag(TAG_EDYTOR_KARTA_ZAPISZ)) {
++                            zapisz()
++                        }
++                    }
++                }
++            }
++            item(key = "tytul") {
++                if (kopia) {
++                    InfoCard(str.copyNote)
++                    Spacer(Modifier.height(12.dp))
++                }
+                 Text(str.setTitle, color = Palette.Muted, fontSize = 12.sp)
+                 Spacer(Modifier.height(5.dp))
+-                FieldInput(title, { title = it }, placeholder = "...", modifier = Modifier.fillMaxWidth(), fontSize = 16)
++                FieldInput(
++                    stan.tytul, { zmien { stan.tytul = it } },
++                    placeholder = "...", modifier = Modifier.fillMaxWidth(), fontSize = 16,
++                    opis = str.setTitle,
++                )
+                 Spacer(Modifier.height(14.dp))
+             }
+-            item {
+-                Row(verticalAlignment = Alignment.CenterVertically) {
++            item(key = "jezyki") {
++                Row(verticalAlignment = Alignment.Bottom) {
+                     Column(Modifier.weight(1f)) {
+                         PixelText(str.terms, color = Palette.Accent, glyphHeight = 9.dp)
+                         Spacer(Modifier.height(4.dp))
+-                        FieldInput(termLang, { termLang = it }, modifier = Modifier.fillMaxWidth(), fontSize = 12)
++                        FieldInput(
++                            stan.jezykHasel, { zmien { stan.jezykHasel = it } },
++                            modifier = Modifier.fillMaxWidth(), fontSize = 12,
++                            opis = str.termLanguage,
++                        )
+                     }
+-                    Box(
+-                        Modifier
+-                            .padding(horizontal = 7.dp)
+-                            .background(Palette.Surface)
+-                            .border(2.dp, Palette.SurfaceHigh)
+-                            .clickable {
+-                                val t = termLang; termLang = defLang; defLang = t
+-                                for (i in rows.indices) rows[i] = rows[i].second to rows[i].first
+-                            }
+-                            .padding(horizontal = 9.dp, vertical = 9.dp)
+-                    ) {
+-                        // Zwykla czcionka: bitmapowa nie ma "<" ani ">" (podstawia "/"), wiec przycisk
+-                        // zamiany stron czytal sie jako "//".
+-                        Text("⇄", color = Palette.Bone, fontSize = 20.sp)
++                    if (kopia) {
++                        // Kopia z katalogu nie zamienia stron: postep kopiuje sie przy zapisie
++                        // kierunek w kierunek. Strony zamienia sie w zapisanym zestawie wlasnym.
++                        Spacer(Modifier.width(7.dp))
++                    } else {
++                        Box(
++                            Modifier
++                                .padding(horizontal = 7.dp)
++                                .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
++                                .background(Palette.Surface)
++                                .border(2.dp, Palette.SurfaceHigh)
++                                .clickable(role = Role.Button) {
++                                    zmien {
++                                        val t = stan.jezykHasel
++                                        stan.jezykHasel = stan.jezykTlumaczen
++                                        stan.jezykTlumaczen = t
++                                        for (i in stan.wiersze.indices) {
++                                            val w = stan.wiersze[i]
++                                            stan.wiersze[i] =
++                                                w.copy(haslo = w.tlumaczenie, tlumaczenie = w.haslo)
++                                        }
++                                    }
++                                }
++                                .semantics { contentDescription = str.swapLanguages },
++                            contentAlignment = Alignment.Center,
++                        ) {
++                            // Zwykla czcionka: bitmapowa nie ma "<" ani ">" (podstawia "/"), wiec
++                            // przycisk zamiany stron czytal sie jako "//". Sam znak nic nie mowi
++                            // czytnikowi ekranu, dlatego nazwe niesie przycisk, a znak jest dla oka.
++                            Text(
++                                "⇄",
++                                color = Palette.Bone,
++                                fontSize = 20.sp,
++                                modifier = Modifier.clearAndSetSemantics { },
++                            )
++                        }
+                     }
+                     Column(Modifier.weight(1f)) {
+                         PixelText(str.definitions, color = Palette.Accent, glyphHeight = 9.dp)
+                         Spacer(Modifier.height(4.dp))
+-                        FieldInput(defLang, { defLang = it }, modifier = Modifier.fillMaxWidth(), fontSize = 12)
++                        FieldInput(
++                            stan.jezykTlumaczen, { zmien { stan.jezykTlumaczen = it } },
++                            modifier = Modifier.fillMaxWidth(), fontSize = 12,
++                            opis = str.definitionLanguage,
++                        )
+                     }
+                 }
+-                Spacer(Modifier.height(5.dp))
+-                Text(str.swapLanguages, color = Palette.Dim, fontSize = 10.sp)
++                if (!kopia) {
++                    Spacer(Modifier.height(5.dp))
++                    Text(str.swapLanguages, color = Palette.Muted, fontSize = 10.sp)
++                }
+                 Spacer(Modifier.height(12.dp))
+             }
+ 
+-            itemsIndexed(rows) { index, row ->
+-                Row(
+-                    Modifier
+-                        .fillMaxWidth()
+-                        .padding(vertical = 3.dp),
+-                    verticalAlignment = Alignment.CenterVertically,
+-                ) {
+-                    Text(
+-                        "${index + 1}",
+-                        color = Palette.Dim,
+-                        fontSize = 11.sp,
+-                        modifier = Modifier.width(20.dp),
+-                    )
+-                    FieldInput(row.first, { rows[index] = it to rows[index].second }, modifier = Modifier.weight(1f))
+-                    Spacer(Modifier.width(6.dp))
+-                    FieldInput(row.second, { rows[index] = rows[index].first to it }, modifier = Modifier.weight(1f))
+-                    Spacer(Modifier.width(4.dp))
+-                    Box(
+-                        Modifier
+-                            .clickable { if (rows.size > 1) rows.removeAt(index) }
+-                            .padding(6.dp)
+-                    ) {
+-                        PixelImage(pixel(R.drawable.cross), Modifier.size(15.dp))
+-                    }
++            itemsIndexed(stan.wiersze, key = { _, w -> w.klucz }) { index, wiersz ->
++                PasekCofania(str, cofniecie?.takeIf { it.numer == index + 1 }) {
++                    stan.wiersze.clear()
++                    stan.wiersze.addAll(it.poprzednie)
++                    cofniecie = null
++                }
++                // Wiersz szukamy po kluczu, a nie po numerze z chwili rysowania: numer zmienia
++                // sie, gdy znika wiersz nad nim.
++                fun zmienWiersz(zmiana: (WierszEdytora) -> WierszEdytora) = zmien {
++                    val i = stan.wiersze.indexOfFirst { it.klucz == wiersz.klucz }
++                    if (i >= 0) stan.wiersze[i] = zmiana(stan.wiersze[i])
+                 }
++                WierszPol(
++                    str = str,
++                    numer = index + 1,
++                    wiersz = wiersz,
++                    oznacz = oznaczNiepelne,
++                    onHaslo = { tekst -> zmienWiersz { it.copy(haslo = tekst) } },
++                    onTlumaczenie = { tekst -> zmienWiersz { it.copy(tlumaczenie = tekst) } },
++                    onUsun = {
++                        val i = stan.wiersze.indexOfFirst { it.klucz == wiersz.klucz }
++                        if (i >= 0) {
++                            val przed = stan.wiersze.toList()
++                            val usuniety = stan.wiersze.removeAt(i)
++                            // Ostatniego wiersza nie ma czym zastapic, wiec zostaje po nim pusty.
++                            if (stan.wiersze.isEmpty()) stan.wiersze.add(stan.nowyWiersz())
++                            karta = KartaEdytora.BRAK
++                            // Kasowanie jest natychmiastowe, ale wiersz z tekstem da sie cofnac,
++                            // dopoki uczen nie zrobi nastepnej zmiany.
++                            cofniecie = if (usuniety.pusty) null else Cofniecie(i + 1, przed)
++                        }
++                    },
++                )
+             }
+ 
+-            item {
++            item(key = "stopka") {
++                PasekCofania(str, cofniecie?.takeIf { it.numer > stan.wiersze.size }) {
++                    stan.wiersze.clear()
++                    stan.wiersze.addAll(it.poprzednie)
++                    cofniecie = null
++                }
+                 Spacer(Modifier.height(10.dp))
+-                GhostButton(str.addRow) { rows.add("" to "") }
++                GhostButton(str.addRow) { zmien { stan.wiersze.add(stan.nowyWiersz()) } }
+                 Spacer(Modifier.height(10.dp))
+                 InfoCard(str.commaHint)
+-                error?.let {
+-                    Spacer(Modifier.height(10.dp))
+-                    Text(it, color = Palette.Danger, fontSize = 12.sp)
+-                }
+                 Spacer(Modifier.height(14.dp))
+-                PrimaryButton(str.save, modifier = Modifier.fillMaxWidth()) {
+-                    val entries = rows
+-                        .map { Entry(it.first.trim(), it.second.trim()) }
+-                        .filter { it.term.isNotBlank() && it.definition.isNotBlank() }
+-                    if (entries.isEmpty()) {
+-                        error = str.needTwoEntries
+-                    } else {
+-                        onSave(
+-                            WordSet(
+-                                id = existing?.id ?: "user-${System.currentTimeMillis()}",
+-                                title = title.ifBlank { str.untitledSet },
+-                                termLanguage = termLang.ifBlank { "?" },
+-                                definitionLanguage = defLang.ifBlank { "?" },
+-                                entries = entries,
+-                                builtIn = existing?.builtIn ?: false,
+-                                createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+-                                timesPlayed = existing?.timesPlayed ?: 0,
+-                            )
+-                        )
+-                    }
+-                }
+-                Spacer(Modifier.height(40.dp))
++                PrimaryButton(str.save, Modifier.fillMaxWidth().testTag(TAG_EDYTOR_ZAPISZ)) { zapisz() }
++                // Po nieudanym zapisie App rysuje na dole ekranu ogolny komunikat. Zapas miejsca
++                // pozwala wtedy przewinac ZAPISZ ponad niego.
++                Spacer(Modifier.height(if (karta == KartaEdytora.BLAD_ZAPISU) 140.dp else 40.dp))
++            }
++        }
++    }
++}
++
++/** Karta na gorze edytora: komunikat i przyciski pod nim, jeden pod drugim. */
++@Composable
++private fun KomunikatEdytora(
++    tekst: String,
++    ramka: Color,
++    dopisek: String? = null,
++    przyciski: @Composable () -> Unit,
++) {
++    Column(
++        Modifier
++            .fillMaxWidth()
++            .background(Palette.Surface)
++            .border(3.dp, ramka)
++            .padding(12.dp)
++    ) {
++        Text(
++            tekst,
++            color = Palette.Bone,
++            fontSize = 14.sp,
++            lineHeight = 19.sp,
++            // Karta pojawia sie sama, po dotknieciu czegos innego: czytnik ekranu ma ja oglosic.
++            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
++        )
++        if (dopisek != null) {
++            Spacer(Modifier.height(4.dp))
++            Text(dopisek, color = Palette.Muted, fontSize = 12.sp, lineHeight = 17.sp)
++        }
++        Spacer(Modifier.height(10.dp))
++        przyciski()
++    }
++    Spacer(Modifier.height(12.dp))
++}
++
++@Composable
++private fun PasekCofania(str: Str, cofniecie: Cofniecie?, onCofnij: (Cofniecie) -> Unit) {
++    if (cofniecie == null) return
++    Row(
++        Modifier
++            .fillMaxWidth()
++            .padding(vertical = 3.dp)
++            .background(Palette.Surface)
++            .border(2.dp, Palette.SurfaceHigh)
++            .padding(start = 12.dp),
++        verticalAlignment = Alignment.CenterVertically,
++    ) {
++        Text(
++            str.rowDeleted(cofniecie.numer),
++            color = Palette.Bone,
++            fontSize = 13.sp,
++            modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
++        )
++        GhostButton(str.undo) { onCofnij(cofniecie) }
++    }
++}
++
++@Composable
++private fun WierszPol(
++    str: Str,
++    numer: Int,
++    wiersz: WierszEdytora,
++    oznacz: Boolean,
++    onHaslo: (String) -> Unit,
++    onTlumaczenie: (String) -> Unit,
++    onUsun: () -> Unit,
++) {
++    // Oznaczamy dopiero po probie zapisu: w trakcie pisania kazdy wiersz jest przez chwile
++    // wypelniony w polowie i czerwona ramka przy kazdej literze tylko by przeszkadzala.
++    val brakHasla = oznacz && wiersz.haslo.isBlank() && wiersz.tlumaczenie.isNotBlank()
++    val brakTlumaczenia = oznacz && wiersz.tlumaczenie.isBlank() && wiersz.haslo.isNotBlank()
++    Column(
++        Modifier
++            .fillMaxWidth()
++            .padding(vertical = 3.dp)
++    ) {
++        Row(verticalAlignment = Alignment.CenterVertically) {
++            Text(
++                "$numer",
++                color = Palette.Muted,
++                fontSize = 11.sp,
++                modifier = Modifier.width(20.dp),
++            )
++            FieldInput(
++                wiersz.haslo, onHaslo, modifier = Modifier.weight(1f),
++                opis = str.termLabel(numer), blad = if (brakHasla) str.missingTerm else null,
++            )
++            Spacer(Modifier.width(6.dp))
++            FieldInput(
++                wiersz.tlumaczenie, onTlumaczenie, modifier = Modifier.weight(1f),
++                opis = str.definitionLabel(numer),
++                blad = if (brakTlumaczenia) str.missingDefinition else null,
++            )
++            Box(
++                Modifier
++                    .size(MIN_CEL_DOTYKU)
++                    .clickable(role = Role.Button) { onUsun() }
++                    .semantics { contentDescription = str.deleteRow(numer) },
++                contentAlignment = Alignment.Center,
++            ) {
++                PixelImage(pixel(R.drawable.cross), Modifier.size(15.dp))
+             }
+         }
++        if (brakHasla || brakTlumaczenia) {
++            // Napis obok czerwonej ramki: sam kolor nie mowi, czego brakuje, a czesc uczniow
++            // czerwieni od szarosci nie odroznia.
++            Text(
++                if (brakHasla) str.missingTerm else str.missingDefinition,
++                color = Palette.Danger,
++                fontSize = 12.sp,
++                modifier = Modifier.padding(start = 20.dp, top = 2.dp),
++            )
++        }
+     }
+ }
+ 
+@@ -729,7 +1350,9 @@ private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
+             .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
+             .background(if (selected) Palette.Accent else Palette.Surface)
+             .border(2.dp, if (selected) Palette.Ink else Palette.SurfaceHigh)
+-            .clickable { onClick() }
++            // selectable, a nie clickable: wybor byl widac tylko po kolorze, wiec czytnik
++            // ekranu czytal "TRAWA, NOC, PIASEK" i nie mowil, ktore z nich jest ustawione.
++            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+             .padding(horizontal = 9.dp, vertical = 6.dp),
+         contentAlignment = Alignment.Center,
+     ) {
+@@ -749,7 +1372,8 @@ private fun DirectionRow(label: String, selected: Boolean, onClick: () -> Unit)
+             .defaultMinSize(minHeight = MIN_CEL_DOTYKU)
+             .background(if (selected) Palette.Surface else Color.Transparent)
+             .border(2.dp, if (selected) Palette.SurfaceHigh else Color.Transparent)
+-            .clickable { onClick() }
++            // Jak w ChoiceChip: stan wyboru idzie do czytnika ekranu, nie tylko do oka.
++            .selectable(selected = selected, role = Role.RadioButton, onClick = onClick)
+             .padding(horizontal = 11.dp, vertical = 10.dp),
+         verticalAlignment = Alignment.CenterVertically,
+     ) {
+diff --git a/app/src/main/java/com/matura/app/ui/Strings.kt b/app/src/main/java/com/matura/app/ui/Strings.kt
+index dc8d900..5e6bb99 100644
+--- a/app/src/main/java/com/matura/app/ui/Strings.kt
++++ b/app/src/main/java/com/matura/app/ui/Strings.kt
+@@ -409,6 +409,129 @@ class Str(private val lang: UiLanguage) {
+             "A set needs at least one row with both sides filled in."
+         )
+ 
++    // ---- LISTA ZESTAWOW: wlasne na gorze, katalog tylko do odczytu ----------
++    // Naglowki, przyciski i plakietki rysuje PixelText, wiec trzymaja sie znakow arkusza.
++    val mySets get() = pick("MOJE ZESTAWY", "MY SETS")
++    val noOwnSets get() = pick(
++        "Nie masz jeszcze własnych zestawów. Utwórz pierwszy albo skopiuj któryś z katalogu.",
++        "No sets of your own yet. Create one or copy one from the catalogue.",
++    )
++    val catalogue get() = pick("KATALOG", "CATALOGUE")
++    val catalogueNote get() = pick(
++        "Zestawy z katalogu są tylko do odczytu. Chcesz któryś przerobić? Skopiuj go do swoich: " +
++            "postęp w jego słówkach skopiuje się razem z nim.",
++        "Catalogue sets are read-only. Want to rework one? Copy it to your own sets: " +
++            "your progress on its words is copied with it.",
++    )
++    /** Dzial dla zestawu z katalogu bez tematu w tytule: uczen mogl go zmienic do wersji 0.9.18. */
++    val catalogueOther get() = pick("Pozostałe", "Other")
++    val topicExpanded get() = pick("rozwinięty", "expanded")
++    val topicCollapsed get() = pick("zwinięty", "collapsed")
++    /** Przycisk na karcie zestawu wlasnego. Krotszy niz [editSet], bo obok stoi jeszcze kosz. */
++    val edit get() = pick("Edytuj", "Edit")
++    val copyToMine get() = pick("SKOPIUJ DO MOICH", "COPY TO MINE")
++    val savedPill get() = pick("ZAPISANO", "SAVED")
++    val draftPill get() = pick("SZKIC", "DRAFT")
++    /** Druga linia przycisku "Utworz zestaw", gdy na dysku czeka szkic nowego zestawu. */
++    val unfinishedDraft get() = pick("masz niedokończony szkic", "you have an unfinished draft")
++
++    // ---- EDYTOR ZESTAWU -------------------------------------------------------
++    /** Dopisek do tytulu kopii zestawu z katalogu. Slowo, a nie nawias: font nie ma nawiasow. */
++    val copySuffix get() = pick("kopia", "copy")
++    val copySet get() = pick("Kopia zestawu", "Copy of a set")
++    val copyNote get() = pick(
++        "To kopia zestawu z katalogu. Oryginał zostaje bez zmian. Po zapisaniu kopia trafi do " +
++            "Twoich zestawów razem z postępem w tych słówkach.",
++        "This is a copy of a catalogue set. The original stays as it is. Once saved, the copy " +
++            "lands in your sets together with your progress on these words.",
++    )
++    // Nazwy pol i przyciskow dla czytnika ekranu: pole bez tresci nie ma skad wziac nazwy,
++    // a kosz przy wierszu to sama ikona.
++    val termLanguage get() = pick("Język haseł", "Language of the terms")
++    val definitionLanguage get() = pick("Język tłumaczeń", "Language of the translations")
++    fun termLabel(n: Int) = pick("Hasło $n", "Term $n")
++    fun definitionLabel(n: Int) = pick("Tłumaczenie $n", "Translation $n")
++    fun deleteRow(n: Int) = pick("Usuń wiersz $n", "Delete row $n")
++    fun rowsCount(n: Int): String = "$n " + pick(
++        Podsumowanie.forma(n, FormyLiczby("wiersz", "wiersze", "wierszy")),
++        if (n == 1) "row" else "rows",
++    )
++
++    val unsavedChanges get() = pick("Masz niezapisane zmiany.", "You have unsaved changes.")
++    val discardChanges get() = pick("ODRZUĆ ZMIANY", "DISCARD CHANGES")
++    val backToEditing get() = pick("WRÓĆ DO EDYCJI", "KEEP EDITING")
++
++    /**
++     * Wiersze z jedna strona. [numery] to numery z ekranu, rosnaco. Trzy i wiecej kolejnych
++     * skleja sie w zakres ("4-25"): przy zestawie wpisanym najpierw jedna kolumna komunikat
++     * mialby inaczej dwadziescia liczb.
++     */
++    fun incompleteRows(numery: List<Int>): String {
++        val lista = listaNumerow(numery, pick("i", "and"))
++        return if (numery.size == 1) {
++            pick(
++                "Wiersz $lista ma wypełnioną tylko jedną stronę.",
++                "Row $lista has only one side filled in.",
++            )
++        } else {
++            pick(
++                "Wiersze $lista mają wypełnioną tylko jedną stronę.",
++                "Rows $lista have only one side filled in.",
++            )
++        } + " " + pick(
++            "Do zestawu trafiają tylko wiersze z hasłem i tłumaczeniem.",
++            "Only rows with both a term and a translation go into the set.",
++        )
++    }
++    private fun listaNumerow(numery: List<Int>, spojnik: String): String {
++        val kawalki = ArrayList<String>()
++        var i = 0
++        while (i < numery.size) {
++            var j = i
++            while (j + 1 < numery.size && numery[j + 1] == numery[j] + 1) j++
++            if (j - i >= 2) {
++                kawalki.add("${numery[i]}-${numery[j]}")
++            } else {
++                for (k in i..j) kawalki.add("${numery[k]}")
++            }
++            i = j + 1
++        }
++        if (kawalki.size < 2) return kawalki.joinToString()
++        return kawalki.dropLast(1).joinToString() + " $spojnik " + kawalki.last()
++    }
++    val fillInRows get() = pick("UZUPEŁNIĘ", "I'LL FILL THEM IN")
++    /** Liczba stoi w napisie, zeby uczen widzial, ile wierszy odpadnie, zanim dotknie przycisku. */
++    fun saveWithoutRows(n: Int) = pick(
++        if (n == 1) "ZAPISZ BEZ TEGO WIERSZA" else "ZAPISZ BEZ NICH: $n",
++        if (n == 1) "SAVE WITHOUT THAT ROW" else "SAVE WITHOUT THEM: $n",
++    )
++    val missingTerm get() = pick("brakuje hasła", "term missing")
++    val missingDefinition get() = pick("brakuje tłumaczenia", "translation missing")
++
++    /**
++     * Zapis zestawu sie nie udal i edytor zostaje otwarty. Ogolny [saveFailed] mowi "ostatnia
++     * zmiana moze nie przetrwac", a tu byloby to nieprawda w obie strony: zestawu na dysku nie
++     * ma wcale, za to wpisane wiersze nigdzie nie zniknely.
++     */
++    val setNotSaved get() = pick(
++        "Nie udało się zapisać zestawu na telefonie. Zestaw NIE jest zapisany, ale Twoje wiersze " +
++            "nadal tu są. Sprawdź wolne miejsce i spróbuj jeszcze raz.",
++        "Could not save the set on this device. The set is NOT saved, but your rows are still " +
++            "here. Check free space and try again.",
++    )
++
++    val draftFound get() = pick(
++        "Znaleziono niedokończony szkic z ostatniego razu.",
++        "Found an unfinished draft from last time.",
++    )
++    fun draftSummary(tytul: String, wiersze: Int) =
++        tytul.ifBlank { untitledSet } + ": " + rowsCount(wiersze)
++    val restoreDraft get() = pick("PRZYWRÓĆ", "RESTORE")
++    val discardDraft get() = pick("ODRZUĆ", "DISCARD")
++
++    fun rowDeleted(n: Int) = pick("Usunięto wiersz $n.", "Row $n deleted.")
++    val undo get() = pick("COFNIJ", "UNDO")
++
+     val sound get() = pick("Dźwięk", "Sound")
+     val lives get() = pick("Życia", "Lives")
+     val texture get() = pick("Tło planszy", "Board background")
+diff --git a/app/src/test/java/com/matura/app/PixelFontZnakiTest.kt b/app/src/test/java/com/matura/app/PixelFontZnakiTest.kt
+new file mode 100644
+index 0000000..b24fb36
+--- /dev/null
++++ b/app/src/test/java/com/matura/app/PixelFontZnakiTest.kt
+@@ -0,0 +1,181 @@
++package com.matura.app
++
++import com.matura.app.data.BuiltInSets
++import com.matura.app.model.Achievement
++import com.matura.app.model.UiLanguage
++import com.matura.app.ui.PixelFont
++import com.matura.app.ui.SesjaStr
++import com.matura.app.ui.Str
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertSame
++import org.junit.Assert.assertTrue
++import org.junit.Test
++import java.lang.reflect.Modifier
++
++/**
++ * Font bitmapowy ma 93 glify, a uczen wpisuje imie i wlasne zestawy czym chce.
++ *
++ * Do 0.9.18 znak spoza arkusza rysowal sie jako pusta kratka: imie "Zoë" stalo pod logo jako
++ * "Zo ", "Олена" jako pusta linia, a zestaw "Straße" szedl na plansze jako "Stra e". Czytnik
++ * ekranu dostawal przy tym pelny napis, wiec widzacy i niewidomy uczen mieli co innego.
++ *
++ * Dwie strony tej samej poprawki sa tu sprawdzane osobno. Znak z akcentem albo ligatura ma sie
++ * narysowac literami arkusza. A wszystko, co aplikacja rysuje SAMA (napisy interfejsu, katalog
++ * slow), ma wygladac dokladnie tak jak przedtem: zadnego przepisywania i zadnego zejscia na
++ * czcionke systemu.
++ */
++class PixelFontZnakiTest {
++
++    // ---- znaki wpisane przez ucznia -------------------------------------------
++
++    @Test
++    fun `litera z akcentem rysuje sie jako litera podstawowa`() {
++        assertEquals("Zoe", PixelFont.rozpisz("Zoë"))
++        assertEquals("Cafe deja vu", PixelFont.rozpisz("Café déjà vu"))
++        assertEquals("Nino Muller Zizka", PixelFont.rozpisz("Niño Müller Žižka"))
++        assertEquals("ANGSTROM", PixelFont.rozpisz("ÅNGSTRÖM"))
++        assertTrue(PixelFont.daSieNarysowac("Zoë"))
++        assertTrue(PixelFont.daSieNarysowac("Café déjà vu"))
++    }
++
++    @Test
++    fun `akcent wpisany osobnym znakiem odpada, a litera zostaje`() {
++        // Ta sama litera w postaci rozlozonej: "e" i osobny znak akcentu (U+0308, U+0301).
++        assertEquals("Zoe", PixelFont.rozpisz("Zoë"))
++        assertEquals("Cafe", PixelFont.rozpisz("Café"))
++        assertTrue(PixelFont.daSieNarysowac("Zoë"))
++    }
++
++    @Test
++    fun `polskie litery zostaja polskimi literami`() {
++        // Arkusz MA polskie znaki. Rozklad na litere i akcent zrobilby z "ż" zwykle "z".
++        val polskie = "Zażółć gęślą jaźń ZAŻÓŁĆ GĘŚLĄ JAŹŃ"
++        assertSame(polskie, PixelFont.rozpisz(polskie))
++    }
++
++    @Test
++    fun `niemieckie ostre s i ligatury rozpisuja sie na dwie litery`() {
++        assertEquals("Strasse", PixelFont.rozpisz("Straße"))
++        assertEquals("STRASSE", PixelFont.rozpisz("STRAẞE"))
++        assertEquals("fish, flower, office", PixelFont.rozpisz("ﬁsh, ﬂower, oﬃce"))
++        assertEquals("aether oeuvre AEON", PixelFont.rozpisz("æther œuvre ÆON"))
++        assertEquals("smorrebrod", PixelFont.rozpisz("smørrebrød"))
++        assertTrue(PixelFont.daSieNarysowac("Straße"))
++    }
++
++    @Test
++    fun `cudzyslowy, kreski i spacje o innych kodach maja zwykle odpowiedniki`() {
++        assertEquals("'bonjour' 'hola'", PixelFont.rozpisz("«bonjour» ‹hola›"))
++        assertEquals("5 - 3", PixelFont.rozpisz("5 − 3"))
++        assertEquals("?Que? !Si!", PixelFont.rozpisz("¿Que? ¡Si!"))
++        assertEquals("10 km", PixelFont.rozpisz("10 km"))
++    }
++
++    @Test
++    fun `znak bez glifu zostaje w napisie i kieruje caly napis do czcionki systemu`() {
++        for (napis in listOf("Олена", "Ελένη", "李明", "Kuba 🙂", "Zoë Олена")) {
++            assertFalse("\"$napis\" nie ma kompletu glifow", PixelFont.daSieNarysowac(napis))
++        }
++        // Niczego nie gubimy po drodze: czego nie da sie przepisac, zostaje, jak bylo.
++        assertEquals("Олена", PixelFont.rozpisz("Олена"))
++        assertEquals("Zoe Олена", PixelFont.rozpisz("Zoë Олена"))
++    }
++
++    @Test
++    fun `pusty napis i zlamanie linii nie sa bledem`() {
++        assertSame("", PixelFont.rozpisz(""))
++        assertTrue(PixelFont.daSieNarysowac(""))
++        assertTrue(PixelFont.daSieNarysowac("dwie\nlinie"))
++        assertEquals("dwie\nlinie", PixelFont.rozpisz("dwie\nlinie"))
++    }
++
++    // ---- to, co aplikacja rysuje sama -----------------------------------------
++
++    /**
++     * Wszystkie teksty jednej tablicy napisow, w obu jezykach: wlasciwosci i funkcje publiczne
++     * zwracajace String. Funkcje dostaja po kilka wartosci kazdego parametru, bo odmiana zalezy
++     * od liczby, a nazwa kroku sesji od jego rodzaju.
++     */
++    private fun napisyZ(tablica: (UiLanguage) -> Any): Map<String, List<String>> {
++        val wynik = LinkedHashMap<String, MutableList<String>>()
++        for (jezyk in UiLanguage.entries) {
++            val obiekt = tablica(jezyk)
++            for (metoda in obiekt.javaClass.declaredMethods) {
++                if (!Modifier.isPublic(metoda.modifiers) || metoda.returnType != String::class.java) continue
++                val wartosci = metoda.parameterTypes.map { typ ->
++                    when {
++                        typ == Int::class.javaPrimitiveType -> listOf(1, 2, 5, 22)
++                        typ == String::class.java -> listOf("Moje")
++                        typ == List::class.java -> listOf(listOf(4), listOf(2, 5), listOf(2, 5, 6, 7, 9))
++                        typ.isEnum -> typ.enumConstants.toList()
++                        else -> error("nieznany typ parametru ${typ.name} w ${metoda.name}")
++                    }
++                }
++                val ile = wartosci.maxOfOrNull { it.size } ?: 1
++                for (nr in 0 until ile) {
++                    val argumenty = wartosci.map { it[nr % it.size] }
++                    val napis = metoda.invoke(obiekt, *argumenty.toTypedArray()) as String
++                    wynik.getOrPut(metoda.name) { ArrayList() }.add(napis)
++                }
++            }
++        }
++        return wynik
++    }
++
++    /**
++     * Teksty z Str, ktore maja w sobie strzalke. Arkusz jej nie ma i nie ma jej czym zastapic,
++     * wiec te napisy ida ZAWSZE czcionka systemu (Text): chipy kierunku, podpowiedzi "OPCJE →"
++     * i polityka prywatnosci. Lista jest jawna, zeby nowy napis ze znakiem spoza arkusza nie
++     * przeszedl niezauwazony: albo trafi tutaj swiadomie, albo test go zatrzyma.
++     */
++    private val pisaneCzcionkaSystemu = setOf(
++        "getDirTermToDef", "getDirDefToTerm", "getVoiceTestWhere", "getRawMicWhere", "getPrivacyBody",
++    )
++
++    @Test
++    fun `zaden napis interfejsu nie schodzi na czcionke systemu`() {
++        val napisy = napisyZ { Str(it) } + napisyZ { SesjaStr(it) }.mapKeys { "sesja." + it.key }
++        assertTrue("refleksja nie znalazla napisow: ${napisy.size}", napisy.size > 150)
++
++        val schodzace = napisy
++            .filterKeys { it !in pisaneCzcionkaSystemu }
++            .filterValues { wersje -> wersje.any { !PixelFont.daSieNarysowac(it) } }
++            .keys
++        assertEquals(
++            "napisy, ktorych font bitmapowy nie narysuje w calosci (PixelText pokaze je czcionka systemu)",
++            emptySet<String>(),
++            schodzace,
++        )
++
++        // Lista wyjatkow nie moze zarosnac: napis, ktory juz sie miesci, ma z niej zniknac.
++        for (nazwa in pisaneCzcionkaSystemu) {
++            assertTrue(
++                "$nazwa miesci sie w arkuszu, wiec nie powinien byc na liscie wyjatkow",
++                napisy.getValue(nazwa).any { !PixelFont.daSieNarysowac(it) },
++            )
++        }
++    }
++
++    @Test
++    fun `napisy interfejsu i katalog slow rysuja sie tak jak przedtem`() {
++        // "Tak jak przedtem" znaczy tu: napis nie jest przepisywany, wiec do rysowania idzie
++        // znak w znak to samo co do 0.9.18. Ten sam obiekt wraca tylko wtedy, gdy kazdy znak
++        // jest w arkuszu albo ma w nim dawny zamiennik.
++        val katalog = BuiltInSets.all()
++        val slowa = katalog.flatMap { set ->
++            listOf(set.title, set.shortTitle, set.category.orEmpty()) +
++                set.entries.flatMap { listOf(it.term, it.definition) }
++        }
++        assertTrue("katalog jest pusty?", slowa.size > 4000)
++        val odznaki = Achievement.entries.flatMap { listOf(it.titlePl, it.titleEn, it.descPl, it.descEn) }
++        val interfejs = (napisyZ { Str(it) } + napisyZ { SesjaStr(it) }.mapKeys { "sesja." + it.key })
++            .filterKeys { it !in pisaneCzcionkaSystemu }
++            .values.flatten()
++
++        for (napis in slowa + odznaki + interfejs + BuiltInSets.randomMix(seed = 1).title) {
++            assertTrue("\"$napis\" zszedlby na czcionke systemu", PixelFont.daSieNarysowac(napis))
++            assertSame("\"$napis\" jest przepisywany przed rysowaniem", napis, PixelFont.rozpisz(napis))
++        }
++    }
++}
+diff --git a/app/src/test/java/com/matura/app/SzkiceZestawowTest.kt b/app/src/test/java/com/matura/app/SzkiceZestawowTest.kt
+new file mode 100644
+index 0000000..38bf57a
+--- /dev/null
++++ b/app/src/test/java/com/matura/app/SzkiceZestawowTest.kt
+@@ -0,0 +1,200 @@
++package com.matura.app
++
++import com.matura.app.data.Repository
++import com.matura.app.data.SzkicZestawu
++import com.matura.app.data.SzkiceZestawow
++import com.matura.app.data.WierszSzkicu
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNotEquals
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Rule
++import org.junit.Test
++import org.junit.rules.TemporaryFolder
++import java.io.File
++
++/**
++ * Szkic edytora zestawow na dysku.
++ *
++ * Po co: stos ekranow zyje tylko w pamieci. Uczen w polowie wpisywania zestawu przechodzi do
++ * slownika, system ubija gre i po powrocie aplikacja stoi na ekranie startowym, a trzydziesci
++ * wpisanych wierszy nie istnieje nigdzie. Szkic ma to przezyc, wiec tutaj kazdy test konczy
++ * sie NOWYM obiektem nad tym samym katalogiem: tak wyglada restart procesu.
++ */
++class SzkiceZestawowTest {
++
++    /** Sklad dostaje katalog w konstruktorze, tak samo jak Repository w PersistenceTest. */
++    @get:Rule
++    val katalog = TemporaryFolder()
++
++    private fun plik(nazwa: String) = File(katalog.root, nazwa)
++
++    private fun poRestarcie() = SzkiceZestawow(katalog.root)
++
++    private val nowy = SzkicZestawu(
++        idZestawu = null,
++        tytul = "Czasowniki nieregularne",
++        jezykHasel = "English",
++        jezykTlumaczen = "Polski",
++        wiersze = listOf(
++            WierszSzkicu("go", "iść"),
++            WierszSzkicu("went", ""),
++            WierszSzkicu("", ""),
++        ),
++    )
++
++    private val poprawiany = SzkicZestawu(
++        idZestawu = "user-1",
++        tytul = "Moje słówka",
++        jezykHasel = "English",
++        jezykTlumaczen = "Polski",
++        wiersze = listOf(WierszSzkicu("dog", "pies, piesek", "u0123456789ab")),
++    )
++
++    @Test
++    fun `szkic przezywa restart razem z pustymi i niepelnymi wierszami`() {
++        assertTrue(SzkiceZestawow(katalog.root).zapisz(nowy))
++
++        assertEquals(nowy, poRestarcie().wczytaj(null))
++        assertTrue(plik(SzkiceZestawow.FILE_NAME).exists())
++        assertFalse("plik tymczasowy zostal po udanym zapisie", plik(SzkiceZestawow.TEMP_NAME).exists())
++    }
++
++    @Test
++    fun `wiersz szkicu pamieta identyfikator wpisu`() {
++        // Bez identyfikatora przywrocony szkic bylby dla zapisu lista NOWYCH slow i gubil nauke
++        // zestawu, ktory uczen tylko poprawial.
++        SzkiceZestawow(katalog.root).zapisz(poprawiany)
++
++        assertEquals("u0123456789ab", poRestarcie().wczytaj("user-1")!!.wiersze.single().id)
++    }
++
++    @Test
++    fun `bez szkicu nie ma czego wczytac i nie powstaje zaden plik`() {
++        val szkice = SzkiceZestawow(katalog.root)
++
++        assertNull(szkice.wczytaj(null))
++        assertNull(szkice.wczytaj("user-1"))
++        assertTrue(szkice.zestawyZeSzkicem().isEmpty())
++        assertTrue("kasowanie szkicu, ktorego nie ma, tez jest udane", szkice.usun(null))
++        assertFalse(plik(SzkiceZestawow.FILE_NAME).exists())
++    }
++
++    @Test
++    fun `szkic innego zestawu zostaje nietkniety`() {
++        // Niedokonczony NOWY zestaw czeka na przywrocenie, a uczen poprawia w tym czasie
++        // literowke w innym. Przy jednym szkicu na caly plik poprawka nadpisywalaby po cichu
++        // tamte wiersze.
++        val szkice = SzkiceZestawow(katalog.root)
++        szkice.zapisz(nowy)
++        szkice.zapisz(poprawiany)
++
++        val po = poRestarcie()
++        assertEquals(nowy, po.wczytaj(null))
++        assertEquals(poprawiany, po.wczytaj("user-1"))
++        assertEquals(setOf(null, "user-1"), po.zestawyZeSzkicem())
++    }
++
++    @Test
++    fun `nowsza wersja szkicu zastepuje starsza dla tego samego zestawu`() {
++        val szkice = SzkiceZestawow(katalog.root)
++        szkice.zapisz(nowy)
++        val dalej = nowy.copy(wiersze = nowy.wiersze + WierszSzkicu("see", "widzieć"))
++        szkice.zapisz(dalej)
++
++        assertEquals(dalej, poRestarcie().wczytaj(null))
++        assertEquals(setOf<String?>(null), poRestarcie().zestawyZeSzkicem())
++    }
++
++    @Test
++    fun `skasowanie szkicu zostawia pozostale, a ostatni zabiera plik`() {
++        val szkice = SzkiceZestawow(katalog.root)
++        szkice.zapisz(nowy)
++        szkice.zapisz(poprawiany)
++
++        assertTrue(szkice.usun(null))
++        assertNull(poRestarcie().wczytaj(null))
++        assertEquals(poprawiany, poRestarcie().wczytaj("user-1"))
++
++        assertTrue(szkice.usun("user-1"))
++        assertFalse("po ostatnim szkicu nie ma zostac pusty plik", plik(SzkiceZestawow.FILE_NAME).exists())
++    }
++
++    @Test
++    fun `nieczytelny plik szkicow jest pomijany i kasowany`() {
++        plik(SzkiceZestawow.FILE_NAME).writeText("""{"szkice":[{"tytul":"Urwany w pol""")
++
++        val szkice = SzkiceZestawow(katalog.root)
++        assertNull(szkice.wczytaj(null))
++        assertFalse(
++            "nieczytelny szkic wracalby przy kazdym otwarciu edytora",
++            plik(SzkiceZestawow.FILE_NAME).exists(),
++        )
++
++        // Po takim pliku sklad dziala dalej normalnie.
++        assertTrue(szkice.zapisz(nowy))
++        assertEquals(nowy, poRestarcie().wczytaj(null))
++    }
++
++    @Test
++    fun `nieudany zapis szkicu zostawia poprzedni szkic w calosci`() {
++        val szkice = SzkiceZestawow(katalog.root)
++        assertTrue(szkice.zapisz(nowy))
++
++        // Katalog podstawiony pod nazwe pliku tymczasowego: strumienia nie da sie otworzyc.
++        // Ta sama sztuczka co w PersistenceTest (prawa dostepu nie blokuja uzytkownika root).
++        val blokada = plik(SzkiceZestawow.TEMP_NAME)
++        blokada.mkdirs()
++        File(blokada, "zajete").writeText("x")
++
++        assertFalse(szkice.zapisz(nowy.copy(tytul = "Nowszy")))
++        assertEquals(
++            "zapis przez plik tymczasowy nie moze uszkodzic tego, co juz lezy na dysku",
++            nowy,
++            poRestarcie().wczytaj(null),
++        )
++    }
++
++    @Test
++    fun `szkic lezy obok zapisu gry i go nie dotyka`() {
++        val repo = Repository(katalog.root)
++        assertTrue(repo.setOptions(repo.load().options.copy(soundEnabled = false)))
++        val zapisPrzed = plik(Repository.FILE_NAME).readText()
++
++        assertTrue(repo.szkice.zapisz(nowy))
++
++        assertEquals(zapisPrzed, plik(Repository.FILE_NAME).readText())
++        assertEquals(nowy, SzkiceZestawow(katalog.root).wczytaj(null))
++        // I w druga strone: zapis gry nie rusza szkicu.
++        assertTrue(repo.setOptions(repo.load().options.copy(soundEnabled = true)))
++        assertEquals(nowy, SzkiceZestawow(katalog.root).wczytaj(null))
++    }
++
++    // ---- porownywanie tresci -------------------------------------------------
++
++    @Test
++    fun `tresc pomija puste wiersze, spacje na brzegach i identyfikatory`() {
++        val wpisany = SzkicZestawu(
++            idZestawu = "user-1",
++            tytul = "  Moje słówka ",
++            jezykHasel = "English",
++            jezykTlumaczen = "Polski ",
++            wiersze = listOf(
++                WierszSzkicu(" dog", "pies, piesek ", "u0123456789ab"),
++                WierszSzkicu("", "   "),
++            ),
++        )
++        val otwarty = poprawiany.copy(wiersze = listOf(WierszSzkicu("dog", "pies, piesek")))
++
++        assertEquals(otwarty.tresc(), wpisany.tresc())
++    }
++
++    @Test
++    fun `wiersz wypelniony w polowie jest trescia`() {
++        // To tez jest wpisana praca: edytor ma przy nim pytac przy wyjsciu i trzymac szkic.
++        val zPolowka = poprawiany.copy(wiersze = poprawiany.wiersze + WierszSzkicu("cat", ""))
++
++        assertNotEquals(poprawiany.tresc(), zPolowka.tresc())
++    }
++}
+diff --git a/app/src/test/java/com/matura/app/ZestawyWRepozytoriumTest.kt b/app/src/test/java/com/matura/app/ZestawyWRepozytoriumTest.kt
+new file mode 100644
+index 0000000..fc250f7
+--- /dev/null
++++ b/app/src/test/java/com/matura/app/ZestawyWRepozytoriumTest.kt
+@@ -0,0 +1,351 @@
++package com.matura.app
++
++import com.matura.app.data.Repository
++import com.matura.app.data.SampleData
++import com.matura.app.learn.Attempt
++import com.matura.app.learn.EntryId
++import com.matura.app.learn.Outcome
++import com.matura.app.learn.Srs
++import com.matura.app.model.Direction
++import com.matura.app.model.Entry
++import com.matura.app.model.TaskKind
++import com.matura.app.model.WordProgress
++import com.matura.app.model.WordSet
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNotEquals
++import org.junit.Assert.assertTrue
++import org.junit.Rule
++import org.junit.Test
++import org.junit.rules.TemporaryFolder
++import java.io.File
++import kotlin.random.Random
++
++/**
++ * Dwie rzeczy, ktore zapis zestawu robi z POSTEPEM nauki.
++ *
++ * Zamiana kolumn. Klucz postepu to identyfikator wpisu i kierunek, a zamiana stron zostawia
++ * wierszowi identyfikator. Bez przestawienia zapisow slowo cwiczone tylko z angielskiego na
++ * polski bylo po zamianie "utrwalone" w kierunku, ktorego uczen nigdy nie probowal.
++ *
++ * Kopia zestawu z katalogu. Katalog jest tylko do odczytu; "Skopiuj do moich" robi z zestawu
++ * zestaw wlasny z nowymi identyfikatorami wpisow, a uczen nie ma przy tym zaczynac znanych slow
++ * od zera.
++ */
++class ZestawyWRepozytoriumTest {
++
++    @get:Rule
++    val katalog = TemporaryFolder()
++
++    private companion object {
++        const val DZIS = 19_875
++        const val WLASNY = "user-1"
++        fun poludnie(dzien: Int) = dzien * Srs.MS_PER_DAY + Srs.MS_PER_DAY / 2
++    }
++
++    private fun poRestarcie() = Repository(katalog.root)
++
++    private fun wlasny(repo: Repository) = repo.load().sets.first { it.id == WLASNY }
++
++    /** Jedna zaliczona proba: slowo laduje w pudelku 1 w podanym kierunku. */
++    private fun zalicz(repo: Repository, id: String, kierunek: Direction, znacznik: String) {
++        assertTrue(
++            repo.recordAttempt(
++                Attempt(id, kierunek, TaskKind.PRZYPOMNIENIE, Outcome.POPRAWNA, znacznik),
++                poludnie(DZIS),
++            ),
++        )
++    }
++
++    private fun zestawWlasny(repo: Repository, vararg wiersze: Pair<String, String>): List<Entry> {
++        assertTrue(
++            repo.upsertSet(
++                WordSet(id = WLASNY, title = "Moje słówka", entries = wiersze.map { Entry(it.first, it.second) }),
++            ),
++        )
++        return wlasny(repo).entries
++    }
++
++    /** Zapis tak, jak robi go edytor: wiersze niosa identyfikatory, z ktorymi zostaly otwarte. */
++    private fun zapiszZamienione(repo: Repository, wpisy: List<Entry>) = repo.upsertSet(
++        wlasny(repo).copy(
++            termLanguage = "Polski",
++            definitionLanguage = "English",
++            entries = wpisy.map { Entry(it.definition, it.term, it.id) },
++        ),
++    )
++
++    // ---- zamiana kolumn -------------------------------------------------------
++
++    @Test
++    fun `zamiana kolumn przenosi postep razem z umiejetnoscia`() {
++        val repo = Repository(katalog.root)
++        val (dog, cat) = zestawWlasny(repo, "dog" to "pies", "cat" to "kot")
++        // "dog" cwiczony z angielskiego na polski, "cat" w obie strony, ale kazda inaczej.
++        zalicz(repo, dog.id, Direction.TERM_TO_DEF, "p1")
++        zalicz(repo, cat.id, Direction.TERM_TO_DEF, "p2")
++        assertTrue(
++            repo.recordAttempt(
++                Attempt(cat.id, Direction.DEF_TO_TERM, TaskKind.PRZYPOMNIENIE, Outcome.BLEDNA, "p3"),
++                poludnie(DZIS),
++            ),
++        )
++        val przed = repo.load().progress
++        val catAngPol = przed.getValue(Srs.key(cat.id, Direction.TERM_TO_DEF))
++        val catPolAng = przed.getValue(Srs.key(cat.id, Direction.DEF_TO_TERM))
++        assertNotEquals(catAngPol, catPolAng)
++
++        assertTrue(zapiszZamienione(repo, listOf(dog, cat)))
++
++        val po = poRestarcie()
++        val wpisy = po.load().sets.first { it.id == WLASNY }.entries
++        assertEquals("wiersze zachowuja tozsamosc", listOf(dog.id, cat.id), wpisy.map { it.id })
++        assertEquals(listOf("pies", "kot"), wpisy.map { it.term })
++
++        // Teraz TERM_TO_DEF znaczy "pies -> dog", czyli kierunek, ktorego uczen nie cwiczyl.
++        assertEquals(Srs.NO_BOX, po.progressOf(dog.id, Direction.TERM_TO_DEF).box)
++        assertFalse(
++            "pusty stan ma byc brakiem wpisu, a nie wpisem z pudelkiem 0",
++            po.load().progress.containsKey(Srs.key(dog.id, Direction.TERM_TO_DEF)),
++        )
++        assertEquals(Srs.FIRST_BOX, po.progressOf(dog.id, Direction.DEF_TO_TERM).box)
++        // Dwa rozne zapisy zamieniaja sie miejscami w calosci, z licznikami i terminem.
++        assertEquals(catPolAng, po.progressOf(cat.id, Direction.TERM_TO_DEF))
++        assertEquals(catAngPol, po.progressOf(cat.id, Direction.DEF_TO_TERM))
++    }
++
++    @Test
++    fun `dwie zamiany z rzedu wracaja do punktu wyjscia`() {
++        val repo = Repository(katalog.root)
++        val (dog) = zestawWlasny(repo, "dog" to "pies")
++        zalicz(repo, dog.id, Direction.TERM_TO_DEF, "p1")
++        val przed = repo.load().progress
++
++        assertTrue(zapiszZamienione(repo, listOf(dog)))
++        assertTrue(zapiszZamienione(repo, wlasny(repo).entries))
++
++        assertEquals(przed, poRestarcie().load().progress)
++        assertEquals("dog", wlasny(repo).entries.single().term)
++    }
++
++    @Test
++    fun `zamiana dziala takze wtedy, gdy wiersze przychodza bez identyfikatorow`() {
++        // Tak zapisuja zestaw wolajacy, ktorzy nie niosa identyfikatorow: tozsamosc wiersza
++        // odtwarza wtedy EntryId.reconcile po numerze wiersza i regula ma dzialac tak samo.
++        val repo = Repository(katalog.root)
++        val (dog) = zestawWlasny(repo, "dog" to "pies")
++        zalicz(repo, dog.id, Direction.TERM_TO_DEF, "p1")
++
++        assertTrue(repo.upsertSet(wlasny(repo).copy(entries = listOf(Entry("pies", "dog")))))
++
++        val po = poRestarcie()
++        assertEquals(dog.id, po.load().sets.first { it.id == WLASNY }.entries.single().id)
++        assertEquals(Srs.NO_BOX, po.progressOf(dog.id, Direction.TERM_TO_DEF).box)
++        assertEquals(Srs.FIRST_BOX, po.progressOf(dog.id, Direction.DEF_TO_TERM).box)
++    }
++
++    @Test
++    fun `zwykla poprawka i zapis bez zmian nie ruszaja postepu`() {
++        val repo = Repository(katalog.root)
++        val (dog, cat, radar) = zestawWlasny(repo, "dog" to "pies", "cat" to "kot", "radar" to "radar")
++        listOf(dog, cat, radar).forEachIndexed { i, wpis ->
++            zalicz(repo, wpis.id, Direction.TERM_TO_DEF, "p$i")
++        }
++        val przed = repo.load().progress
++
++        // Bez zmian, potem poprawka tlumaczenia. Wiersz o dwoch jednakowych stronach jest
++        // swoim wlasnym odbiciem i nie moze przy kazdym zapisie przeskakiwac miedzy kierunkami.
++        assertTrue(repo.upsertSet(wlasny(repo)))
++        assertEquals(przed, repo.load().progress)
++        assertTrue(
++            repo.upsertSet(
++                wlasny(repo).copy(
++                    entries = listOf(dog, cat.copy(definition = "kot, kotka"), radar),
++                ),
++            ),
++        )
++
++        assertEquals(przed, poRestarcie().load().progress)
++    }
++
++    @Test
++    fun `wiersz poprawiony przy okazji zamiany zostaje przy swoim postepie`() {
++        // Po tresci nie da sie go odroznic od zwyklej poprawki, wiec regula go nie rusza.
++        val repo = Repository(katalog.root)
++        val (dog, cat) = zestawWlasny(repo, "dog" to "pies", "cat" to "kot")
++        zalicz(repo, dog.id, Direction.TERM_TO_DEF, "p1")
++        zalicz(repo, cat.id, Direction.TERM_TO_DEF, "p2")
++
++        assertTrue(
++            repo.upsertSet(
++                wlasny(repo).copy(
++                    entries = listOf(Entry("pies", "dog", dog.id), Entry("kotek", "cat", cat.id)),
++                ),
++            ),
++        )
++
++        val po = poRestarcie()
++        assertEquals(Srs.FIRST_BOX, po.progressOf(dog.id, Direction.DEF_TO_TERM).box)
++        assertEquals(Srs.FIRST_BOX, po.progressOf(cat.id, Direction.TERM_TO_DEF).box)
++        assertEquals(Srs.NO_BOX, po.progressOf(cat.id, Direction.DEF_TO_TERM).box)
++    }
++
++    @Test
++    fun `nieudany zapis zamiany nie zostawia postepu w polowie`() {
++        val repo = Repository(katalog.root)
++        val (dog) = zestawWlasny(repo, "dog" to "pies")
++        zalicz(repo, dog.id, Direction.TERM_TO_DEF, "p1")
++        val przed = repo.load()
++
++        val blokada = File(katalog.root, Repository.TEMP_NAME)
++        blokada.mkdirs()
++        File(blokada, "zajete").writeText("x")
++
++        assertFalse(zapiszZamienione(repo, listOf(dog)))
++        assertEquals("pamiec nie moze twierdzic czegos, czego nie ma na dysku", przed, repo.load())
++        blokada.deleteRecursively()
++        assertEquals(przed, poRestarcie().load())
++    }
++
++    // ---- kopia zestawu z katalogu ---------------------------------------------
++
++    private val oryginal = SampleData.builtInSets().first()
++
++    /** Kopia tak, jak sklada ja edytor: zestaw wlasny, wpisy z identyfikatorami katalogu. */
++    private fun kopia(wpisy: List<Entry> = oryginal.entries) = WordSet(
++        id = "user-kopia",
++        title = oryginal.title.replace('·', '-') + " kopia",
++        termLanguage = oryginal.termLanguage,
++        definitionLanguage = oryginal.definitionLanguage,
++        entries = wpisy,
++        builtIn = false,
++        createdAt = 1_700_000_000_000L,
++    )
++
++    @Test
++    fun `kopia dostaje wlasne identyfikatory i postep w obu kierunkach`() {
++        val repo = Repository(katalog.root)
++        val (pierwsze, drugie, trzecie) = oryginal.entries
++        zalicz(repo, pierwsze.id, Direction.TERM_TO_DEF, "p1")
++        zalicz(repo, pierwsze.id, Direction.DEF_TO_TERM, "p2")
++        zalicz(repo, drugie.id, Direction.DEF_TO_TERM, "p3")
++        val przed = repo.load().progress
++
++        assertTrue(repo.zapiszKopieZestawu(kopia(), Random(7)))
++
++        val po = poRestarcie()
++        val zapisana = po.load().sets.last()
++        assertEquals("user-kopia", zapisana.id)
++        assertFalse(zapisana.builtIn)
++        assertEquals(
++            oryginal.entries.map { it.term to it.definition },
++            zapisana.entries.map { it.term to it.definition },
++        )
++        assertTrue("kazdy wpis kopii ma identyfikator wlasny", zapisana.entries.all { EntryId.isUser(it.id) })
++        assertEquals(
++            "identyfikatory kopii sa rozne",
++            zapisana.entries.size,
++            zapisana.entries.map { it.id }.toSet().size,
++        )
++
++        fun katalogowy(wpis: Entry, kierunek: Direction) = przed.getValue(Srs.key(wpis.id, kierunek))
++        val (k1, k2, k3) = zapisana.entries
++        assertEquals(katalogowy(pierwsze, Direction.TERM_TO_DEF), po.progressOf(k1.id, Direction.TERM_TO_DEF))
++        assertEquals(katalogowy(pierwsze, Direction.DEF_TO_TERM), po.progressOf(k1.id, Direction.DEF_TO_TERM))
++        // Kierunek, ktorego uczen nie cwiczyl w katalogu, w kopii tez jest pusty.
++        assertEquals(WordProgress(), po.progressOf(k2.id, Direction.TERM_TO_DEF))
++        assertEquals(katalogowy(drugie, Direction.DEF_TO_TERM), po.progressOf(k2.id, Direction.DEF_TO_TERM))
++        assertEquals(trzecie.term, k3.term)
++        assertEquals("slowo bez historii zostaje bez historii", WordProgress(), po.progressOf(k3.id, Direction.TERM_TO_DEF))
++    }
++
++    @Test
++    fun `postep slowa z katalogu i sam katalog zostaja nietkniete`() {
++        val repo = Repository(katalog.root)
++        val pierwsze = oryginal.entries.first()
++        zalicz(repo, pierwsze.id, Direction.TERM_TO_DEF, "p1")
++        val przed = repo.load()
++
++        assertTrue(repo.zapiszKopieZestawu(kopia(), Random(7)))
++
++        val po = poRestarcie().load()
++        assertEquals("katalog w zapisie ma zostac co do znaku ten sam", przed.sets, po.sets.dropLast(1))
++        for ((klucz, stan) in przed.progress) {
++            assertEquals("postep sprzed kopii zmienil sie pod kluczem $klucz", stan, po.progress[klucz])
++        }
++        // Dalsza nauka kopii nie wraca do katalogu: od zapisu to dwa osobne slowa.
++        val wKopii = po.sets.last().entries.first()
++        val repo2 = poRestarcie()
++        assertTrue(
++            repo2.recordAttempt(
++                Attempt(wKopii.id, Direction.TERM_TO_DEF, TaskKind.PRZYPOMNIENIE, Outcome.BLEDNA, "p9"),
++                poludnie(DZIS + 1),
++            ),
++        )
++        assertEquals(
++            przed.progress.getValue(Srs.key(pierwsze.id, Direction.TERM_TO_DEF)),
++            repo2.progressOf(pierwsze.id, Direction.TERM_TO_DEF),
++        )
++    }
++
++    @Test
++    fun `wiersz dopisany w kopii jest nowym slowem, a skasowany nie zostawia sladu`() {
++        val repo = Repository(katalog.root)
++        val (pierwsze, drugie) = oryginal.entries
++        zalicz(repo, pierwsze.id, Direction.TERM_TO_DEF, "p1")
++        zalicz(repo, drugie.id, Direction.TERM_TO_DEF, "p2")
++        val ilePrzed = repo.load().progress.size
++
++        // Uczen skasowal w kopii pierwszy wiersz i dopisal wlasny.
++        assertTrue(repo.zapiszKopieZestawu(kopia(listOf(drugie, Entry("ripe", "dojrzały"))), Random(7)))
++
++        val po = poRestarcie()
++        val (k2, dopisany) = po.load().sets.last().entries
++        assertEquals(Srs.FIRST_BOX, po.progressOf(k2.id, Direction.TERM_TO_DEF).box)
++        assertTrue(EntryId.isUser(dopisany.id))
++        assertEquals(WordProgress(), po.progressOf(dopisany.id, Direction.TERM_TO_DEF))
++        assertEquals(
++            "doszedl dokladnie jeden zapis postepu: dla wiersza, ktory zostal w kopii",
++            ilePrzed + 1,
++            po.load().progress.size,
++        )
++    }
++
++    @Test
++    fun `nieudany zapis kopii nie zostawia ani zestawu, ani postepu`() {
++        val repo = Repository(katalog.root)
++        zalicz(repo, oryginal.entries.first().id, Direction.TERM_TO_DEF, "p1")
++        val przed = repo.load()
++
++        val blokada = File(katalog.root, Repository.TEMP_NAME)
++        blokada.mkdirs()
++        File(blokada, "zajete").writeText("x")
++
++        assertFalse(repo.zapiszKopieZestawu(kopia(), Random(7)))
++        assertEquals(przed, repo.load())
++        blokada.deleteRecursively()
++        assertEquals(przed, poRestarcie().load())
++    }
++
++    @Test
++    fun `zapisana kopia jest zwyklym zestawem wlasnym`() {
++        val repo = Repository(katalog.root)
++        val pierwsze = oryginal.entries.first()
++        zalicz(repo, pierwsze.id, Direction.TERM_TO_DEF, "p1")
++        assertTrue(repo.zapiszKopieZestawu(kopia(), Random(7)))
++        val zapisana = repo.load().sets.last()
++
++        // Drugi zapis idzie juz przez upsertSet: identyfikatory i postep zostaja.
++        assertTrue(repo.upsertSet(zapisana.copy(title = "Charakter po mojemu")))
++
++        val po = poRestarcie()
++        val poDrugim = po.load().sets.last()
++        assertEquals("Charakter po mojemu", poDrugim.title)
++        assertEquals(zapisana.entries, poDrugim.entries)
++        assertEquals(Srs.FIRST_BOX, po.progressOf(poDrugim.entries.first().id, Direction.TERM_TO_DEF).box)
++        // I da sie ja skasowac, w odroznieniu od zestawu z katalogu.
++        assertTrue(po.deleteSet(poDrugim.id))
++        assertTrue(po.load().sets.none { it.id == poDrugim.id })
++        assertTrue(po.load().sets.any { it.id == oryginal.id })
++    }
++}
+diff --git a/app/src/testDebug/java/com/matura/app/A11yLiveRegionProbeTest.kt b/app/src/testDebug/java/com/matura/app/A11yLiveRegionProbeTest.kt
+index 1326496..8ec8162 100644
+--- a/app/src/testDebug/java/com/matura/app/A11yLiveRegionProbeTest.kt
++++ b/app/src/testDebug/java/com/matura/app/A11yLiveRegionProbeTest.kt
+@@ -33,17 +33,16 @@ class A11yLiveRegionProbeTest {
+ 
+     private companion object {
+         /**
+-         * Ile wezlow klikalnych edytora wolno jeszcze miec bez nazwy.
++         * Ile wezlow klikalnych edytora wolno miec bez nazwy: zadnego.
+          *
+-         * 18 = 3 pola tekstowe naglowka (tytul zestawu, jezyk hasel, jezyk tlumaczen) + piec
+-         * wierszy po trzy wezly (haslo, tlumaczenie, kasowanie wiersza). Pole tekstowe bierze
+-         * nazwe ze swojej TRESCI, wiec puste pole nowego zestawu nie ma jej skad wziac, a
+-         * kosze przy wierszach to same ikony. Jedno i drugie wymaga nowych napisow w Strings.kt
+-         * ("Haslo w wierszu %s", "Usun wiersz %s"), czyli pliku, ktory w tym etapie jest w
+-         * innym zakresie prac — dlatego limit, a nie zero. Przyciski akcji (WSTECZ, DODAJ
+-         * WIERSZ, ZAPISZ) nazwy juz maja i pilnuje ich osobna asercja ponizej.
++         * Do 0.9.18 limit wynosil 18: 3 pola tekstowe naglowka (tytul zestawu, jezyk hasel,
++         * jezyk tlumaczen) i piec wierszy po trzy wezly (haslo, tlumaczenie, kasowanie wiersza).
++         * Pole tekstowe nie mialo nazwy, a kosze przy wierszach to same ikony. Dzis pola maja
++         * nazwy ze Strings.kt ("Haslo 3", "Tlumaczenie 3"), kosz nazywa sie "Usun wiersz 3",
++         * a przycisk zamiany stron niesie napis, ktory stal pod nim. Pelna bramka edytora, ze
++         * wszystkimi jego stanami, jest w ZestawyEkranyTest.
+          */
+-        const val LIMIT_BEZ_NAZWY_W_EDYTORZE = 18
++        const val LIMIT_BEZ_NAZWY_W_EDYTORZE = 0
+     }
+ 
+     @get:Rule
+@@ -52,7 +51,7 @@ class A11yLiveRegionProbeTest {
+     @Test
+     fun edytor_zestawu_ma_nazwane_przyciski_akcji() {
+         rule.setContent {
+-            SetEditorScreen(str = Str(UiLanguage.PL), existing = null, onBack = {}, onSave = {})
++            SetEditorScreen(str = Str(UiLanguage.PL), existing = null, onBack = {}, onSave = { true })
+         }
+ 
+         val klikalne = rule.onAllNodes(
+diff --git a/app/src/testDebug/java/com/matura/app/A11ySemanticsTest.kt b/app/src/testDebug/java/com/matura/app/A11ySemanticsTest.kt
+index aacae92..a6feb41 100644
+--- a/app/src/testDebug/java/com/matura/app/A11ySemanticsTest.kt
++++ b/app/src/testDebug/java/com/matura/app/A11ySemanticsTest.kt
+@@ -67,7 +67,7 @@ class A11ySemanticsTest {
+         }
+     }
+ 
+-    private fun wymagajEtykiet(ekran: String) {
++    internal fun wymagajEtykiet(ekran: String) {
+         val nieme = bezEtykiety()
+         if (nieme.isNotEmpty()) {
+             println("########## $ekran — WEZLY BEZ ETYKIETY ##########")
+diff --git a/app/src/testDebug/java/com/matura/app/TouchTargetAuditTest.kt b/app/src/testDebug/java/com/matura/app/TouchTargetAuditTest.kt
+index feeff48..c8b1728 100644
+--- a/app/src/testDebug/java/com/matura/app/TouchTargetAuditTest.kt
++++ b/app/src/testDebug/java/com/matura/app/TouchTargetAuditTest.kt
+@@ -98,7 +98,7 @@ class TouchTargetAuditTest {
+      *   i GhostButton 47,3 dp wysokosci), czyli z pliku poza zakresem tej poprawki. Kazdy nowy
+      *   maly cel podnosi te liczbe i test pekne.
+      */
+-    private fun wymagajProgu(tag: String, limitJednaOs: Int) {
++    internal fun wymagajProgu(tag: String, limitJednaOs: Int) {
+         val cele = zmierz(tag)
+         val obieOsie = cele.filter { zaMaly(it.szerokosc) && zaMaly(it.wysokosc) }
+         val jednaOs = cele.filter { zaMaly(it.szerokosc) != zaMaly(it.wysokosc) }

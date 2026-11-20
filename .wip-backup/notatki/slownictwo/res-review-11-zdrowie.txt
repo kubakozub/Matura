@@ -1,0 +1,93 @@
+{
+ "rows_reviewed": 103,
+ "suspects": [
+  {
+   "set_id": "v080",
+   "set_title": "Zdrowie · Dolegliwości i bóle",
+   "english_term": "dizzy",
+   "polish_translation": "zawroty głowy",
+   "kind": "wrong_meaning",
+   "problem": "Wrong part of speech. 'dizzy' is an adjective ('I feel dizzy'); 'zawroty głowy' is a noun phrase meaning 'dizziness'. The card teaches 'dizzy' as a noun (predictable error: 'I have dizzy'). Fix inside the two-word limit: change the term to the noun 'dizziness' and keep the Polish side. Keeping the adjective would need three Polish words ('dizzy' = 'mający zawroty głowy', or 'feel dizzy' = 'mieć zawroty głowy'). If the term changes, the bundled recording must follow: /home/user/Matura/app/src/main/assets/audio/index.json is keyed by the English term and has no 'dizziness' entry, so the app would fall back to system text-to-speech.",
+   "proposed_english": "dizziness",
+   "proposed_polish": "zawroty głowy",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v079",
+   "set_title": "Zdrowie · Choroby i urazy",
+   "english_term": "chickenpox",
+   "polish_translation": "ospa",
+   "kind": "misleading",
+   "problem": "Chickenpox is 'ospa wietrzna'. Bare 'ospa' is ambiguous: it is also the usual dictionary equivalent of 'smallpox' (ospa prawdziwa), a different disease. Today the standard answer 'ospa wietrzna' is rejected in English-to-Polish, and in Polish-to-English the defensible answer 'smallpox' is marked wrong. The full name fits the two-word limit. 'ospa' is kept as a second variant so that the answer the published app accepts today stays valid.",
+   "proposed_english": "chickenpox",
+   "proposed_polish": "ospa wietrzna, ospa",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v081",
+   "set_title": "Zdrowie · Lekarze i placówki",
+   "english_term": "paramedic",
+   "polish_translation": "ratownik",
+   "kind": "misleading",
+   "problem": "The Polish name of this profession is 'ratownik medyczny'. Bare 'ratownik' is the general word for a rescuer and the everyday word for a lifeguard; dictionaries translate it as 'rescuer' or 'lifeguard', not 'paramedic'. So the card rejects the standard answer 'ratownik medyczny' and, in the other direction, teaches 'ratownik' = 'paramedic' (predictable error: calling a pool lifeguard a paramedic). The full term fits the two-word limit. 'ratownik' is kept as a second variant so that today's accepted answer stays valid.",
+   "proposed_english": "paramedic",
+   "proposed_polish": "ratownik medyczny, ratownik",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v080",
+   "set_title": "Zdrowie · Dolegliwości i bóle",
+   "english_term": "nosebleed",
+   "polish_translation": "krwawienie nosa",
+   "kind": "misleading",
+   "problem": "'krwawienie nosa' is not the standard Polish phrase; the standard forms are 'krwawienie z nosa' and 'krwotok z nosa'. The preposition was evidently dropped to meet the two-word rule. A student who types the natural 'krwawienie z nosa' is marked wrong. No correct two-word equivalent exists, so proposed_polish is deliberately left unchanged. Recommended value: 'krwawienie z nosa' (3 words, 17 characters). The repo's own guard already allows it: /home/user/Matura/app/src/test/java/com/matura/app/BuiltInSetsTest.kt caps a translation variant at 25 characters and 4 words, a rule adopted because the two-word cap had forced wrong truncations (compare 'szkoła z internatem', 'bilet w jedną stronę' in the current catalog).",
+   "proposed_english": "nosebleed",
+   "proposed_polish": "krwawienie nosa",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v078",
+   "set_title": "Zdrowie · Badania, zabiegi i leki",
+   "english_term": "pill",
+   "polish_translation": "tabletka",
+   "kind": "misleading",
+   "problem": "The translation is acceptable, but the same set also has 'tablet' = 'tabletka', so two cards show the identical Polish prompt. In the typing modes only the card's own term is accepted: GameEngine.buildPlayable and TimeAttackScreen.buildQuestions use Matching.acceptedAnswers of the single row, while only multiple choice and true/false merge rows through Matching.answersForPrompt (/home/user/Matura/app/src/main/java/com/matura/app/game/Matching.kt). So for the prompt 'tabletka' the correct answer 'tablet' is marked wrong whenever the 'pill' card is the one asked, and vice versa. Data-level fix: put 'pigułka', the other standard equivalent of 'pill', first; the prompts become distinct and 'tabletka' stays accepted. Cleaner alternative that needs no data change: use answersForPrompt in the typing modes too.",
+   "proposed_english": "pill",
+   "proposed_polish": "pigułka, tabletka",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v078",
+   "set_title": "Zdrowie · Badania, zabiegi i leki",
+   "english_term": "examination",
+   "polish_translation": "badanie",
+   "kind": "misleading",
+   "problem": "Same collision as 'pill'/'tablet': the same set has 'test' = 'badanie', so the Polish prompt 'badanie' has two different expected answers and a correct one is marked wrong in Polish-to-English typing. Data-level fix: 'badanie lekarskie' is the precise sense of a medical examination and makes the prompts distinct, while 'test' = 'badanie' stays consistent with 'blood test' = 'badanie krwi'; plain 'badanie' is kept as a second variant. The code-level alternative (answersForPrompt in the typing modes) would resolve it without touching the data.",
+   "proposed_english": "examination",
+   "proposed_polish": "badanie lekarskie, badanie",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v080",
+   "set_title": "Zdrowie · Dolegliwości i bóle",
+   "english_term": "stomachache",
+   "polish_translation": "ból brzucha",
+   "kind": "misleading",
+   "problem": "Not a spelling error: 'stomachache' is a legitimate form. The problem is acceptance. The two-word 'stomach ache' is the Oxford and Cambridge headword, and a student who types it that way is marked wrong. /home/user/Matura/app/src/main/java/com/matura/app/game/Matching.kt adds a no-space variant for a stored answer that contains a space, but never the reverse, and isExactMatch compares the typed text with its spaces kept. Spaces and hyphens are therefore ignored only when the STORED form has them. Storing 'stomach ache' makes both spellings accepted (a space-insensitive comparison in code would fix every such case at once). The audio index is keyed by the term, so the existing clip needs re-keying.",
+   "proposed_english": "stomach ache",
+   "proposed_polish": "ból brzucha",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v082",
+   "set_title": "Zdrowie · Zdrowy tryb życia",
+   "english_term": "checkup",
+   "polish_translation": "badanie kontrolne",
+   "kind": "misleading",
+   "problem": "Same acceptance problem as 'stomachache'. 'check-up' is the British/school spelling (Oxford and Cambridge headword). Typed as 'check-up' or 'check up' it normalises to 'check up', which does not equal the stored 'checkup', so a correct answer is marked wrong. Storing 'check-up' makes 'check-up', 'check up' and 'checkup' all accepted. The audio clip needs re-keying, as for 'stomachache'.",
+   "proposed_english": "check-up",
+   "proposed_polish": "badanie kontrolne",
+   "confidence": "likely"
+  }
+ ]
+}
