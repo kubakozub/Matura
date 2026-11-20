@@ -1,0 +1,113 @@
+SUMMARY: Three self-contained Compose screens launched from App.kt Screen.Play (lines 225-239) with one signature (set, options, str, playerName, onExit, onFinished, onAttempt). There is no engine class: rules are private functions plus remember-state keyed on a per-run counter (TF `restarts`, MC `runId`, TA `round`); timers are withFrameNanos loops in LaunchedEffects with clamped dt.
+
+TRUE/FALSE: `usable` = rows for which a false proposal exists (fixed-point filter via hasFalseCandidate); buildQuestion draws with replacement, about 50 % true, false proposals screened with Matching.answersForPrompt/acceptedAnswers. 8/6/4 s per question, lives 1..9, a miss or timeout costs a life. Attempts: ROZPOZNANIE; RIGHT→POPRAWNA, WRONG→BLEDNA, TIMEOUT→POKAZANA.
+
+MULTIPLE CHOICE: buildRound asks every playable entry once per pass with 3 distractors whose accepted-answer sets are pairwise disjoint; a Random(0) probe gates NotEnoughEntries. 12/9/6 s per question, reveal 1.7/1.35/1.05 s, endless passes. Attempts: ROZPOZNANIE; timeout→POKAZANA.
+
+TIME ATTACK: buildQuestions shuffles the set once per run (cyclic); the typed answer (GameKeyboard) is checked with isExactMatch against that row's acceptedAnswers; one clock 120/90/60 s, +2 s hit (capped), −3 s miss, −5 s skip. Attempts: PRZYPOMNIENIE; each wrong ENTER→BLEDNA, skip→POKAZANA, clock running out→nothing.
+
+Scoring in all three: 10 × multiplier (streak ≥3 ×2, ≥6 ×3, ≥9 ×5); level = 1 + hits/10 is cosmetic. onFinished(ScoreRecord) fires once per run from a LaunchedEffect when the end state is reached; exiting earlier records no score (attempts are already saved).
+
+Tests: RodzajZadaniaTest pins only the pure proba* mappers, AnswersForPromptTest pins Matching.answersForPrompt, PodgladEkranowTest is a render smoke test. Question generation, scoring, timers and end flows have no tests. The three files are identical to origin/publikacja; origin/master had none of these modes. A Python port of the generators run over all 102 built-in sets found no dropped MC question and no row lost from TF `usable`.
+
+INTEGRATION: COMMON WIRING (App.kt, Screen.Play branch, lines 165-241)
+- All three get: set, options = data.options (not opcjeRundy), str, playerName = data.profile.name, onExit = `exit` (178: refresh(); stack = listOf(Screen.Menu)), onFinished = `finish` (205-208: repo.recordGame(record.copy(mode = s.mode), set.id); refresh()), onAttempt = `zapiszProbe` (192-201: repo.recordAttempt, deliberately no refresh). planSesji is null on every path that reaches these modes (App.kt:138).
+- Only other call sites: PodgladEkranowTest.kt:192, 203, 214. onAttempt has no default by design, so any new required parameter must be added there too.
+- The screens receive no `progress`, `today` or `profile` (only PlayScreen does, App.kt:221-222). App's `data` is not refreshed during a round, so App's data.progress is the pre-round map until finish() runs and the post-round map afterwards. This also holds across in-screen restarts, because every finished run calls finish().
+- Order at round end (all three): the end flag is set in a frame-loop coroutine; the next composition already draws the result UI; only then a LaunchedEffect calls onFinished once (guard `reported`, keyed on the run counter); App runs recordGame + refresh; the screen recomposes. For stored sets a new WordSet instance arrives (timesPlayed+1) with the same `entries` list, so remember(set.id, set.entries, …) is not invalidated and run state survives. Anything derived from refreshed App data therefore arrives one recomposition after the result UI first appears.
+- onFinished returns Unit: the screen learns nothing back (new best, unlocked achievements, summary). ScoreRecord carries score, level, bestStreak, kills = correct answers, setTitle, playedAt, mode.
+- No screen keeps the run's attempts. Each Attempt is built and handed straight to onAttempt: TF settle() 362-365, MC resolve() 415-421, TA zapiszProbe() 212-214 (called at 219, 234, 253). Entries with a blank id produce no Attempt.
+- Podsumowanie.rundy(proby, przed, po, zakres, kierunek, dzis) therefore needs:
+  - a per-run list filled at those three points, keyed on restarts/runId/round or it leaks into the next run;
+  - `przed` snapshotted at run start;
+  - `po`: App's data.progress after finish(), or Srs.applyTo folded over `przed` locally;
+  - zakres: TF usable.map{id}, MC entries.map{id}, TA questions.map{entryId};
+  - kierunek = options.direction (RANDOM is accepted); dzis = Srs.dayOf(now).
+  Do not make progress a remember key of run state (see the comment at App.kt:183-186).
+- PodsumowanieRundy (ui/PodsumowanieRundy.kt:61) is not used anywhere in main, and no TekstyRundy/TekstyDzialu instance exists outside PodsumowanieTest. The three screens use private t(pl, en, lang) helpers plus a few Str fields; the TF file comment forbids extending Str.
+- All three result layouts are vertically scrollable Columns, so an extra block fits. Widths: TF screen−28 dp (inside ScreenScaffold), MC and TA screen−36 dp.
+
+TRUE/FALSE (TrueFalseScreen.kt)
+- Result UI: lines 463-474, inside the ScreenScaffold content lambda, so the title bar and back button stay: `if (phase == TfPhase.OVER) { TfGameOver(score, level, correctCount, bestStreak, lang, onAgain = { restarts += 1 }, onMenu = onExit); return@ScreenScaffold }`.
+- TfGameOver (private, 773-819): Column(fillMaxSize, verticalScroll, Arrangement.Center) with skull, "KONIEC GRY", coin + score, a card of three StatRows (Poziom, Poprawne odpowiedzi, Najdłuższa seria), full-width PrimaryButton JESZCZE RAZ and GhostButton DO MENU. It receives only four numbers and lang; str, set and options must be threaded in.
+- In scope at that moment: set, options, str, playerName, usable, score, lives (0), streak (always 0, the run ends on a miss), bestStreak, correctCount, level, qIndex (answered = qIndex+1; misses + timeouts = maxLives), outcome and question (last one), restarts. Not tracked: attempts, wrong vs timeout split, which words were missed.
+- onFinished: LaunchedEffect(restarts, phase), 440-456.
+- Play again: restarts += 1 rebuilds every remember(restarts) value (rnd, score, lives, streak, bestStreak, correctCount, qIndex, phase, outcome, gained, leveledUp, timeLeft, reported, question); usable and sfx survive; App is not told.
+- To menu: onExit, the same lambda as BackHandler (289), the scaffold back button (460) and NotEnoughEntries.
+
+MULTIPLE CHOICE (MultipleChoiceScreen.kt)
+- MultipleChoiceScreen (262-311) only filters and probes; the game is the private McGame (356-627).
+- Result UI: lines 520-531 inside BoxWithConstraints: `if (gameOver) McGameOver(lang, str, setTitle = set.title, score, level, hits, bestStreak, onAgain = { runId += 1 }, onMenu = onExit)`.
+- McGameOver (922-999): Column(fillMaxSize, verticalScroll, padding 18/22), top-aligned, with no header or back button (the HUD exists only in the in-game branch). Skull, str.gameOver, coin + score, card (Tryb, Zestaw stacked, Poziom, Poprawne odpowiedzi, Najdłuższa seria as "x$bestStreak"), two full-width buttons.
+- In scope in McGame: set, entries (playable), options, str, playerName, round (List<McQuestion>: entryId, prompt, correct, choices, termToDef), index, asked (answered including timeouts), hits, lives (0), score, streak (0), bestStreak, level, revealed (last choice, stays set), lastGain. Misses = asked − hits. Not tracked: attempts, missed words.
+- onFinished: LaunchedEffect(runId, gameOver), 494-510. gameOver is set at 440 (lives ≤ 0), 448 (no further round can be built) and 401 (empty first round, which records a 0-point game).
+- Play again: runId += 1 re-keys rng, round, index, asked, lives, score, streak, bestStreak, hits, revealed, lastGain, gameOver, reported, timeLeft.
+- To menu: onExit; also BackHandler (396), but only while McGame is composed. On the NotEnoughEntries branch system back falls through to App's pop() and lands on SetPick.
+
+TIME ATTACK (TimeAttackScreen.kt)
+- Result UI: lines 269-282, an early return replacing the whole screen: `if (finished) { ResultScreen(lang, str, score, correct, skipped, bestStreak, level = 1 + correct / 10, onAgain = { round += 1 }, onMenu = onExit); return }`.
+- ResultScreen (700-787): own full-screen Column(background, statusBarsPadding, verticalScroll, horizontal padding 18, Arrangement.Center). Medal by `correct` (≥25 gold, ≥15 silver, ≥8 bronze, otherwise the clock icon) — the only existing reward element in the three modes. Then "KONIEC CZASU", coin + score, card (Poprawne odpowiedzi, Pominięte, Najdłuższa seria, Poziom), and PrimaryButton + GhostButton side by side in a Row (not full width). No header or back button.
+- In scope: set, options, str, playerName, questions (List<TaQuestion>: entryId, termToDef, prompt, answers, reveal), qIndex, score, streak (can be > 0), bestStreak, correct, skipped, timeLeft (0), round, seed. Wrong submissions are not counted anywhere (they exist only as BLEDNA attempts). The word on screen when time runs out gets no attempt (by design, 161-163).
+- onFinished: LaunchedEffect(round, finished), 173-190.
+- Play again: round += 1 gives a new seed (101), a new shuffled pool (105-107) and resets every remember(round) value.
+- To menu: onExit, the same as BackHandler (93) and the HUD quit button (300).
+
+PAUSE, BACK, RECREATION
+- None of the three has a pause; PlayScreen pauses on ON_STOP (PlayScreen.kt:719-732). The frame loops freeze while the activity is stopped and continue immediately on return (dt clamp 0.05 s in TF/TA, 0.25 s in MC).
+- Back or exit mid-run is onExit with no confirmation and no onFinished: no ScoreRecord, no result UI, hence no summary or reward. Attempts are already persisted.
+- All state is plain remember, including MaturaApp's stack (App.kt:63). Process death or an unhandled configuration change (the manifest handles only orientation|screenSize|keyboardHidden|uiMode) drops the run and restarts at Screen.Start. A per-run attempt list in remember dies with it; saved progress does not.
+- Timeout attempts are emitted from closures captured when the LaunchedEffect started (TF settle via 403-420, MC resolve via 461-475), not through rememberUpdatedState as in PlayScreen.kt:229. This is harmless today because App's lambda captures only repo and a state holder; a new onAttempt/onFinished that captures per-composition values would be called stale there.
+
+WHAT WILL SHAPE THE SUMMARY
+- TF and MC never end for a player who stops making mistakes (finding tf-mc-no-end-exit-drops-score), so a block placed on the game-over branch is unreachable for them.
+- TF: a correct "FAŁSZ" promotes the prompt word from box 0 to 1, so nowoPoznane will count words whose translation was never displayed.
+- TF/MC timeouts and TA skips are POKAZANA, so they land in doPonowienia/doPoprawki. TA records one BLEDNA per wrong ENTER, so one word can produce several.
+- TF draws with replacement (buildQuestion 187-199 only avoids the same prompt twice in a row): 20 questions on a 20-word set cover about 13 distinct words. MC is a bag per pass; TA is a fixed shuffled cycle.
+- JESZCZE RAZ on the random mix replays the same 40-word draw (mixSet is not redrawn).
+- App.kt:204 recomputes `dzisiaj` on every recomposition of the Play branch despite its comment; this matters once the three screens take `today`.
+
+MINOR, NOT LISTED AS FINDINGS
+- TIME ATTACK ignores options.systemKeyboard (always GameKeyboard, 330-358; PlayScreen.kt:868 honours it).
+- TA with a 2-3 word set: +2 s per hit can outpace typing; the guard at 229 covers only a one-word pool.
+
+- [medium/correctness/certain] ta-shared-prompt-rejects-correct-answer: TIME ATTACK rejects a correct translation when two rows share a prompt (ręka → arm / hand)
+  app/src/main/java/com/matura/app/ui/TimeAttackScreen.kt:463
+  DESC: buildQuestions gives each question only its own row's answers (Matching.acceptedAnswers at lines 460 and 463) and submit() checks isExactMatch against them (218). TRUE/FALSE and MULTIPLE CHOICE were fixed for this with Matching.answersForPrompt (AnswersForPromptTest calls it a MAJOR audit bug); TIME ATTACK was not. In direction "tłumaczenie → hasło" 29 rows in 14 built-in sets are affected: v002 kind/polite, v004 clever/wise, v005 arm/hand, v008, v011, v015, v026, v030, v031, v036 staffroom/staff room, v059, v061, v078 (two pairs), v090. With "losowo" the same rows are affected whenever both draw that side. The pool also holds the identical prompt twice, each time expecting a different word.
+  SCEN: OPCJE → kierunek "tłumaczenie → hasło"; NA CZAS on "Człowiek · Ciało". Prompt "RĘKA" (row arm). The student types "hand" and presses ENTER: red flash, −3 s, streak reset, and probaWpisania(POMYLKA) stores BLEDNA for 'arm' (mistakes+1, assistedDay = today, box 2/3 falls to 1, the word appears in TRUDNE SŁOWA). Later the second "RĘKA" (row hand) punishes "arm" the same way.
+  FIX: In buildQuestions use Matching.answersForPrompt(set.entries, prompt, termToDef) for `answers`, merge rows whose prompt normalizes identically into one question, credit the attempt to the row whose own acceptedAnswers contain the typed text, and list all variants in `reveal` ("arm / hand").
+
+- [medium/other/certain] tf-mc-no-end-exit-drops-score: TRUE/FALSE and MULTIPLE CHOICE end only by losing every life; leaving discards the run
+  app/src/main/java/com/matura/app/ui/MultipleChoiceScreen.kt:438
+  DESC: onFinished and the game-over UI are reachable only through lives <= 0 (MC advance() 438-441; TF advance() TrueFalseScreen.kt:386-390). The question time limit is constant for the whole run (MC line 368, TF line 332; `level` only changes a label), and MC starts a new pass over the set whenever one is exhausted (443-452). Every exit control (McHud back at 547, BackHandler at 396, TF scaffold back and BackHandler) calls App.kt:178 `exit`, which never calls recordGame. The behaviour is certain; whether an endless arcade round is intended is a product decision.
+  SCEN: A student who knows a 20-word set plays MULTIPLE CHOICE with the default 3 lives, answers 60 questions correctly (three passes, about 2,800 points) and wants to stop. "Wróć" returns to the menu with no entry in WYNIKI, bestScore/bestStreak/totalKills/gamesPlayed and achievements unchanged, timesPlayed not incremented and no game-over screen, so a summary or reward block placed there never appears. To keep the score the student must answer wrong three times on purpose, and each is stored as BLEDNA for a known word (box back to 1, mistakes+1, listed in TRUDNE SŁOWA).
+  FIX: Give both modes a finish that goes through the normal end path: end the MC run after one full pass (round exhausted → gameOver = true) and TF after a fixed number of questions or one pass of a bag, and/or make the back button offer "Zakończ i zapisz wynik" that sets gameOver / phase = OVER instead of calling onExit directly.
+
+- [medium/misleading-ui/certain] ta-skip-hint-under-next-prompt: TIME ATTACK: after SKIP the skipped word's answer is shown under the next prompt
+  app/src/main/java/com/matura/app/ui/TimeAttackScreen.kt:262
+  DESC: skip() stores question.reveal, calls nextQuestion() and only then sets hint and hintTtl (262-265; the comment says this is deliberate so the hint survives). PromptPanel (310-314, 614-628) draws the hint as a red cross plus text directly under the current prompt, which by then is the next word. The skipped prompt is gone and nothing marks the line as belonging to the previous word.
+  SCEN: Prompt "MATURE"; the student taps POMIŃ. For 2 s the panel shows PRZETŁUMACZ / IMMODEST / ✗ dojrzały. Read as feedback for the word on screen it teaches a wrong pair; if the student types "dojrzały" they get −3 s and a BLEDNA for 'immodest'. The reveal that justifies recording POKAZANA for 'mature' never shows which word it answered.
+  FIX: Show the pair instead of the bare answer, e.g. hint = "${question.prompt} = ${question.reveal}" in a neutral "pominięte" line separated from the new prompt, or keep the skipped question on screen (input and clock paused) for the reveal time before calling nextQuestion().
+
+- [medium/correctness/unsure] recognition-defers-due-recall: A correct TRUE/FALSE or ABCD tap pushes a due word's recall check 1/3/7 days out
+  app/src/main/java/com/matura/app/learn/Srs.kt:263
+  DESC: TF and MC send POPRAWNA with TaskKind.ROZPOZNANIE for every correct tap (TrueFalseScreen.kt:126/138, MultipleChoiceScreen.kt:162/169). For a due word Srs.promote cannot raise the box above the recognition ceiling, so it takes the branch at 263-267 and sets dueDay = today + intervalDays(before.box). The comment justifies this for a word at the ceiling (box 1), but the same branch runs for box 2 and 3 words earned by typing. The word is then no longer due, so a typed answer the same day does not promote it and the classic planner and daily session stop treating it as a due review. In TRUE/FALSE the tap is right half the time by chance. The rule lives outside my files and SrsTest pins it for box 1 and box 3 ("rozpoznanie nie cofa slowa, ktore juz jest utrwalone" asserts dueDay = DZIS + 7), so it may be a deliberate trade-off.
+  SCEN: Word W is in box 2 (typed correctly on two earlier days) and due today; one more typed answer would make it box 3. The student first plays PRAWDA / FAŁSZ on that set and taps FAŁSZ on W's question (correct, possibly a guess): progress becomes box 2, dueDay = today+3. In KLASYCZNY later that day W is not in the due queue and typing it correctly changes nothing. Promotion slips at least 3 days, and repeating the pattern on each due day blocks it indefinitely. For a box 3 word the 7-day check is satisfied by the tap alone.
+  FIX: In Srs.promote move the due date on a ceiling hit only when before.box <= ceilingFor(task) (box 1 for recognition); for a recognition success on a box 2/3 word return `before` unchanged so the recall stays due. Update the two SrsTest cases to match.
+
+- [low/misleading-ui/likely] ta-short-screen-hint-invisible: TIME ATTACK: with under ~595 dp of usable height the answer hint is not visible and two-line prompts leave the panel
+  app/src/main/java/com/matura/app/ui/TimeAttackScreen.kt:303
+  DESC: The prompt panel is the only weighted child (303-306). HUD (114 dp), answer field (64 dp), skip bar (58 dp) and keyboard (208 dp) are fixed at 444 dp; a one-line prompt needs 120 dp with padding. The existing render app/build/podglad/telefon-maly/na-czas-w-toku.png (568 dp tall, no system bars) leaves exactly 4 dp spare, and app/build/podglad/telefon-poziomo/na-czas-w-toku.png (360 dp tall) shows the panel gone and the keyboard cut. The hint row (614-628) needs a 14 dp spacer plus a text line of at least 17 dp and is measured last in a height-constrained Column, so with 4 dp left it gets 0 height and is clipped; a second prompt line (40 dp) is drawn outside the frame. I derived this from layout arithmetic checked against those two renders; the hint state itself has not been rendered.
+  SCEN: Phone with a 360×640 dp screen, 24 dp status bar and 48 dp three-button navigation (568 dp usable). The student taps POMIŃ: −5 s, the word is stored as POKAZANA (answer was shown), but no answer appears. The same happens after the second wrong ENTER. Prompts that wrap, such as "kolega ze szkoły, koleżanka ze szkoły", cross the panel border.
+  FIX: Wrap the screen in BoxWithConstraints and use a compact variant below about 620 dp (single-row HUD, smaller paddings, shorter key rows), or show the hint outside the weighted panel (for example in the skip-bar line), and shrink the prompt glyph when it wraps.
+
+- [low/misleading-ui/certain] not-enough-entries-wrong-reason: "Not enough entries" screen quotes a row count that already meets its own requirement
+  app/src/main/java/com/matura/app/ui/MultipleChoiceScreen.kt:295
+  DESC: MC decides by probeRound.isEmpty() (292), meaning no entry has three distractors with non-overlapping accepted answers, but the message (336-341) says the mode needs MIN_ENTRIES = 4 complete rows and prints have = playable.size. TRUE/FALSE does the same (TrueFalseScreen.kt:324, text 836-841): it says two filled rows are needed when the real reason is that no false proposal can be built.
+  SCEN: Own set with arm→ręka, hand→ręka, leg→noga, head→głowa. In MULTIPLE CHOICE every question finds only two usable distractors (the two "ręka" rows exclude each other), the probe is empty and the screen says "Ten tryb potrzebuje co najmniej 4 haseł z tłumaczeniem … Ten zestaw ma ich 4. Dopisz brakujące wiersze". A set whose rows all share one translation gets "potrzebuje co najmniej dwóch wypełnionych wierszy" in TRUE / FALSE although it has more.
+  FIX: When playable.size >= MIN_ENTRIES (TF: at least two complete rows) show a different text: the translations overlap, so wrong answers cannot be built; add rows with different translations. Drop the "$have" sentence in that case.
+
+- [low/accessibility/certain] ta-quit-button-unlabelled: TIME ATTACK quit button has no accessible name
+  app/src/main/java/com/matura/app/ui/TimeAttackScreen.kt:516
+  DESC: The in-game exit is a clickable Box whose only child is a PixelImage (516-524). PixelImage sets contentDescription = null (Sprites.kt:270) and there is no PixelText child or semantics modifier, so the merged node has neither text nor description; its bounds are 27×25 dp. The project's own gates (A11ySemanticsTest.wymagajEtykiet, TouchTargetAuditTest.wymagajProgu) reject exactly this, but neither test composes any of the three mode screens.
+  SCEN: TalkBack on, NA CZAS: focus reaches the control in the top-left of the HUD and the reader announces an action with no name. It is the only on-screen way out of a running round.
+  FIX: Add Modifier.semantics { contentDescription = str.back; role = Role.Button } (pass the label into TimeAttackHud) and add TrueFalseScreen, MultipleChoiceScreen and TimeAttackScreen to both accessibility tests.

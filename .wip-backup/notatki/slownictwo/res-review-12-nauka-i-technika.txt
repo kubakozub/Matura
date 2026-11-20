@@ -1,0 +1,16 @@
+{
+ "rows_reviewed": 120,
+ "suspects": [
+  {
+   "set_id": "v084",
+   "set_title": "Nauka i technika · Internet i konta",
+   "english_term": "streaming",
+   "polish_translation": "transmisja",
+   "kind": "misleading",
+   "problem": "Bare 'transmisja' is the Polish word for a broadcast/transmission (transmisja meczu w telewizji = broadcast of the match). 'Streaming' is the internet technique of playing audio/video while it is being delivered (music/video streaming, streaming services such as Netflix or Spotify); Polish calls it 'transmisja strumieniowa' / 'przesyłanie strumieniowe' or uses the loanword 'streaming'. 'Transmisja' alone fits only the narrower 'live stream' sense (transmisja na żywo). Effect in the game: a student shown 'transmisja' will type 'broadcast' or 'transmission' (the normal English for that word) and be marked wrong, and a student shown 'streaming' who types any of the standard Polish equivalents is also marked wrong. Both proposed variants stay within the two-word limit. Dictionary evidence is from search-result excerpts only (Diki: 'przesyłanie strumieniowe'; Multitran: 'strumieniowa transmisja wideo' for video-streaming), because diki.pl itself is not reachable from this session's network. Sources: https://www.diki.de/slownik-angielskiego?q=stream , https://www.multitran.com/m/a=3&l1=1&l2=14&s=Streaming",
+   "proposed_english": "streaming",
+   "proposed_polish": "transmisja strumieniowa, przesyłanie strumieniowe",
+   "confidence": "likely"
+  }
+ ]
+}

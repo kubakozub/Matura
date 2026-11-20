@@ -1,0 +1,82 @@
+{
+ "rows_reviewed": 120,
+ "suspects": [
+  {
+   "set_id": "v066",
+   "set_title": "Podróże · Ruch drogowy",
+   "english_term": "licence",
+   "polish_translation": "prawo jazdy",
+   "kind": "misleading",
+   "problem": "'prawo jazdy' is 'driving licence' (AmE 'driver's license'). 'licence' on its own means licencja/zezwolenie in general and stands for a driving licence only elliptically, so the card teaches an over-narrow meaning, and a student who answers 'prawo jazdy' with the correct 'driving licence' is marked wrong. The full term fits the two-word limit.",
+   "proposed_english": "driving licence",
+   "proposed_polish": "prawo jazdy",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v064",
+   "set_title": "Podróże · Nocleg",
+   "english_term": "half board",
+   "polish_translation": "dwa posiłki",
+   "kind": "misleading",
+   "problem": "'dwa posiłki' literally means 'two meals'; it describes half board but is not its Polish name. The standard equivalent in dictionaries and matura wordlists is 'niepełne wyżywienie', which also parallels 'full board — pełne wyżywienie' in the same set. As stored, the standard answer is rejected and the prompt 'dwa posiłki' invites the answer 'two meals'.",
+   "proposed_english": "half board",
+   "proposed_polish": "niepełne wyżywienie",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v062",
+   "set_title": "Podróże · Bilety i rozkład",
+   "english_term": "boarding",
+   "polish_translation": "wejście",
+   "kind": "misleading",
+   "problem": "'wejście' on its own means 'entrance/entry' (another set, v022, already has 'doorway — wejście'), so the card teaches boarding = entrance and the same Polish prompt expects different answers in different sets. Boarding is 'wejście na pokład' (three words) or 'wsiadanie'; the latter is one word and matches 'board — wsiadać' in the same set.",
+   "proposed_english": "boarding",
+   "proposed_polish": "wsiadanie",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v064",
+   "set_title": "Podróże · Nocleg",
+   "english_term": "housekeeping",
+   "polish_translation": "obsługa pokoi",
+   "kind": "misleading",
+   "problem": "In hotel Polish 'obsługa pokoi' is the usual rendering of 'room service' (meals and drinks brought to the room, e.g. 'całodobowa obsługa pokoi'). Housekeeping is the cleaning and tidying of guest rooms ('sprzątanie pokoi'; as a hotel department 'służba pięter'). A student will confuse the two services and will answer 'obsługa pokoi' with 'room service'.",
+   "proposed_english": "housekeeping",
+   "proposed_polish": "sprzątanie pokoi",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v063",
+   "set_title": "Podróże · Dworzec i lotnisko",
+   "english_term": "departure lounge",
+   "polish_translation": "poczekalnia",
+   "kind": "misleading",
+   "problem": "'poczekalnia' is the general word for 'waiting room' (another set, v081, has 'waiting room — poczekalnia'), so the same Polish prompt expects two different answers and a student may start calling any waiting room a departure lounge. The standard equivalent of 'departure lounge' is 'hala odlotów', which fits the two-word limit and is consistent with 'departure — odlot' in v062.",
+   "proposed_english": "departure lounge",
+   "proposed_polish": "hala odlotów",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v067",
+   "set_title": "Podróże · Zwiedzanie i wyjazdy",
+   "english_term": "excursion",
+   "polish_translation": "wycieczka fakultatywna",
+   "kind": "misleading",
+   "problem": "'wycieczka fakultatywna' means 'optional excursion' (a travel-agency term). 'excursion' itself is just a short, usually organised trip (a school excursion is not optional), so the card adds a meaning the English word does not have and rejects the standard answer 'wycieczka'. 'krótka wycieczka' keeps the card distinct from 'trip — wycieczka' in the same set.",
+   "proposed_english": "excursion",
+   "proposed_polish": "krótka wycieczka",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v062",
+   "set_title": "Podróże · Bilety i rozkład",
+   "english_term": "one-way",
+   "polish_translation": "jednokierunkowy",
+   "kind": "wrong_meaning",
+   "problem": "Wrong sense for a set about tickets: 'jednokierunkowy' describes a street or traffic ('one-way street' = 'ulica jednokierunkowa'), while a one-way ticket is 'bilet w jedną stronę', already covered here by 'single ticket'. The ticket sense cannot be given in two words, so the proposal makes the street sense explicit (the row would sit better in v066 Ruch drogowy). Alternatively drop the row and accept 'one-way ticket' as an alternative answer on the 'single ticket' row.",
+   "proposed_english": "one-way street",
+   "proposed_polish": "ulica jednokierunkowa",
+   "confidence": "likely"
+  }
+ ]
+}

@@ -1,0 +1,16 @@
+{
+ "rows_reviewed": 126,
+ "suspects": [
+  {
+   "set_id": "v040",
+   "set_title": "Praca · Warunki zatrudnienia",
+   "english_term": "flexitime",
+   "polish_translation": "ruchomy czas",
+   "kind": "misleading",
+   "problem": "\"Ruchomy czas\" is not a self-standing Polish expression. It is the established term \"ruchomy czas pracy\" (the Labour Code term; dictionaries give \"ruchomy czas pracy\" or \"elastyczny czas pracy\" for flexitime) cut down to fit the two-word limit. On its own it reads as \"movable time\", so it is cryptic as a prompt, and a student who types the real term \"ruchomy czas pracy\" is marked wrong. \"Elastyczne godziny\" is a natural equivalent that fits the limit and stands on its own (\"praca w elastycznych godzinach\").",
+   "proposed_english": "flexitime",
+   "proposed_polish": "elastyczne godziny",
+   "confidence": "likely"
+  }
+ ]
+}

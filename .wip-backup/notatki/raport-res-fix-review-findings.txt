@@ -1,0 +1,77 @@
+All six findings were real. Each is fixed and committed in the worktree as 9fe8826 on wt/petla-nauki (not pushed). Both complete test tasks are green: testDebugUnitTest 594 passed (was 579), testReleaseUnitTest 516 passed (was 505). Previews were re-rendered and I looked at the affected ones on telefon-maly, telefon-niski and telefon.
+
+## Finding by finding
+
+**1. Bag drops a row that shares its prompt with a standing monster: real, fixed** (`game/GameEngine.kt`)
+- `zWorka` now takes the first row of the bag that can come out; blocked rows keep their place instead of going to the tail.
+- When a new bag is needed, rows that were blocked by a twin (prompt on the field, own word not) are carried to the head of the new bag. A row whose own monster stands still goes to the tail, so the existing test `bezHistorii_hasloStojaceNaPlanszyCzekaNaKoncuWorka` passes untouched.
+- Measured with a throwaway test (deleted), same setup as the reviewer (12 words, 40 seeds x 600 s):
+  - nobody answering: arm 372, hand 369, the others about 392 (reviewer measured 229 / 212 against 421 before);
+  - answering now and then: 453 / 454 against about 470;
+  - answering at once: 520 each.
+- The remaining gap of about 5 percent comes from a row whose own monster is still standing when the pass ends, which skips that pass by the existing design.
+- New tests: `a row kept waiting by its twin until the bag runs out is first in the next pass` (EngineTest) and `bezHistorii_wierszeOWspolnymHasle_wychodzaTakCzestoJakReszta` (DoborSlowTest). Both fail on the old engine.
+- Not changed: the plan queue (rounds with history) still skips a twin-blocked row until the next pass. It predates this branch and the finding was about the bag.
+
+**2. Calm finite round cannot end on a word that cannot be typed: real, fixed in App** (new `ui/KlawiaturaRundy.kt`, `ui/App.kt`)
+- I took the reviewer's first option, not the engine cap. A cap would let an idle round report `completed` and auto-advance the session, and it changes the E5 rule.
+- `daSieWpisac` and `doRundyPisanej` are pure functions that mirror the two input paths: game keyboard a to z and space; phone keyboard field any letter but no digits; 40 characters at most. The reviewer's note that such words "can be played with the phone keyboard" is wrong for digits, because the field filters them out.
+- App filters in three places:
+  - the session dictionary before planning, so the route and its counter never hold such a word;
+  - the session round again at start, for `plan.kierunek`, which can differ from the settings direction if the student changed it mid-day;
+  - both hard-words practice rounds.
+- `GameEngine.MAX_TYPED` replaces the bare 40 in the engine.
+- New tests:
+  - `KlawiaturaRundyTest` (plain JUnit, 5 tests), including one that pins that no built-in row is dropped in any direction;
+  - `PetlaSesjiTest.slowoNieDoWpisania_nieWchodziNaTrase_aRundaSesjiSieKonczy`, which fails with the filter removed;
+  - `PetlaSesjiTest.cwiczenieTrudnychSlow_pomijaSlowoNieDoWpisania_iKonczySieSamo`, which I did not run against the unfixed code.
+- Known rough edges, left as they are:
+  - ĆWICZ on a hard word that itself cannot be typed starts a round of the filler words without it. Hiding the button would need UI work in `TrudneSlowaScreen` plus a text saying why.
+  - "Practise all" on a list of only such words lands on the existing empty-set notice.
+  - A student who answers by voice also no longer gets these words in session rounds.
+
+**3. Missed word walks back in under its own answer: real, fixed** (`game/GameEngine.kt`, comments in `ui/App.kt`)
+- The engine remembers the key of the word whose answer is on show and does not hand it out until the answer is gone. This holds for the plan queue, the bag, crates and every kind of round.
+- A wave that found nothing else retries in the frame the answer goes out, so the word is back 3.0 to 3.8 s after reaching the cannon, never later than before.
+- An endless round with a tiny set waits for that word instead of doubling another prompt.
+- The comment in `onCwicz` and the KDoc of `SLOW_W_CWICZENIU` now say what happens.
+- New tests, all failing on the old engine: three in EngineTest (`a word does not come back while its answer is on show`, `the wave held back by an answer on show leaves when the answer goes out`, `an endless round waits for the answer to go out rather than double a prompt`) and `slowoPrzepuszczone_nieWracaPodWlasnaOdpowiedzia` in DoborSlowTest for bag and plan, finite and endless.
+- Existing tests adapted because this behaviour was deliberately changed, with no assertion weakened: EngineTest `a word that got through a finite round comes back until it is answered` and the DoborSlowTest helper `wystawIPrzepusc` (used by two tests) now let the answer go out before spawning by hand.
+
+**4. Finite counter drawn over a monster's word: real, fixed, partly differently from the proposal** (`ui/PlayScreen.kt`)
+- With hearts on the board the counter stands on the hearts row, right of the last heart, when it ends before the pause button. The place is decided by the widest reading of the round (total/total), so it does not jump mid-round.
+- This fits on low boards with the default three lives (telefon-maly). On the standard 360x740 phone the HUD is drawn larger and it does not fit, so the second row remains the fallback there.
+- Because of that I added a rule for every position: the counter is not drawn while a word's label crosses its place. I did not use the proposed dark strip, because it would cover the word, which the student has to read to answer.
+- No automated test (canvas drawing). I checked it with temporary monsters placed in the top-left corner (hack removed, not committed): the counter disappears while the label crosses it and returns afterwards.
+- The pre-existing overlap of labels with the hearts themselves is unchanged.
+
+**5. Accent of the answer reads as an ogonek of the prompt: real, fixed** (`ui/PlayScreen.kt`)
+- The line gap on the plate is 8 font pixels instead of 5. Checked on all three phone sizes: "schoolmate" no longer reads "schoolmatę". No automated test possible.
+
+**6. Save-failed card on the result buttons: real, fixed** (`ui/EkranWyniku.kt`, `ui/PlayScreen.kt`, `ui/App.kt`)
+- `EkranWyniku` has a notice slot (`uwaga: String?`) above the divider, outside the scrolling part.
+- `PlayScreen` takes `uwaga: String? = null` and shows it itself: during the round at the bottom, where the app used to put it; on the result above the buttons.
+- App passes it for the classic mode and no longer draws its own card there. The other three modes keep the global card; their result buttons are mid-screen.
+- New test: `BladZapisuWidocznyTest.komunikat o nieudanym zapisie nie zaslania przyciskow na ekranie wyniku`, through the whole app at 320x568 dp with a blocked save. It fails without the fix.
+- The round layout is wrapped in a `Box` for this, so about 150 lines of `PlayScreen.kt` are re-indented; `git diff -w` shows the real change. Four old comments on those lines contained em dashes, which I replaced because the lines were being rewritten anyway.
+
+## Other changes
+- `PodgladEkranowTest`: new preview `gra-klasyczna-blad-zapisu` (w-toku and koniec); the finite round with lives is rendered with the default three lives instead of five, to show the counter on the hearts row.
+
+## Could not verify without a device
+- Real font metrics of the save-failed card. Under Robolectric the unit test measures text with stub metrics; the preview with native graphics shows three lines on 320 dp, standing above the buttons.
+- The feel of the 3 s wait before a missed word returns.
+- TalkBack on the result screen with the notice.
+
+## Preview images
+All under `/home/user/Matura/.claude/worktrees/petla/app/build/podglad/<size>/`, where size is telefon-maly, telefon-niski, telefon, telefon-poziomo or tablet-poziomo:
+- gra-klasyczna-blad-zapisu-w-toku.png
+- gra-klasyczna-blad-zapisu-koniec.png
+- gra-klasyczna-spokojna-odkrycie.png
+- gra-klasyczna-skonczona-w-toku.png
+- gra-klasyczna-spokojna-w-toku.png
+- gra-klasyczna-spokojna-koniec.png
+- gra-klasyczna-bez-bledow-koniec.png
+- gra-klasyczna-koniec.png
+
+The engine uses an unseeded random in previews, so monster positions differ between runs.

@@ -1,0 +1,93 @@
+{
+ "rows_reviewed": 160,
+ "suspects": [
+  {
+   "set_id": "v034",
+   "set_title": "Edukacja · Przybory szkolne",
+   "english_term": "exercise book",
+   "polish_translation": "ćwiczeniówka",
+   "kind": "misleading",
+   "problem": "In British English, the school standard in Poland, an exercise book is the blank notebook pupils write in: 'zeszyt' (OALD pairs BrE 'exercise book' with NAmE 'notebook'). The printed book of exercises that 'ćwiczeniówka' names is a 'workbook'; only North American usage also calls it an exercise book. Next to 'notebook / zeszyt' in the same set, the card teaches the classic Polish mix-up of 'exercise book' with 'zeszyt ćwiczeń'. 'workbook' is right in both varieties. Changing only the Polish to 'zeszyt' would duplicate the prompt of the 'notebook' card. Sources: [OALD workbook](https://www.oxfordlearnersdictionaries.com/definition/english/workbook), [OALD notebook](https://www.oxfordlearnersdictionaries.com/definition/english/notebook_1).",
+   "proposed_english": "workbook",
+   "proposed_polish": "zeszyt ćwiczeń, ćwiczeniówka",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v035",
+   "set_title": "Edukacja · Typy szkół",
+   "english_term": "single-sex school",
+   "polish_translation": "szkoła żeńska/męska",
+   "kind": "misleading",
+   "problem": "The matcher splits a cell on '/' as well as on commas (Matching.acceptedAnswers), so this cell is read as two answers: 'szkoła żeńska' and the bare adjective 'męska'. Checked against the code: 'męska' alone is accepted, 'szkoła żeńska' (a girls' school only) is accepted, and 'szkoła męska' is rejected. The textbook shorthand needs both halves written out. If a single exact equivalent is preferred, 'szkoła niekoedukacyjna' is in real use ([example](https://www.ourkids.net/pl/expert-corner-szkoly-niekoedukacyjne-opinie-ekspertow.php)) and is the antonym of 'szkoła koedukacyjna' in this set.",
+   "proposed_english": "single-sex school",
+   "proposed_polish": "szkoła żeńska, szkoła męska",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v031",
+   "set_title": "Edukacja · Ludzie w szkole",
+   "english_term": "nurse",
+   "polish_translation": "pielęgniarka szkolna",
+   "kind": "misleading",
+   "problem": "The two sides do not match: 'nurse' is 'pielęgniarka' (as the same word is translated in two other built-in sets), while 'pielęgniarka szkolna' is 'school nurse'. As stored, the exact answer is rejected in both directions: 'pielęgniarka' for 'nurse', and 'school nurse' for 'pielęgniarka szkolna'. 'school nurse' suits the set and stays within two words.",
+   "proposed_english": "school nurse",
+   "proposed_polish": "pielęgniarka szkolna",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v036",
+   "set_title": "Edukacja · Wyposażenie szkoły",
+   "english_term": "staffroom",
+   "polish_translation": "pokój nauczycielski",
+   "kind": "inconsistent",
+   "problem": "Duplicate card: the set also has 'staff room / pokój nauczycielski', the same word in another spelling with the same translation. The set therefore has 19 distinct items; this one is asked twice per cycle and tracked under two ids. The test 'no set repeats a term' misses it because it compares raw strings. With Polish prompts the two cards look identical, and this one rejects 'staff room' (the matcher removes the space from a two-word answer but never adds one). Keep the 'staff room' row, which accepts both spellings, and replace this row; deleting it would leave 19 entries and fail the 20-entry minimum in BuiltInSetsTest. Suggested replacement, not yet in the catalogue: 'assembly hall / aula' ([Reverso](https://dictionary.reverso.net/polish-english/aula)).",
+   "proposed_english": "assembly hall",
+   "proposed_polish": "aula",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v030",
+   "set_title": "Edukacja · Egzaminy i oceny",
+   "english_term": "resit",
+   "polish_translation": "poprawka",
+   "kind": "inconsistent",
+   "problem": "Two cards in this set, 'resit' and 'retake', show the identical Polish prompt 'poprawka' but expect different answers. In the typing modes a card accepts only its own row (GameEngine.buildPlayable and TimeAttackScreen.buildQuestions call Matching.acceptedAnswers per row; answersForPrompt, which merges rows that share a prompt, is used only by True/False and Multiple Choice). With Polish prompts the player cannot tell which synonym is wanted, so a correct 'retake' is a miss when the card is 'resit', and vice versa. Data fix: give one of them a distinguishable prompt, as this set does for mark/ocena and grade/stopień. Root fix: build the typing answers with answersForPrompt, which covers every such pair.",
+   "proposed_english": "resit",
+   "proposed_polish": "egzamin poprawkowy, poprawka",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v031",
+   "set_title": "Edukacja · Ludzie w szkole",
+   "english_term": "pupil",
+   "polish_translation": "uczeń",
+   "kind": "inconsistent",
+   "problem": "Same defect as resit/retake: 'pupil' and 'schoolboy' both show the prompt 'uczeń' in this set, and each card accepts only its own English word, so with Polish prompts a correct 'pupil' is a miss when the card is 'schoolboy', and vice versa. 'pupil' covers both genders, so 'uczeń, uczennica' is accurate and makes the prompt unique beside 'schoolboy / uczeń' and 'schoolgirl / uczennica'. It follows the pattern of 'student / uczeń, student' in the same set.",
+   "proposed_english": "pupil",
+   "proposed_polish": "uczeń, uczennica",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v032",
+   "set_title": "Edukacja · Praca ucznia",
+   "english_term": "timetable",
+   "polish_translation": "rozkład zajęć",
+   "kind": "inconsistent",
+   "problem": "The same word in the same school sense is 'plan lekcji' in set v036 (Wyposażenie szkoły) but 'rozkład zajęć' here. Both are correct Polish, yet each set rejects the answer the other one teaches, and the two rows carry separate ids, so one word-sense is tracked twice (EntryId's rule is one id per meaning across sets). Use one wording in both; 'plan lekcji' is the usual school term.",
+   "proposed_english": "timetable",
+   "proposed_polish": "plan lekcji",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v035",
+   "set_title": "Edukacja · Typy szkół",
+   "english_term": "public school",
+   "polish_translation": "szkoła publiczna",
+   "kind": "misleading",
+   "problem": "True only in American (also Scottish and Australian) usage. In England, whose English Polish schools mainly teach, a public school is an elite fee-paying private school such as Eton, the opposite of 'szkoła publiczna'; the British term for the latter, 'state school', is already in this set. This GB/US reversal is a standard trap, and the card gives no hint of it. No two-word translation is right for both varieties, so the text is left unchanged here. The choice is to accept it as an American-usage card, or to replace it and add 'szkoła publiczna' as a second alternative on 'state school'.",
+   "proposed_english": "public school",
+   "proposed_polish": "szkoła publiczna",
+   "confidence": "likely"
+  }
+ ]
+}

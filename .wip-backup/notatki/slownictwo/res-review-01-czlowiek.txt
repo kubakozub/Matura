@@ -1,0 +1,115 @@
+{
+ "rows_reviewed": 369,
+ "suspects": [
+  {
+   "set_id": "v008",
+   "set_title": "Człowiek · Emocje i nastroje",
+   "english_term": "boring",
+   "polish_translation": "nudne",
+   "kind": "inconsistent",
+   "problem": "Wrong grammatical form. 'nudne' is neuter/plural, while the other 23 adjectives in this set are masculine singular (denerwujący, znudzony, przygnębiający...) and v003 has 'dull — nudny'. A student who types the dictionary form 'nudny' for 'boring' is marked wrong: the game accepts only 'nudne' for this row.",
+   "proposed_english": "boring",
+   "proposed_polish": "nudny",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v015",
+   "set_title": "Człowiek · Wygląd: ocena i upodobania",
+   "english_term": "can't stand",
+   "polish_translation": "nie znosić",
+   "kind": "misleading",
+   "problem": "The translation is correct, but the English answer cannot be typed as written. The in-game keyboard has only A-Z and space (/home/user/Matura/app/src/main/java/com/matura/app/ui/Keyboard.kt) and the system-keyboard field drops everything except letters, space and hyphen (/home/user/Matura/app/src/main/java/com/matura/app/ui/PlayScreen.kt line 883). Matching.normalize turns the apostrophe into a space, so the only accepted inputs are 'can t stand' and 'cantstand'; the natural 'cant stand' is scored as a miss when the student must type the English side (checked by replaying the matching logic). This needs a code fix in /home/user/Matura/app/src/main/java/com/matura/app/game/Matching.kt (drop apostrophes in normalize, or add an apostrophe-less variant in acceptedAnswers), not a data change. It is the only term with an apostrophe in this file.",
+   "proposed_english": "can't stand",
+   "proposed_polish": "nie znosić",
+   "confidence": "certain"
+  },
+  {
+   "set_id": "v005",
+   "set_title": "Człowiek · Ciało",
+   "english_term": "arm",
+   "polish_translation": "ręka",
+   "kind": "misleading",
+   "problem": "The same set has 'hand — ręka', so the Polish prompt 'ręka' stands for two rows. The typing modes accept only the prompt's own row (GameEngine.buildPlayable in /home/user/Matura/app/src/main/java/com/matura/app/game/GameEngine.kt, buildQuestions in /home/user/Matura/app/src/main/java/com/matura/app/ui/TimeAttackScreen.kt; Matching.answersForPrompt, which merges rows sharing a prompt, is wired only into multiple choice and true/false), and two identical prompts never stand on the board together. A correct 'hand' or 'arm' is therefore a miss about half the time. It also hides the arm/hand distinction that Polish learners often get wrong. Suggested: arm 'ramię, ręka'; for full clarity also hand 'dłoń, ręka' and shoulder 'bark, ramię'. The same collision affects five more pairs listed below (kind/polite, clever/wise, depressed/miserable, can't stand/detest, smart/elegant); merging answers per prompt in the typing modes would fix all six in code.",
+   "proposed_english": "arm",
+   "proposed_polish": "ramię, ręka",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v002",
+   "set_title": "Człowiek · Charakter: w relacjach",
+   "english_term": "kind",
+   "polish_translation": "uprzejmy",
+   "kind": "misleading",
+   "problem": "Identical Polish cell to 'polite — uprzejmy' in the same set. When the student types English, the prompt 'uprzejmy' has two different required answers, so a correct 'polite' or 'kind' is rejected about half the time (same mechanism as arm/hand), and the set teaches kind = polite. The core meaning of 'kind' is miły/życzliwy; the set itself has 'unkind — niemiły'.",
+   "proposed_english": "kind",
+   "proposed_polish": "miły, życzliwy",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v004",
+   "set_title": "Człowiek · Charakter: zalety",
+   "english_term": "clever",
+   "polish_translation": "mądry",
+   "kind": "misleading",
+   "problem": "Identical Polish cell to 'wise — mądry' in the same set. When the student types English, the prompt 'mądry' has two different required answers (a correct 'wise' or 'clever' is rejected about half the time), and the set teaches clever = wise. 'clever' means zdolny/bystry/sprytny; 'bystry' is already used for 'bright' in this set, hence 'zdolny, sprytny'.",
+   "proposed_english": "clever",
+   "proposed_polish": "zdolny, sprytny",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v008",
+   "set_title": "Człowiek · Emocje i nastroje",
+   "english_term": "miserable",
+   "polish_translation": "przygnębiony",
+   "kind": "inconsistent",
+   "problem": "Identical Polish cell to 'depressed — przygnębiony' in the same set, so the prompt 'przygnębiony' has two different required answers when the student types English; a correct answer is rejected about half the time. The primary sense of 'miserable' is 'nieszczęśliwy'; putting it first makes the two prompts distinct while 'przygnębiony' stays accepted.",
+   "proposed_english": "miserable",
+   "proposed_polish": "nieszczęśliwy, przygnębiony",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v015",
+   "set_title": "Człowiek · Wygląd: ocena i upodobania",
+   "english_term": "detest",
+   "polish_translation": "nie znosić",
+   "kind": "inconsistent",
+   "problem": "Identical Polish cell to 'can't stand — nie znosić' in the same set, so the prompt 'nie znosić' has two different required answers when the student types English; a correct answer is rejected about half the time. Adding 'nie cierpieć' first makes the prompts distinct and keeps 'nie znosić' accepted.",
+   "proposed_english": "detest",
+   "proposed_polish": "nie cierpieć, nie znosić",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v011",
+   "set_title": "Człowiek · Styl i moda",
+   "english_term": "smart",
+   "polish_translation": "elegancki",
+   "kind": "inconsistent",
+   "problem": "Identical Polish cell to 'elegant — elegancki' in the same set, so the prompt 'elegancki' has two different required answers when the student types English; a correct answer is rejected about half the time. Adding 'schludny' (smart = neat and well dressed) makes the prompts distinct.",
+   "proposed_english": "smart",
+   "proposed_polish": "elegancki, schludny",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v001",
+   "set_title": "Człowiek · Charakter: temperament",
+   "english_term": "cheerful",
+   "polish_translation": "pogodny",
+   "kind": "inconsistent",
+   "problem": "The same English term has a different sole accepted answer in two sets of this topic: 'pogodny' here, 'radosny' in v004 (Charakter: zalety). A student who answers with the translation the app taught in the other set is marked wrong. Both are correct, so accept both in both rows (the v004 row needs the same cell).",
+   "proposed_english": "cheerful",
+   "proposed_polish": "pogodny, radosny",
+   "confidence": "likely"
+  },
+  {
+   "set_id": "v016",
+   "set_title": "Człowiek · Wygląd: szczegóły",
+   "english_term": "dimple",
+   "polish_translation": "dołek",
+   "kind": "inconsistent",
+   "problem": "The same English term has a different sole accepted answer in two sets of this topic: 'dołeczek' in v012 (Twarz), 'dołek' here. 'dołeczek' is the standard word for a dimple and is rejected in this set. Use the same cell in both rows (the v012 row needs it too).",
+   "proposed_english": "dimple",
+   "proposed_polish": "dołeczek, dołek",
+   "confidence": "likely"
+  }
+ ]
+}

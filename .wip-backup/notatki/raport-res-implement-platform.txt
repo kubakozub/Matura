@@ -1,0 +1,120 @@
+STAGE 1 REPORT (team zestawy): platform and save-file hardening
+
+Stage 1 is done and committed as 46b7ef5 "Platform and save-file hardening" on wt/zestawy in /home/user/Matura/.claude/worktrees/zestawy. The working tree is clean and nothing was pushed. On the committed tree the debug suite is 515 passed, the release suite 458 passed, and assembleDebug builds.
+
+WHAT CHANGED
+
+/home/user/Matura/.claude/worktrees/zestawy/app/src/main/AndroidManifest.xml
+- queries: added an intent with action android.intent.action.TTS_SERVICE, with a comment.
+- New uses-feature android.hardware.screen.portrait with required="false", with a comment.
+- application: android:appCategory="game", with a comment.
+- MainActivity configChanges is now orientation|screenSize|keyboardHidden|uiMode|screenLayout|smallestScreenSize|keyboard|navigation|density|fontScale|layoutDirection|locale. The comment above the activity says why, which tests guard it and which changes still recreate the activity.
+
+/home/user/Matura/.claude/worktrees/zestawy/app/src/main/java/com/matura/app/MainActivity.kt, onCreate
+- enableEdgeToEdge is called with SystemBarStyle.dark(Color.TRANSPARENT) for both bars; comment updated.
+- A new private drugaInstancjaZIkony() (not task root, action MAIN, category LAUNCHER) makes onCreate call finish() and return before setContent.
+- The repository comes from RepositoryHolder.of(applicationContext).
+
+/home/user/Matura/.claude/worktrees/zestawy/app/src/main/java/com/matura/app/data/RepositoryHolder.kt (new)
+- object RepositoryHolder with fun of(context): Repository. It keeps one Repository per save directory (context.filesDir) in a synchronized map, so the application and every activity get the same object. Repository itself and its companion object are untouched, and tests still build their own Repository over a temporary directory.
+
+/home/user/Matura/.claude/worktrees/zestawy/app/src/main/java/com/matura/app/data/Repository.kt, readBestAvailable only
+- When matura.json does not exist, a matura.json.tmp that parses is returned before .bak is tried. Nothing is written or renamed by the read. The KDoc explains the case and the gap that remains (below). No other line of the class changed.
+
+Comment and tool fixes
+- /home/user/Matura/.claude/worktrees/zestawy/app/build.gradle.kts: the comment above isMinifyEnabled = false now gives the measured package (PNG 0.4 percent, audio 49, dex 44, about a third smaller download with R8), says minification stays off because nothing here runs R8 output, and says keep rules for com.sun.jna and org.vosk are missing. No build setting changed. I re-measured the percentages on the existing release APK and confirmed that neither the vosk nor the JNA archive ships consumer rules.
+- /home/user/Matura/.claude/worktrees/zestawy/tools/vosk-oov.py: MODELE points at app/src/vosk-assets/vosk, the docstring is corrected, and a missing model directory now prints which languages are missing plus "tools/vosk-fetch.sh" and exits 1 (stdout stays empty, so --lista output is not polluted). Checked without models, and against a synthetic model tree for the normal path.
+- /home/user/Matura/.claude/worktrees/zestawy/tools/vosk-slim.py: docstring path corrected.
+- /home/user/Matura/.claude/worktrees/zestawy/keystore.properties.example: says this is the upload key, that under Play App Signing a lost one can be replaced through Play Console support, that no update can ship until then, and keeps the advice to back it up.
+
+New test files (no existing test file was edited)
+- app/src/test (both variants): PrzerwanyZapisTest (6), ZmianaKonfiguracjiTest (1), StartAktywnosciTest (4), JednoRepozytoriumTest (4), ManifestTest (4), and the helper GlownaPetla.kt.
+- app/src/testDebug: MainActivityNaEkranieTest (2).
+
+P1b, AAPT2 DUMP BADGING ON THE DEBUG APK (build-tools 36.0.0)
+
+Before:
+  uses-feature-not-required: name='android.hardware.microphone'
+  uses-feature: name='android.hardware.faketouch'
+  uses-implied-feature: name='android.hardware.faketouch' reason='default feature for all apps'
+  uses-feature: name='android.hardware.screen.portrait'
+  uses-implied-feature: name='android.hardware.screen.portrait' reason='one or more activities have specified a portrait orientation'
+After:
+  uses-feature-not-required: name='android.hardware.microphone'
+  uses-feature-not-required: name='android.hardware.screen.portrait'
+  uses-feature: name='android.hardware.faketouch'
+  uses-implied-feature: name='android.hardware.faketouch' reason='default feature for all apps'
+
+No implied line remains for screen.portrait or microphone. The faketouch line is the default for every app and was there before.
+
+One thing did not come out as the brief expected: aapt2 badging prints no application-category or game line for android:appCategory, in build-tools 34.0.0 or 36.0.0. The flag is visible elsewhere: aapt2 dump xmltree shows android:appCategory(0x01010545)=0, and the platform's own manifest parser (Robolectric, SDK 34) reads ApplicationInfo.category = 0, which is CATEGORY_GAME. I did not add the deprecated android:isGame just to get a badging line.
+
+The same dump shows configChanges going from 0x000006a0 to 0x40003ff4, and the TTS_SERVICE action inside queries.
+
+P1c, THE SEARCH FOR CACHED DENSITY, FONT SCALE AND SCREEN SIZE
+
+I searched app/src/main/java and app/src/vosk/java for LocalDensity, LocalConfiguration, LocalView, LocalContext, toPx, toDp, roundToPx, .density, fontScale, displayMetrics, resources, BoxWithConstraints, onSizeChanged, onGloballyPositioned, imageResource and bitmap scaling, and read every unkeyed remember block. Nothing needed fixing. Every hit:
+
+- ui/PixelFont.kt pixelScaleFor (183 to 189): reads LocalDensity and converts on every composition, nothing remembered. Fine.
+- ui/PixelFont.kt PixelText (216 to 226): maxWidthPx comes from LocalDensity; the wrapped lines are remember(text, scale, maxWidthPx, mono), so both density-derived values are keys; width and height go back to dp on every composition. Fine.
+- ui/PixelFont.kt rememberPixelFont (174 to 177), ui/Sprites.kt rememberSprites, monsterArt and pixel (101 to 166, 280): ImageBitmap.imageResource, which Compose 1.7.5 caches by resource path (checked in its bytecode). Every drawable is in res/drawable-nodpi, so bitmaps load unscaled and do not depend on density. Fine. (rememberSprites is keyed on its first bitmap only, which is untidy but unrelated.)
+- ui/Sprites.kt draw helpers (179 to 258) and ui/PlayScreen.kt drawField, drawCentredLabel, drawTurret, drawHud (1069 to 1315): all sizes come from DrawScope.size at draw time; density is not used at all. Fine.
+- ui/PlayScreen.kt AnswerBar (950): glyph height computed on each composition. Fine.
+- ui/MultipleChoiceScreen.kt:512, ui/TimeAttackScreen.kt:590 and 635, ui/TrueFalseScreen.kt:631: BoxWithConstraints, widths recomputed whenever constraints change. Fine.
+- LocalContext at ui/App.kt:90, ui/PlayScreen.kt:317 and 594, ui/Screens.kt:934, ui/RawMicTest.kt:872 and 886, ui/VoiceTest.kt:1516 and 1528, VoskVoiceInput.kt:935: used for Pronunciation, voice input, activity lookup and startActivity, always keyed on the context. The activity now stays the same object, which is what they need. Fine.
+- LocalView at ui/RawMicTest.kt:904 and ui/VoiceTest.kt:1560: keepScreenOn only. Fine.
+- No hit at all for LocalConfiguration, fontScale, displayMetrics, resources, roundToPx, onSizeChanged, onGloballyPositioned or bitmap scaling.
+- 43 unkeyed remember blocks: 40 hold plain state objects (mutableStateOf and relatives, MutableInteractionSource, FocusRequester, Sfx). The other three are the editor rows (Screens.kt:426), the schedule day (App.kt:86) and the clock (App.kt:93). None holds pixels.
+- rememberScrollState in Screens.kt:145 and 875, TrudneSlowaScreen.kt:140, PlayScreen.kt:1050 and the three game-over screens keeps a pixel offset. After a density change the content sits at the same pixel offset, clamped to the new length. Cosmetic, left alone.
+- Outside app code: Compose creates its ViewConfiguration (touch slop in pixels) once per ComposeView (checked in bytecode). After a display-size change the slop keeps the old pixel value, for example 24 instead of 27 px. Not reachable from app code and not noticeable.
+
+Measured proof: MainActivityNaEkranieTest types a title and a first term in the set editor, then sends one configuration change with density 3.0 to 2.0, fontScale 1.0 to 1.3 and a larger screen through the ActivityController. The activity instance is the same, both texts are still there, the composition reports the new density and font scale, and the bitmap-font heading goes from 96 px to 64 px. A second change to a right-to-left system language flips the layout direction in place. ZmianaKonfiguracjiTest walks five real-life events (bigger font, display size, fold or split screen, Bluetooth keyboard, system language) and asserts the same instance, one creation, no destruction. Removing any one of the eight new flags from the manifest fails it at the matching step; I ran all eight.
+
+WHAT I DELIBERATELY DID NOT CHANGE
+
+- Other configChanges flags. I added exactly the eight in the brief. fontWeightAdjustment (bold text, Android 12+), touchscreen, colorMode and grammaticalGender still recreate the activity. mcc and mnc matter only on Android 7: the platform parser reports 0x40003ff7 for MainActivity, because from Android 8 the system adds those two itself. Adding the rest is a one-line follow-up with no risk I can see; I left it because it was not asked for. Separately, a palette change after a new wallpaper (Android 12+) and process death cannot be declared away at all: a round or a draft still dies there until state is made saveable.
+- Corrupt main file plus a parseable .tmp still goes to quarantine and .bak. The brief limited the change to a missing main file, and I did not pin the corrupt case in a test because preferring .tmp there would arguably be better.
+- writeAtomically. After a recovery from .tmp the newest state exists on disk only in .tmp until the next save, and that save starts by overwriting .tmp. A second kill during that one save falls back to .bak. Still strictly better than before, when the save was always lost. Closing it needs a change in the save path (finish the interrupted rename before writing).
+- isMinifyEnabled and every other build setting.
+- Pronunciation does not react to a TTS engine that fails to initialise; the audit called that optional.
+- The Repository(context) constructor now has no caller in main code. It is outside my lines, so it stays.
+- README.md lines 26 to 32 still say the portrait entry is gone and a two-column layout exists. Not my file; this commit keeps the lock on purpose. The header of .github/workflows/ci.yml and of app/proguard-rules.pro still overstate R8 readiness.
+
+BEHAVIOUR A USER CAN NOTICE
+
+1. A font-size or display-size change, folding or unfolding, split screen, a Bluetooth keyboard or a new system language no longer restart the game. The running round continues, a half-typed set stays, the student stays on the same screen. A right-to-left system language mirrors the layout in place.
+2. On a phone in the light system theme the clock, battery and navigation buttons are now light on the dark game instead of dark on dark, and the light translucent strip under three-button navigation is gone. On dark-theme phones the system's own contrast strip under three-button navigation is gone too; the game's dark background is behind it.
+3. On Android 16 tablets and unfolded foldables the game stays in portrait instead of following the device into the stretched phone layout.
+4. Because the app is declared a game, the system may list it under Games in storage settings and vendor game launchers or dashboards may pick it up.
+5. Google Play no longer hides the app from devices that do not report portrait support.
+6. The speaker button for words from own sets should work on Android 11+ phones where the speech engine was hidden from the app.
+7. On Android 7 to 9, a second start from the icon after "Open" in the store or installer shows the game that is already running instead of a second copy on the name screen.
+8. After the app is killed in the middle of a save, the latest answer or saved set is there on the next start instead of the previous state.
+
+TEST COUNTS
+
+Debug 494 to 515, release 439 to 458, and 541 with -Pvosk=true (the CI configuration; 520 before). All pass.
+
+Before the production changes, 10 of the 21 new tests failed for the intended reasons and 11 control tests passed; after, all pass. I also mutated the code one condition at a time and each mutation was caught by the intended test: default bar style, dark status bar only, guard without isTaskRoot, guard without the intent check, temp file preferred over a valid main file, and each configChanges flag.
+
+A WARNING FOR EVERYONE WHO WRITES TESTS
+
+My first two full debug runs failed with 32 and then 21 failures in Compose tests I had not touched (SystemKeyboardTest, TouchTargetAuditTest, VoiceAlwaysAvailableTest, VoiceTestScreenTest, VoiceUczciwoscTest), each waiting 60 s and ending in AppNotIdleException, which turned a 45 second run into more than 20 minutes. The cause was my own new tests. Any test that creates MainActivity with a Robolectric ActivityController leaves work in the main looper, because setContent writes Compose state in onCreate even when no window is attached, and the controller's destroy and close do not drain the looper. Robolectric drops the message after the test, and from then on every later auto-advancing Compose test in the same JVM hangs. The guilty test passes; innocent ones after it fail.
+
+The fix is in /home/user/Matura/.claude/worktrees/zestawy/app/src/test/java/com/matura/app/GlownaPetla.kt: wykonajToCoCzekaWGlownejPetli(), called from @After in the three classes that create MainActivity. I confirmed it separately for each: without the call the next Compose test hangs 60 s and fails, with it everything passes. Tests built on createComposeRule or ActivityScenario are not affected, because ActivityScenario waits for an idle looper itself. If another branch adds a test that builds MainActivity through Robolectric.buildActivity, it needs the same call. For the same reason the two MainActivity tests in app/src/test never attach the window (create, or create, start, resume, but no setup or visible).
+
+NOTES FOR THE MERGE
+
+- Repository.kt: my hunk is the KDoc and body of readBestAvailable only, far from recordAttempt, recordGame, migrate and the companion object.
+- MainActivityNaEkranieTest reaches the editor through START, the MENU entry str.sets and str.createSet. A menu rebuild that renames or moves those entries has to update that walk.
+- ManifestTest reads the merged manifest through the Android plugin's test_config.properties (the file Robolectric uses), so it checks what is packaged in the variant under test.
+- App.kt:86 keeps the schedule day for the life of the activity. Fewer things recreate the activity now, so the stale-day finding is no longer masked by, for example, a font-size change.
+
+NOT VERIFIED, NEEDS A REAL DEVICE
+
+- How the system bars actually look on a light-theme phone, including three-button navigation. The test checks window flags only.
+- That the TTS_SERVICE entry makes the speech engine visible on a phone where it was hidden.
+- Android 16 large-screen behaviour with appCategory="game", how vendor game launchers treat the app, and the effect of the optional portrait feature in Play's device catalogue.
+- Real font-size, display-size, fold, split-screen, keyboard and language changes with a round running and with the system keyboard open. Robolectric shows the instance is kept and Compose re-reads density, font scale and direction; it does not show a phone.
+- The duplicate start on Android 7 to 9. The guard is the standard one, and it has a known edge: an app that starts the MAIN and LAUNCHER intent inside its own task without NEW_TASK would see the game close at once. The standard launch intent always carries NEW_TASK, so I expect this to be rare.
+- A real kill between the two renames. The test builds that exact on-disk state by hand.

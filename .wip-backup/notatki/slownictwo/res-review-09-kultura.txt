@@ -1,0 +1,16 @@
+{
+ "rows_reviewed": 103,
+ "suspects": [
+  {
+   "set_id": "v070",
+   "set_title": "Kultura · Muzyka i literatura",
+   "english_term": "gig",
+   "polish_translation": "koncert klubowy",
+   "kind": "misleading",
+   "problem": "'Gig' is simply the informal word for a live pop/rock/jazz (or comedy) performance at any venue: 'a pub gig', 'a festival gig', 'a stadium gig'. English-Polish dictionaries give 'koncert' / 'występ'. 'Koncert klubowy' ('club concert') adds a venue restriction the English word does not have and is not a dictionary equivalent; it was apparently chosen only to keep this card apart from 'concert -> koncert' in the same set. Effect: a student who types the standard answer 'koncert' or 'występ' for 'gig' is marked wrong and is taught that a gig has to be in a club. In the app's multiple-choice and true/false modes, 'koncert' from the 'concert' row can also be presented as a wrong answer for 'gig' (checked in MultipleChoiceScreen.kt and TrueFalseScreen.kt). The proposed cell accepts both standard equivalents; with 'występ' first, the Polish prompt still reads differently from the 'concert' card. Low severity, and the only questionable row: the other 102 rows have correct spelling, diacritics and meanings, and there are no duplicates.",
+   "proposed_english": "gig",
+   "proposed_polish": "występ, koncert",
+   "confidence": "likely"
+  }
+ ]
+}
