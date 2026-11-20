@@ -32,7 +32,7 @@ UZYCIE:
     tools/vosk-slim.py <katalog-modelu> <katalog-wynikowy>
     tools/vosk-slim.py --verify <katalog-wynikowy>
 
-Wynik ma trafic do app/src/main/assets/vosk/<pl|en>/.
+Wynik ma trafic do app/src/vosk-assets/vosk/<pl|en>/ (calosc robi tools/vosk-fetch.sh).
 """
 
 import os
