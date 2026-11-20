@@ -1,5 +1,5 @@
 diff --git a/app/src/main/java/com/matura/app/game/VoiceMatch.kt b/app/src/main/java/com/matura/app/game/VoiceMatch.kt
-index cc03694..ef7797e 100644
+index cc03694..344eed5 100644
 --- a/app/src/main/java/com/matura/app/game/VoiceMatch.kt
 +++ b/app/src/main/java/com/matura/app/game/VoiceMatch.kt
 @@ -8,17 +8,24 @@ package com.matura.app.game
@@ -81,7 +81,7 @@ index cc03694..ef7797e 100644
              t = t.replace("w", "u")                       // "hows" = house
          }
          return DOUBLED.replace(t, "$1").trim()
-@@ -88,19 +106,210 @@ object VoiceMatch {
+@@ -88,19 +106,207 @@ object VoiceMatch {
  
      /** Szkielet spolgloskowy - ratuje trafienia, gdy ASR pomyli same samogloski. */
      fun skel(s: String): String =
@@ -188,21 +188,18 @@ index cc03694..ef7797e 100644
 +    private val NEGATIONS = listOf("nie", "un", "in", "im", "ir", "il", "dis", "non", "anti")
 +
 +    /**
-+     * Czy [negated] to zaprzeczenie [plain]: zaczyna sie przedrostkiem, ktorego [plain] nie
-+     * ma, a reszta sama trafilaby w [plain]. Reszta nie musi byc identyczna: uczen mowi
++     * Czy [negated] to zaprzeczenie [plain]: zaczyna sie przedrostkiem, bez ktorego jest do
++     * [plain] blizej niz z nim. Reszta nie musi byc identyczna: uczen mowi
 +     * "nieodpowiedzialna", silnik oddaje "dojrzali", i taka koncowka nie moze przenosic
 +     * slowa na druga strone zaprzeczenia.
 +     *
-+     * Zdjecie przedrostka musi przy tym slowa do siebie ZBLIZYC. "imitation" uslyszane
-+     * zamiast "invitation" to pomylka w pierwszej sylabie, a nie zaprzeczenie: bez "im"
-+     * pasuje gorzej niz z nim.
++     * "imitation" uslyszane zamiast "invitation" to pomylka w pierwszej sylabie,
++     * a "niedojrzali" przy "niedojrzaly" to to samo slowo: bez przedrostka pasuja gorzej,
++     * wiec zaprzeczeniami nie sa.
 +     */
 +    private fun negates(negated: Form, plain: Form): Boolean {
 +        val rest = negated.withoutNegation ?: return false
-+        if (plain.key.startsWith(negated.negation)) return false
-+        if (rest.key == plain.key) return true
-+        return likeness(rest, plain) >= need(letters(plain.text)) &&
-+            sim(rest.text, plain.text) > sim(negated.text, plain.text)
++        return rest.key == plain.key || sim(rest.text, plain.text) > sim(negated.text, plain.text)
 +    }
  
 -    fun score(hyp: String, cand: String, polish: Boolean): Double {
@@ -300,7 +297,7 @@ index cc03694..ef7797e 100644
      }
  
      /**
-@@ -122,12 +331,15 @@ object VoiceMatch {
+@@ -122,12 +328,15 @@ object VoiceMatch {
      }
  
      fun match(transcripts: List<String>, candidates: List<String>, polish: Boolean): Result {
@@ -318,7 +315,7 @@ index cc03694..ef7797e 100644
                      if (s > best.score) {
                          if (best.answer != null && best.answer != cand) second = best
                          best = Hit(s, cand)
-@@ -140,20 +352,339 @@ object VoiceMatch {
+@@ -140,20 +349,339 @@ object VoiceMatch {
          return Result(best, second)
      }
  
@@ -452,7 +449,7 @@ index cc03694..ef7797e 100644
 +        val heard = transcripts.map { Matching.normalize(it) }.filter { it.isNotEmpty() }
 +        if (heard.isEmpty() || board.isEmpty()) return Decision(Reason.NOTHING)
 +        val vocabulary = Vocabulary(board, others, polish)
-+        val verdict = vocabulary.nearest(heard)
++        val verdict = vocabulary.said(heard) ?: vocabulary.nearest(heard)
 +        if (isFinal) return verdict
 +        val answer = verdict.answer
 +        val fires = answer != null && verdict.score >= PARTIAL_SCORE && !vocabulary.mayGrow(answer)
@@ -783,10 +780,10 @@ index 2bcd997..0006f41 100644
   * Czy po powrocie z systemowego okna zgody wolno wlaczyc nasluch.
 diff --git a/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt b/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt
 new file mode 100644
-index 0000000..cb6556f
+index 0000000..0109144
 --- /dev/null
 +++ b/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt
-@@ -0,0 +1,751 @@
+@@ -0,0 +1,758 @@
 +package com.matura.app
 +
 +import com.matura.app.data.BuiltInSets
@@ -1125,6 +1122,9 @@ index 0000000..cb6556f
 +        assertShot("understand", custom(false, board = listOf("understand")).hear("understant"))
 +        // pomylka w pierwszej sylabie to nie zaprzeczenie: bez "im" slowo pasuje gorzej
 +        assertShot("invitation", custom(false, board = listOf("invitation")).hear("imitation"))
++        // slowo, ktore samo zaczyna sie jak zaprzeczenie, tez mozna zaprzeczyc
++        assertFalse(custom(true, board = listOf("niemiecki")).hear("nie niemiecki").accepted)
++        assertShot("niemiecki", custom(true, board = listOf("niemiecki")).hear("niemiecka"))
 +    }
 +
 +    @Test fun negatedUtteranceNeverHitsThePlainWordThroughOneOfItsWords() {
@@ -1179,6 +1179,10 @@ index 0000000..cb6556f
 +        // "shorts" to ostatnie slowo "boxer shorts"
 +        assertNoShot(Reason.WAIT, scene("v009", false, "shorts").hear("shorts", isFinal = false))
 +        assertShot("shorts", scene("v009", false, "shorts").hear("shorts"))
++        // silnik pokazuje czasem pol slowa: "kot" moze byc poczatkiem "kotek"
++        val cats = custom(true, board = listOf("kot"), others = listOf("kotek"))
++        assertNoShot(Reason.WAIT, cats.hear("kot", isFinal = false))
++        assertShot("kot", cats.hear("kot"))
 +    }
 +
 +    @Test fun partialFiresWhenNothingLongerStartsWithIt() {

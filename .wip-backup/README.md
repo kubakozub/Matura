@@ -7,6 +7,5 @@ zapisana jako latki (git diff --binary). Kazda latka naklada sie na podany commi
 
 | zespol | galaz | commit bazowy | plik |
 |---|---|---|---|
-| dorobek | wt/dorobek | c931ea43a7dde0d830cf678629d2b129d75a8960 | dorobek.patch |
+| petla | wt/petla-nauki | e74587f6e7f5b245a1e801c0948ba99f7c1a4eae | petla.patch |
 | dopasowanie | wt/dopasowanie | 1b2d6af318a40bf5c5244ae0356e82cc3d4b4fb7 | dopasowanie.patch |
-| zestawy | wt/zestawy | 0aab7c56239b6f70487c7a0b4fd314a7f75b7c9d | zestawy.patch |
