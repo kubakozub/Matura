@@ -212,19 +212,27 @@ class Repository(private val dir: File) {
 
     fun setProfile(profile: Profile) = update { it.copy(profile = profile) }
 
-    /** Records the outcome of a finished run and rolls the profile counters forward. */
-    fun recordGame(record: ScoreRecord, setId: String) = update { d ->
+    /**
+     * Records the outcome of a finished run and rolls the profile counters forward.
+     *
+     * @param doRankingu false for a calm round (GameConfig.calm). Such a round cannot be lost,
+     *   so its score and streak must not stand next to real runs or unlock the score and
+     *   streak badges: the record stays out of [SaveData.scores] and bestScore / bestStreak
+     *   are not raised. The round still happened, so games, defeated monsters and the set's
+     *   play count grow as usual.
+     */
+    fun recordGame(record: ScoreRecord, setId: String, doRankingu: Boolean = true) = update { d ->
         val p = d.profile
         d.copy(
             profile = p.copy(
                 gamesPlayed = p.gamesPlayed + 1,
                 totalKills = p.totalKills + record.kills,
-                bestScore = maxOf(p.bestScore, record.score),
-                bestStreak = maxOf(p.bestStreak, record.bestStreak),
+                bestScore = if (doRankingu) maxOf(p.bestScore, record.score) else p.bestScore,
+                bestStreak = if (doRankingu) maxOf(p.bestStreak, record.bestStreak) else p.bestStreak,
             ),
             // Leaderboard lokalny: top 50 osobno dla kazdego trybu, zeby wyniki
             // z jednego trybu nie wypychaly pozostalych.
-            scores = (d.scores + record)
+            scores = if (!doRankingu) d.scores else (d.scores + record)
                 .groupBy { it.mode }
                 .flatMap { (_, list) -> list.sortedByDescending { it.score }.take(50) }
                 .sortedByDescending { it.score },

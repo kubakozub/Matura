@@ -108,9 +108,10 @@ data class PlanSesji(
  * Gdzie uczen jest w trasie. Same wartosci proste i listy tekstow, zeby stan dalo sie zapisac
  * i wznowic bez zadnej konwersji.
  *
- * Klasa CELOWO nie jest jeszcze czescia SaveData: pole w zapisie nalezy do warstwy danych i
- * musialoby mieszkac w pakiecie model (tak jak [WordProgress], bo model nie widzi learn).
- * Do tego czasu stan zyje tyle, co ekran — a nauka i tak nie ginie, bo nie jest w nim trzymana.
+ * Stan JEST czescia zapisu (SaveData.sesja), wiec kazde pole dodane po pierwszym wydaniu musi
+ * miec wartosc domyslna: plik zapisany starsza wersja tego pola nie ma i dalej ma sie wczytac.
+ * Nauki tu nie ma: odpowiedzi ida do harmonogramu od razu, a stan pamieta tylko trase i miejsce
+ * na niej.
  */
 @Serializable
 data class StanSesji(
@@ -136,6 +137,23 @@ data class StanSesji(
     val odpowiedzWToku: Boolean = false,
 
     val zakonczona: Boolean = false,
+
+    /**
+     * TRASA DNIA: powtorki ulozone w chwili startu sesji, w kolejnosci planu. Razem z
+     * [trasaNowe] zapada raz, w [Sesja.rozpocznij], i do konca dnia sie nie zmienia, bo to
+     * z niej, a nie z biezacego harmonogramu, sklada sie plan (patrz [Sesja.planNaDzis]).
+     * Obie listy puste znacza "stan bez trasy": zapisala go wersja sprzed tego pola.
+     */
+    val trasaPowtorki: List<String> = emptyList(),
+
+    /** Nowe slowa trasy dnia, w kolejnosci planu. Patrz [trasaPowtorki]. */
+    val trasaNowe: List<String> = emptyList(),
+
+    /**
+     * Kierunek, dla ktorego ulozono trase. Znaczy cokolwiek tylko razem z niepusta trasa:
+     * wartosc domyslna jest tu wylacznie po to, zeby starszy zapis dalo sie wczytac.
+     */
+    val trasaKierunek: Direction = Direction.TERM_TO_DEF,
 ) {
     val zrobione: List<String> get() = zrobionePowtorki + zrobioneNowe
 }
@@ -278,8 +296,28 @@ object Sesja {
 
         val wolne = (MAKS_SLOW - powtorki.size).coerceAtLeast(0)
         val wybraneNowe = nowe.take(minOf(MAKS_NOWYCH, wolne))
-        val slownictwo = powtorki + wybraneNowe
 
+        return PlanSesji(
+            dzien = dzien,
+            kierunek = kierunek,
+            powtorki = powtorki,
+            nowe = wybraneNowe,
+            kroki = krokiTrasy(powtorki, wybraneNowe, zadaniaWKontekscie),
+            bezHistorii = bezHistorii,
+        )
+    }
+
+    /**
+     * Kroki dla trasy z podanych slow. Jedna funkcja dla planu ulozonego na swiezo ([zaplanuj])
+     * i dla odtworzonego z zapisu ([planNaDzis]): gdyby kazdy skladal kroki sam, trasa po
+     * powrocie z rundy moglaby miec inny ksztalt niz ta, ktora uczen zaczal.
+     */
+    private fun krokiTrasy(
+        powtorki: List<String>,
+        nowe: List<String>,
+        zadaniaWKontekscie: List<String>,
+    ): List<KrokSesji> {
+        val slownictwo = powtorki + nowe
         val kroki = ArrayList<KrokSesji>(4)
         if (slownictwo.isNotEmpty()) {
             kroki.add(
@@ -298,7 +336,7 @@ object Sesja {
                     // jeszcze niczyje. Runda gry sprawdza je pod presja czasu, po spokojnym
                     // przejsciu tych samych hasel.
                     cele = slownictwo,
-                    spokojny = wybraneNowe.isNotEmpty(),
+                    spokojny = nowe.isNotEmpty(),
                     orientacyjneSekundy = slownictwo.size * SEKUND_NA_ODPOWIEDZ,
                 )
             )
@@ -316,19 +354,84 @@ object Sesja {
             )
         }
         kroki.add(KrokSesji(rodzaj = RodzajKroku.PODSUMOWANIE))
+        return kroki
+    }
 
+    /**
+     * Plan, z ktorym dzis pracuje ekran sesji i kod uruchamiany po rundzie.
+     *
+     * TRASA DNIA JEST ZAMROZONA. Wczesniej plan powstawal od nowa z biezacego harmonogramu przy
+     * kazdym wejsciu na ekran sesji, a stan pamietal tylko numer kroku i listy zrobionych slow.
+     * Slowo odpowiedziane poprawnie przestaje byc zalegle, wiec wypadalo z nowego planu, a w
+     * zwolnione miejsca wchodzilo piec KOLEJNYCH nigdy nieprobowanych slow. Na swiezej instalacji
+     * uczen odpowiadal na slowa 1..5, wracal i w kroku pierwszym znajdowal slowa 6..10; krok
+     * "to samo slownictwo jeszcze raz" nigdy nie powtarzal kroku pierwszego, licznik szedl
+     * 5 / 10, potem 10 / 15 i nie mial jak sie domknac, a podsumowanie liczylo slowa, ktorych
+     * nikt uczniowi nie pokazal.
+     *
+     * Dlatego trasa zapada raz, w [rozpocznij], i jedzie w [StanSesji]. Dopoki zapisany stan
+     * jest z dzisiaj, nie jest zakonczony i ma trase, plan sklada sie Z NIEJ i w kierunku,
+     * w ktorym ja ulozono (takze wtedy, gdy uczen zmienil w miedzyczasie ustawienie kierunku:
+     * liczniki i podsumowanie maja mowic o tych samych slowach co runda). W kazdym innym
+     * przypadku plan powstaje na swiezo z [zaplanuj]: stanu nie ma, sesja jest zakonczona, stan
+     * jest z innego dnia (dzien bez nauki niczego nie odbiera, po prostu zaczyna sie nowa trasa)
+     * albo zapisala go wersja, ktora trasy jeszcze nie znala. Taki stan dostaje trase w [wznow].
+     *
+     * Drugiego harmonogramu tu nie ma. O tym, CO trafilo na trase, zdecydowal [Srs] w chwili
+     * startu, a o awansach dalej decyduje tylko on: zamrozona jest kolejnosc pracy, nie wiedza.
+     *
+     * @param kierunek kierunek dla planu ukladanego na swiezo; trasa z zapisu ma wlasny.
+     * @param entryIds dzisiejszy slownik. Slowo trasy, ktorego juz w nim nie ma (uczen usunal
+     *   wlasny zestaw), wypada z planu, bo zadna runda nie umialaby go pokazac i licznik
+     *   czekalby na nie do konca dnia.
+     */
+    fun planNaDzis(
+        zapisany: StanSesji?,
+        progress: Map<String, WordProgress>,
+        entryIds: List<String>,
+        kierunek: Direction,
+        dzien: Int,
+        zadaniaWKontekscie: List<String> = emptyList(),
+    ): PlanSesji {
+        if (zapisany == null || zapisany.zakonczona || zapisany.dzien != dzien ||
+            // RANDOM to ustawienie, nie kierunek. W zapisie moglby sie wziac tylko z uszkodzonego
+            // pliku, a Srs.key rzucilby na nim wyjatkiem w srodku rysowania ekranu.
+            zapisany.trasaKierunek == Direction.RANDOM
+        ) {
+            return zaplanuj(progress, entryIds, kierunek, dzien, zadaniaWKontekscie)
+        }
+        val slownik = entryIds.filter { it.isNotBlank() }.toSet()
+        val powtorki = zapisany.trasaPowtorki.filter { it in slownik }.distinct()
+        val nowe = zapisany.trasaNowe.filter { it in slownik && it !in powtorki }.distinct()
+        if (powtorki.isEmpty() && nowe.isEmpty()) {
+            return zaplanuj(progress, entryIds, kierunek, dzien, zadaniaWKontekscie)
+        }
+        val trasa = (powtorki + nowe).toSet()
         return PlanSesji(
             dzien = dzien,
-            kierunek = kierunek,
+            kierunek = zapisany.trasaKierunek,
             powtorki = powtorki,
-            nowe = wybraneNowe,
-            kroki = kroki,
-            bezHistorii = bezHistorii,
+            nowe = nowe,
+            kroki = krokiTrasy(powtorki, nowe, zadaniaWKontekscie),
+            // "Pierwszy dzien" ma zostac prawda takze po pierwszej rundzie, a wtedy slowa trasy
+            // maja juz historie, bo uczen wlasnie na nie odpowiedzial. Pytamy wiec o reszte
+            // slownika: sama trasa nowych slow i nic poza nia to dalej pierwszy dzien.
+            bezHistorii = powtorki.isEmpty() && slownik.none {
+                it !in trasa && progress.containsKey(Srs.key(it, zapisany.trasaKierunek))
+            },
         )
     }
 
+    /** Nowa sesja: zerowy krok, puste listy i trasa wzieta z [plan], zamrozona do konca dnia. */
     fun rozpocznij(plan: PlanSesji, clock: Clock): StanSesji =
-        StanSesji(dzien = plan.dzien, startMs = clock.nowMs())
+        zTrasa(StanSesji(dzien = plan.dzien, startMs = clock.nowMs()), plan)
+
+    /** [stan] z trasa i kierunkiem przepisanymi z [plan]. */
+    private fun zTrasa(stan: StanSesji, plan: PlanSesji): StanSesji = stan.copy(
+        trasaPowtorki = plan.powtorki,
+        trasaNowe = plan.nowe,
+        trasaKierunek = plan.kierunek,
+    )
 
     /**
      * Stan gotowy do dalszej pracy z [plan].
@@ -337,25 +440,39 @@ object Sesja {
      * wczoraj nie jest bledem i nie odbiera niczego: dzien bez nauki zmienia wylacznie to, ze
      * slowa sa zalegle, wiec dzis powstaje po prostu nowa trasa, a pudelka zostaja nietkniete.
      *
-     * Indeks kroku jest przycinany do planu, bo plan powstaje na nowo z aktualnego
-     * harmonogramu i po drodze mogl sie SKROCIC — slowo odpowiedziane przed przerwa nie jest
-     * juz zalegle i nie wraca do trasy. Gdy nie zostalo nic, przyciecie laduje na podsumowaniu
-     * (jest zawsze ostatnie), czyli dokladnie tam, gdzie uczen ma zobaczyc, co zrobil.
+     * Wynik niesie trase z [plan]. Gdy plan pochodzi z [planNaDzis], dla stanu z trasa nic sie
+     * przez to nie zmienia (plan powstal wlasnie z niej), a stan sprzed wprowadzenia trasy
+     * dostaje ja w tym miejscu: od najblizszego zapisu jest zamrozona jak kazda inna.
+     *
+     * Indeks kroku jest przycinany do planu na wypadek takiego starszego stanu: jego plan
+     * powstal na swiezo i mogl wyjsc krotszy niz ten, w ktorym uczen przerwal. Przyciecie
+     * laduje wtedy na podsumowaniu (jest zawsze ostatnie), czyli tam, gdzie widac, co zrobil.
      */
     fun wznow(zapisany: StanSesji?, plan: PlanSesji, clock: Clock): StanSesji {
         if (zapisany == null || zapisany.zakonczona || zapisany.dzien != plan.dzien) {
             return rozpocznij(plan, clock)
         }
-        return zapisany.copy(
+        return zTrasa(zapisany, plan).copy(
             krok = zapisany.krok.coerceIn(0, plan.kroki.lastIndex.coerceAtLeast(0)),
             // Odpowiedz przerwana wyjsciem z ekranu nie odbyla sie — patrz [przerwij].
             odpowiedzWToku = false,
         )
     }
 
-    /** Czy jest co wznawiac; ekran pyta o to, zanim zaproponuje "WZNÓW" zamiast "ZACZNIJ". */
+    /**
+     * Czy w sesji cokolwiek sie juz wydarzylo: uczen przeszedl choc jeden krok albo odpowiedzial
+     * na choc jedno slowo. Sesja tylko otwarta i zamknieta nie jest jeszcze niczym, co warto
+     * zapisywac albo nazywac wznowiona.
+     */
+    fun czyRuszona(stan: StanSesji): Boolean = stan.krok > 0 || stan.zrobione.isNotEmpty()
+
+    /**
+     * Czy jest co wznawiac: zapisana sesja jest z dzisiaj, nie jest zakonczona i uczen cos juz
+     * w niej zrobil ([czyRuszona]). Ekran pokazuje po tym plakietke WZNOWIONA; bez ostatniego
+     * warunku wisiala ona takze nad sesja, ktora uczen tylko obejrzal i z ktorej wyszedl.
+     */
     fun czyWznawialna(zapisany: StanSesji?, dzien: Int): Boolean =
-        zapisany != null && !zapisany.zakonczona && zapisany.dzien == dzien
+        zapisany != null && !zapisany.zakonczona && zapisany.dzien == dzien && czyRuszona(zapisany)
 
     /** Uczen zaczyna odpowiadac. Od tej chwili sesja nie zaproponuje zakonczenia. */
     fun zacznijOdpowiedz(stan: StanSesji): StanSesji =
@@ -408,17 +525,48 @@ object Sesja {
         zakonczona = true,
     )
 
+    /**
+     * Uczen wlasnie UKONCZYL runde, ktora nalezala do kroku [krokRundy] tego planu: trasa
+     * przechodzi do nastepnego kroku sama.
+     *
+     * Wczesniej runda z sesji konczyla sie w MENU, a uczen musial wrocic na ekran sesji i
+     * nacisnac DALEJ recznie. Kto tego nie zrobil, zastawal ten sam krok jako biezacy i
+     * przerabial go drugi raz.
+     *
+     * Numer kroku wchodzi parametrem, bo ukonczona runde mozna zagrac JESZCZE RAZ, a druga
+     * ukonczona runda tego samego kroku nie moze przesunac trasy drugi raz. Stan rusza sie wiec
+     * tylko wtedy, gdy dalej stoi na [krokRundy] i ten krok jest runda ([RodzajKroku.POWTORKA]
+     * albo [RodzajKroku.GRA]). W kazdym innym przypadku wraca bez zmian: uczen poszedl juz dalej
+     * sam, stan jest z innego dnia niz plan albo sesja jest zakonczona.
+     *
+     * Funkcja NIGDY nie konczy sesji. Za ostatnia runda stoi podsumowanie i to uczen zamyka je
+     * przyciskiem, a listy zrobionych slow zostaja takie, jakie byly.
+     *
+     * Rundy przegranej (koniec zyc) ani porzuconej wolajacy tu nie zglasza: o tym, czy runda
+     * zostala ukonczona, mowi silnik gry, a nie to, ze ekran gry zniknal.
+     */
+    fun poUkonczonejRundzie(stan: StanSesji, plan: PlanSesji, krokRundy: Int): StanSesji {
+        if (stan.zakonczona || stan.dzien != plan.dzien || stan.krok != krokRundy) return stan
+        val krok = plan.kroki.getOrNull(krokRundy) ?: return stan
+        if (krok.rodzaj != RodzajKroku.POWTORKA && krok.rodzaj != RodzajKroku.GRA) return stan
+        // Plan z [zaplanuj] i z [planNaDzis] zawsze konczy sie podsumowaniem, wiec runda nie
+        // bywa ostatnim krokiem. Gdyby byla, [dalej] zamknelaby sesje za plecami ucznia.
+        if (krokRundy >= plan.kroki.lastIndex) return stan
+        return dalej(stan, plan)
+    }
+
     fun biezacy(stan: StanSesji, plan: PlanSesji): KrokSesji? =
         if (stan.zakonczona) null else plan.kroki.getOrNull(stan.krok)
 
     /**
      * Slownictwo CALEJ dzisiejszej trasy: to, co jeszcze przed uczniem, PLUS to, co juz zrobil.
      *
-     * Suma, a nie sam plan, bo plan powstaje na nowo z harmonogramu przy kazdym wejsciu na ekran
-     * sesji, a slowo odpowiedziane poprawnie nie jest juz zalegle i z planu wypada. Licznik
-     * liczony z samego planu pokazywalby po przerobieniu calej trasy "5 / 0", a podsumowanie
-     * nie mialoby z czego wziac terminu nastepnej powtorki — mimo ze to wlasnie odpowiedzi
-     * ucznia ten termin ustawily.
+     * Przy trasie zamrozonej ([planNaDzis]) plan niesie ja cala i zrobione slowa sa jej czescia,
+     * wiec suma niczego nie dodaje, a licznik domyka sie na dlugosci trasy. Zostaje dla planu
+     * ulozonego na swiezo przy stanie, ktory ma juz zrobione slowa (zapis sprzed wprowadzenia
+     * trasy): slowo odpowiedziane poprawnie nie jest juz zalegle i w takim planie go nie ma,
+     * wiec licznik liczony z samego planu pokazywalby "5 / 0", a podsumowanie nie mialoby
+     * z czego wziac terminu nastepnej powtorki.
      */
     private fun slownictwoTrasy(plan: PlanSesji, stan: StanSesji): List<String> =
         (plan.slownictwo + stan.zrobione).distinct()
@@ -443,9 +591,14 @@ object Sesja {
      * Dwa warunki naraz i drugi jest wazniejszy od pierwszego: orientacyjny czas minal ORAZ
      * uczen nie jest w polowie odpowiedzi. Funkcja niczego nie konczy — decyzje podejmuje
      * uczen, a ekran ma z tego zrobic najwyzej podpowiedz "to dobry moment, zeby skonczyc".
+     *
+     * Pusty plan nie ma szacunku (zero sekund), wiec nie ma tez czasu, ktory moglby minac:
+     * bez tego warunku podpowiedz wisiala nad trasa, na ktorej nic nie zalega, od pierwszej
+     * sekundy.
      */
     fun czasNaKoniec(stan: StanSesji, plan: PlanSesji, clock: Clock): Boolean =
-        !stan.odpowiedzWToku &&
+        !plan.pusty &&
+            !stan.odpowiedzWToku &&
             !stan.zakonczona &&
             uplyneloSekund(stan, clock) >= plan.orientacyjneSekundy
 

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -29,7 +30,11 @@ import com.matura.app.audio.Pronunciation
 import com.matura.app.learn.Clock
 import com.matura.app.learn.RodzajKroku
 import com.matura.app.learn.Sesja
+import com.matura.app.learn.Trudne
 import com.matura.app.model.Direction
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 sealed interface Screen {
     data object Start : Screen
@@ -57,8 +62,32 @@ sealed interface Screen {
     data object DzisiejszaSesja : Screen
 }
 
+/**
+ * Dokad wraca runda, gdy uczen z niej wyjdzie albo nacisnie DALEJ na ekranie wyniku.
+ *
+ * Runda uruchomiona z dziennej sesji albo z trudnych slow konczyla sie dotad w MENU: uczen
+ * musial sam odszukac ekran, z ktorego przyszedl, zeby zobaczyc, co runda zmienila, i isc dalej.
+ * Cel powrotu ustawia KAZDE miejsce, ktore startuje runde, a zwykla gra z GRAJ wraca do menu.
+ */
+private sealed interface PowrotZRundy {
+    data object Menu : PowrotZRundy
+
+    /** [krok]: indeks kroku trasy, z ktorego ruszyla runda. Patrz Sesja.poUkonczonejRundzie. */
+    data class DzisiejszaSesja(val krok: Int) : PowrotZRundy
+
+    data object TrudneSlowa : PowrotZRundy
+}
+
+/**
+ * @param zegar zrodlo czasu dla dnia harmonogramu, sesji i zapisu prob. Parametr z domyslnym
+ *   zegarem systemowym, zeby test mogl przestawic dobe bez czekania do polnocy.
+ */
 @Composable
-fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+fun MaturaApp(
+    repo: Repository,
+    onExitApp: () -> Unit,
+    zegar: Clock = remember { Clock { System.currentTimeMillis() } },
+) {
     var data by remember { mutableStateOf(repo.load()) }
     var stack by remember { mutableStateOf(listOf<Screen>(Screen.Start)) }
     var mixSet by remember { mutableStateOf<com.matura.app.model.WordSet?>(null) }
@@ -81,26 +110,67 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
         bladZapisu = repo.lastSaveError != null
     }
 
-    // Dzien harmonogramu dla calej aplikacji. Liczony raz przy wejsciu — przekroczenie polnocy
-    // UTC w trakcie jednej sesji nie ma przestawiac list pod palcami ucznia.
-    val dzisiaj = remember { Srs.dayOf(System.currentTimeMillis()) }
+    // Dzien harmonogramu dla calej aplikacji.
+    //
+    // Byl liczony RAZ na zycie Activity, a proces potrafi przezyc noc w tle. Rano sesja i trudne
+    // slowa pracowaly wtedy na wczoraj: dzisiejsze powtorki nie byly proponowane, wznawiala sie
+    // wczorajsza niedokonczona sesja, a o slowach zaleglych dzis ekran mowil "nastepna powtorka
+    // jutro". Teraz to stan odswiezany w dwoch chwilach: gdy aplikacja wraca na wierzch
+    // (ON_START nizej) i gdy uczen otwiera z menu sesje albo trudne slowa.
+    //
+    // Miedzy tymi chwilami stoi w miejscu i to tez jest celowe: polnoc UTC nie przestawia list
+    // pod palcami ucznia, ktory wlasnie na nie patrzy, ani trasy, z ktorej wlasnie wyszla runda.
+    var dzisiaj by remember { mutableIntStateOf(Srs.dayOf(zegar)) }
+    val wlascicielCyklu = LocalLifecycleOwner.current
+    DisposableEffect(wlascicielCyklu, zegar) {
+        val obserwator = LifecycleEventObserver { _, zdarzenie ->
+            if (zdarzenie == Lifecycle.Event.ON_START) dzisiaj = Srs.dayOf(zegar)
+        }
+        wlascicielCyklu.lifecycle.addObserver(obserwator)
+        onDispose { wlascicielCyklu.lifecycle.removeObserver(obserwator) }
+    }
     // Klasa Pronunciation istniala juz wczesniej, ale nie miala ANI JEDNEGO wolajacego —
     // "Trudne slowa" sa pierwszym ekranem, ktory czyta haslo na glos. Instancja zyje tak dlugo
     // jak aplikacja i zwalnia zasoby przy wyjsciu z kompozycji.
     val kontekst = LocalContext.current
     val wymowa = remember(kontekst) { Pronunciation(kontekst) }
     DisposableEffect(wymowa) { onDispose { wymowa.release() } }
-    val zegar = remember { Clock { System.currentTimeMillis() } }
-    // Runda uruchomiona z codziennej sesji jest SPOKOJNA: brief wymaga wariantu bez utraty zyc
-    // przy nauce nowych slow. Flaga zyje tu, bo tylko App sklada opcje dla ekranu gry.
+    // CZYM RUNDA ROZNI SIE OD ZWYKLEJ GRY Z "GRAJ". Piec rzeczy, ustawianych zawsze razem przez
+    // [rodzajRundy], zeby zadne miejsce startu rundy nie zostawilo ktorejs po poprzedniej.
+    //
+    // Spokojna: potworek przy dziale nie zabiera zycia (GameConfig.calm). Tak ida rundy, w ktorych
+    // uczen dopiero poznaje slowa: krok sesji z nowymi slowami i cwiczenie trudnych slow.
     var rundaSpokojna by remember { mutableStateOf(false) }
+    // Skonczona: zamyka sie sama, gdy kazde slowo dostalo poprawna odpowiedz (GameConfig.finite).
+    var rundaSkonczona by remember { mutableStateOf(false) }
+    // Kierunek, w ktorym runda ma byc zagrana; null znaczy "wedlug ustawien ucznia". Sesja i lista
+    // trudnych slow licza postep w JEDNYM kierunku, wiec runda nie moze losowac go slowo po slowie.
+    var kierunekRundy by remember { mutableStateOf<Direction?>(null) }
+    var powrotZRundy by remember { mutableStateOf<PowrotZRundy>(PowrotZRundy.Menu) }
     // Plan sesji, z ktorej wyszla biezaca runda; null dla rundy uruchomionej skadinad.
     //
-    // Zyje tu, a nie na ekranie sesji, bo ekran sesji jest w tym momencie ZDJETY ZE STOSU
-    // (runda konczy sie powrotem do MENU). Bez tego dzienna sesja nie dostawala z rundy ani
-    // jednej odpowiedzi: pasek postepu stal na zerze przez cala sesje, a podsumowanie
-    // pokazywalo "Powtorzone: 0 · Nowe: 0" po przerobieniu calej trasy.
+    // Zyje tu, a nie na ekranie sesji, bo ekran sesji jest na czas rundy poza kompozycja.
+    // Bez tego dzienna sesja nie dostawala z rundy ani jednej odpowiedzi: pasek postepu stal
+    // na zerze przez cala sesje, a podsumowanie pokazywalo "Powtorzone: 0 · Nowe: 0" po
+    // przerobieniu calej trasy.
     var planSesji by remember { mutableStateOf<com.matura.app.learn.PlanSesji?>(null) }
+    fun rodzajRundy(
+        spokojna: Boolean,
+        skonczona: Boolean,
+        kierunek: Direction?,
+        powrot: PowrotZRundy,
+        plan: com.matura.app.learn.PlanSesji?,
+    ) {
+        rundaSpokojna = spokojna
+        rundaSkonczona = skonczona
+        kierunekRundy = kierunek
+        powrotZRundy = powrot
+        planSesji = plan
+    }
+    fun zwyklaRunda() = rodzajRundy(false, false, null, PowrotZRundy.Menu, null)
+    // Kierunek listy trudnych slow, z ktorej uczen ruszyl na cwiczenie: po rundzie wraca na te
+    // sama liste, a nie na te z ustawien. null (wejscie z menu) znaczy "wedlug ustawien".
+    var kierunekTrudnych by remember { mutableStateOf<Direction?>(null) }
 
     BackHandler(enabled = stack.size > 1) { pop() }
 
@@ -133,9 +203,17 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
             Screen.Menu -> MenuScreen(
                 str = str,
                 profile = data.profile,
-                onDaily = { rundaSpokojna = false; planSesji = null; push(Screen.DzisiejszaSesja) },
-                onHardWords = { push(Screen.TrudneSlowa) },
-                onPlay = { rundaSpokojna = false; planSesji = null; push(Screen.SetPick) },
+                onDaily = {
+                    zwyklaRunda()
+                    dzisiaj = Srs.dayOf(zegar)
+                    push(Screen.DzisiejszaSesja)
+                },
+                onHardWords = {
+                    kierunekTrudnych = null
+                    dzisiaj = Srs.dayOf(zegar)
+                    push(Screen.TrudneSlowa)
+                },
+                onPlay = { zwyklaRunda(); push(Screen.SetPick) },
                 onSets = { push(Screen.Sets) },
                 onOptions = { push(Screen.Options) },
                 onAchievements = { push(Screen.Achievements) },
@@ -173,9 +251,19 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                     // do zapisu (postep i slad w dziennej sesji), a ekran sesji czyta je wprost
                     // z `data`. Bez tego uczen, ktory wyszedl z rundy przyciskiem, wracal do
                     // sesji z licznikiem sprzed rundy. Odswiezenie jest tu bezpieczne, bo gra
-                    // wlasnie sie konczy (stos wraca do MENU) - w TRAKCIE rundy byloby zabojcze,
-                    // patrz komentarz przy zapiszProbe.
-                    val exit: () -> Unit = { refresh(); stack = listOf(Screen.Menu) }
+                    // wlasnie sie konczy - w TRAKCIE rundy byloby zabojcze, patrz komentarz
+                    // przy zapiszProbe.
+                    //
+                    // Runda wraca TAM, SKAD RUSZYLA (patrz PowrotZRundy). Ta sama droga obsluguje
+                    // systemowe "wstecz", wyjscie z ekranu wyniku i przycisk DALEJ.
+                    val exit: () -> Unit = {
+                        refresh()
+                        stack = when (powrotZRundy) {
+                            PowrotZRundy.Menu -> listOf(Screen.Menu)
+                            is PowrotZRundy.DzisiejszaSesja -> listOf(Screen.Menu, Screen.DzisiejszaSesja)
+                            PowrotZRundy.TrudneSlowa -> listOf(Screen.Menu, Screen.TrudneSlowa)
+                        }
+                    }
                     // JEDNO wejscie zapisu proby dla wszystkich czterech trybow. Ekrany dostaja
                     // zwykla lambde, wiec zadne z nich nie siega do repozytorium samo i kazde
                     // zostaje testowalne bez Androida.
@@ -193,7 +281,7 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                         val plan = planSesji
                         repo.recordAttempt(
                             proba,
-                            System.currentTimeMillis(),
+                            zegar.nowMs(),
                             if (plan == null) null else { stan ->
                                 Sesja.zaliczOdpowiedz(stan, plan, proba.entryId, proba.outcome)
                             },
@@ -201,25 +289,57 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                     }
                     // Dzien harmonogramu ustalamy RAZ, przy wejsciu do rundy. Gdyby liczyl sie na
                     // biezaco, przekroczenie polnocy UTC w trakcie gry przestawiloby plan rundy.
-                    val dzisiaj = Srs.dayOf(System.currentTimeMillis())
+                    // Osobny od dnia aplikacji: runda bierze dzien z chwili, w ktorej ruszyla.
+                    val dzienRundy = Srs.dayOf(zegar)
                     val finish: (com.matura.app.model.ScoreRecord) -> Unit = { record ->
-                        repo.recordGame(record.copy(mode = s.mode), set.id)
+                        // Rundy spokojnej nie da sie przegrac, wiec jej wynik nie staje obok
+                        // prawdziwych gier ani nie odblokowuje odznak za punkty i serie.
+                        repo.recordGame(record.copy(mode = s.mode), set.id, doRankingu = !rundaSpokojna)
                         refresh()
                     }
-                    // Spokojna runda z codziennej sesji dostaje zapas zyc, zeby nauka nowego
-                    // slowa nie konczyla sie przegrana. Reszta ustawien bez zmian.
-                    val opcjeRundy =
-                        if (rundaSpokojna) data.options.copy(lives = maxOf(data.options.lives, 9))
-                        else data.options
+                    // UKONCZONA runda sesji sama przesuwa trase o krok: uczen wraca na ekran sesji
+                    // i ma juz przed soba nastepny punkt, zamiast szukac przycisku DALEJ. Runda
+                    // przegrana albo porzucona tu nie trafia (PlayScreen wola to tylko po
+                    // ukonczeniu), wiec jej krok zostaje biezacy. Plan jest tym, z ktorym runda
+                    // ruszyla, a krok tym, z ktorego ruszyla: druga ukonczona runda tego samego
+                    // kroku (JESZCZE RAZ) niczego juz nie przesuwa.
+                    val ukonczona: () -> Unit = {
+                        val powrot = powrotZRundy
+                        val plan = planSesji
+                        val zapisany = repo.load().sesja
+                        if (powrot is PowrotZRundy.DzisiejszaSesja && plan != null && zapisany != null) {
+                            val po = Sesja.poUkonczonejRundzie(zapisany, plan, powrot.krok)
+                            if (po != zapisany) {
+                                repo.setSesja(po)
+                                refresh()
+                            }
+                        }
+                    }
+                    // Runda idzie w kierunku, dla ktorego ulozono plan sesji albo liste trudnych
+                    // slow. Przy ustawieniu "losowo" silnik rzucal moneta dla kazdego slowa, wiec
+                    // polowa odpowiedzi ladowala pod drugim kierunkiem: sesja ich nie widziala
+                    // i planowala te same slowa od nowa jako nigdy nieprobowane.
+                    val opcjeRundy = kierunekRundy?.let { data.options.copy(direction = it) } ?: data.options
                     when (s.mode) {
                         GameMode.CLASSIC -> PlayScreen(
                             set = set, options = opcjeRundy, str = str,
                             playerName = data.profile.name, onExit = exit, onFinished = finish,
                             // Gra moze sama wlaczyc klawiature telefonu (awaryjna droga glosu);
                             // zapis ta sama droga co z ekranu OPCJE, wiec zostaje na kolejne gry.
-                            onOptionsChange = { o: Options -> repo.setOptions(o); refresh() },
+                            // Kierunek wraca przy tym do ustawienia ucznia: gra oddaje opcje
+                            // RUNDY, a kierunek rundy z sesji nie jest jego wyborem.
+                            onOptionsChange = { o: Options ->
+                                repo.setOptions(o.copy(direction = data.options.direction))
+                                refresh()
+                            },
                             progress = data.progress,
-                            today = dzisiaj,
+                            today = dzienRundy,
+                            calm = rundaSpokojna,
+                            finite = rundaSkonczona,
+                            onCompleted = ukonczona,
+                            // Z rundy, ktora jest krokiem sesji albo cwiczeniem, idzie sie DALEJ
+                            // (tam, skad przyszla), a nie do menu.
+                            onContinue = if (powrotZRundy == PowrotZRundy.Menu) null else exit,
                             onAttempt = zapiszProbe,
                         )
                         GameMode.TRUE_FALSE -> TrueFalseScreen(
@@ -269,24 +389,43 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 dzis = dzisiaj,
                 onBack = { pop() },
                 onWymowa = { slowo -> wymowa.play(slowo, data.options.soundEnabled) },
+                // Lista otwiera sie w kierunku ucznia ("losowo" rozstrzyga ta sama regula, ktora
+                // ma lista), a po cwiczeniu w tym, w ktorym uczen ja zostawil.
+                kierunekPoczatkowy = kierunekTrudnych ?: Trudne.kierunekDoListy(data.options.direction),
                 onCwicz = { trudne ->
-                    // Jedno slowo do poprawki gramy na mieszance zbudowanej wokol niego:
-                    // plansza potrzebuje kilku hasel, zeby w ogole miec z czego losowac.
+                    // Jedno slowo do poprawki gramy w malym towarzystwie: samo wracaloby na plansze
+                    // od razu po pokazaniu odpowiedzi i uczen przepisywalby je z pamieci chwili,
+                    // a nie z pamieci. Patrz SLOW_W_CWICZENIU.
                     mixSet = BuiltInSets.randomMix().let { mix ->
-                        mix.copy(entries = (listOf(trudne.entry) + mix.entries).distinct().take(20))
+                        mix.copy(
+                            entries = (listOf(trudne.entry) + mix.entries).distinct().take(SLOW_W_CWICZENIU),
+                        )
                     }
-                    rundaSpokojna = true
-                    // Cwiczenie trudnego slowa to NIE jest krok sesji - inaczej odpowiedzi
-                    // z niego doliczalyby sie do dzisiejszej trasy.
-                    planSesji = null
+                    kierunekTrudnych = trudne.kierunek
+                    // Cwiczenie trudnego slowa to NIE jest krok sesji (plan = null) - inaczej
+                    // odpowiedzi z niego doliczalyby sie do dzisiejszej trasy. Gra sie je
+                    // w kierunku listy, na ktora uczen patrzy: to w nim to slowo jest trudne.
+                    rodzajRundy(
+                        spokojna = true,
+                        skonczona = true,
+                        kierunek = trudne.kierunek,
+                        powrot = PowrotZRundy.TrudneSlowa,
+                        plan = null,
+                    )
                     push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
                 },
                 onCwiczWszystkie = { lista ->
                     mixSet = BuiltInSets.randomMix().copy(entries = lista.map { it.entry }.take(20))
-                    rundaSpokojna = true
-                    // Cwiczenie trudnego slowa to NIE jest krok sesji - inaczej odpowiedzi
-                    // z niego doliczalyby sie do dzisiejszej trasy.
-                    planSesji = null
+                    // Cala lista jest w jednym kierunku, wiec wystarczy zapytac pierwsze slowo.
+                    val kierunekListy = lista.firstOrNull()?.kierunek
+                    kierunekTrudnych = kierunekListy
+                    rodzajRundy(
+                        spokojna = true,
+                        skonczona = true,
+                        kierunek = kierunekListy,
+                        powrot = PowrotZRundy.TrudneSlowa,
+                        plan = null,
+                    )
                     push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
                 },
             )
@@ -302,40 +441,73 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
                 val idki = remember(data.sets) {
                     data.sets.flatMap { it.entries }.map { it.id }.filter { it.isNotBlank() }
                 }
-                val plan = remember(data.progress, idki, kierunek, dzisiaj) {
-                    Sesja.zaplanuj(data.progress, idki, kierunek, dzisiaj)
+                // Plan bierze sie z TRASY zapisanej w stanie sesji, a nie z biezacego harmonogramu:
+                // slowo odpowiedziane w rundzie nie znika z trasy i nic nowego na nia nie wchodzi
+                // (patrz Sesja.planNaDzis). Na swiezo plan powstaje tylko wtedy, gdy dzisiejszej
+                // sesji jeszcze nie ma.
+                val plan = remember(data.sesja, data.progress, idki, kierunek, dzisiaj) {
+                    Sesja.planNaDzis(data.sesja, data.progress, idki, kierunek, dzisiaj)
                 }
                 var stanSesji by remember(plan) {
                     mutableStateOf(Sesja.wznow(data.sesja, plan, zegar))
                 }
+                // WZNOWIONA mowi o chwili WEJSCIA na ekran: czy czekala tu sesja, w ktorej uczen
+                // cos juz zrobil. Liczona raz, bo inaczej zapalalaby sie po pierwszym DALEJ.
+                val wznowiona = remember(dzisiaj) { Sesja.czyWznawialna(data.sesja, dzisiaj) }
                 DzisiejszaSesjaScreen(
                     jezyk = data.options.uiLanguage,
                     plan = plan,
                     stan = stanSesji,
                     podsumowanie = Sesja.podsumuj(plan, stanSesji, data.progress, dzisiaj),
                     czasNaKoniec = Sesja.czasNaKoniec(stanSesji, plan, zegar),
-                    wznowiona = data.sesja != null,
+                    wznowiona = wznowiona,
                     // Przerwanie ZAPISUJE stan: brief wymaga, zeby przerwa nie kasowala nauki.
-                    onPrzerwij = { repo.setSesja(stanSesji); refresh(); pop() },
+                    // Sesji nietknietej nie ma po co zapisywac: zapis zamrozilby trase od samego
+                    // obejrzenia ekranu, a uczen niczego jeszcze na niej nie zrobil. Stan, ktory
+                    // lezy juz w zapisie co do pola (kazdy krok zapisuje sie od razu), tez nie
+                    // idzie drugi raz na dysk.
+                    onPrzerwij = {
+                        if (Sesja.czyRuszona(stanSesji) && stanSesji != repo.load().sesja) {
+                            repo.setSesja(stanSesji)
+                            refresh()
+                        }
+                        pop()
+                    },
                     onKrok = { krok ->
                         if (krok.rodzaj == RodzajKroku.POWTORKA || krok.rodzaj == RodzajKroku.GRA) {
                             val cele = krok.cele.toSet()
-                            val wpisy = data.sets.flatMap { it.entries }.filter { it.id in cele }
+                            // To samo slowo bywa w kilku zestawach naraz; na plansze idzie raz.
+                            val wpisy = data.sets.flatMap { it.entries }
+                                .filter { it.id in cele }
+                                .distinctBy { it.id }
                             mixSet = BuiltInSets.randomMix().copy(entries = wpisy.take(20))
-                            rundaSpokojna = krok.spokojny
-                            // Plan idzie razem z runda: bez niego zapiszProbe nie wie, ktore slowo
-                            // bylo powtorka, a ktore nowe, i sesja nie policzy niczego.
-                            planSesji = plan
+                            // Runda sesji konczy sie sama po przerobieniu slow kroku, jest spokojna
+                            // tam, gdzie plan tak mowi, i idzie w kierunku planu. Plan jedzie razem
+                            // z nia: bez niego zapiszProbe nie wie, ktore slowo bylo powtorka,
+                            // a ktore nowe, i sesja nie policzy niczego.
+                            rodzajRundy(
+                                spokojna = krok.spokojny,
+                                skonczona = true,
+                                kierunek = plan.kierunek,
+                                powrot = PowrotZRundy.DzisiejszaSesja(stanSesji.krok),
+                                plan = plan,
+                            )
+                            // Od tego zapisu sesja jest zaczeta, a jej trasa zamrozona.
                             repo.setSesja(stanSesji)
                             push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
                         } else {
                             stanSesji = Sesja.dalej(stanSesji, plan)
                             repo.setSesja(stanSesji)
+                            refresh()
                         }
                     },
+                    // refresh() po zapisie, bo `data.sesja` to zrodlo planu i stanu przy nastepnym
+                    // wejsciu na ekran: bez niego krok pominiety przyciskiem DALEJ wracal jako
+                    // biezacy, gdy uczen wyszedl systemowym "wstecz" i otworzyl sesje ponownie.
                     onDalej = {
                         stanSesji = Sesja.dalej(stanSesji, plan)
                         repo.setSesja(stanSesji)
+                        refresh()
                     },
                     onZakoncz = {
                         stanSesji = Sesja.zakoncz(stanSesji, plan)
@@ -406,6 +578,16 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
         }
     }
 }
+
+/**
+ * Ile slow ma runda cwiczenia JEDNEGO trudnego slowa: ono samo i kilka z losowej mieszanki.
+ *
+ * Runda cwiczenia jest skonczona, czyli trwa, dopoki uczen nie odpowie na kazde slowo. Dawne
+ * dwadziescia (wypelniacz dla rundy bez konca) znaczyloby dzis kilka minut i dziewietnascie
+ * obcych hasel do zaliczenia po to, zeby poprawic jedno. Szesc daje krotka runde, w ktorej
+ * trudne slowo, jesli nie padnie od razu, wraca dopiero po kilku innych.
+ */
+private const val SLOW_W_CWICZENIU = 6
 
 internal fun SaveData.defaultProfile(): Profile = profile
 

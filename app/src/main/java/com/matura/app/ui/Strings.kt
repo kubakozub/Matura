@@ -458,8 +458,24 @@ class Str(private val lang: UiLanguage) {
     val score get() = pick("Punkty", "Score")
     val level get() = pick("Poziom", "Level")
     val gameOver get() = pick("KONIEC GRY", "GAME OVER")
+    /** Tytul ekranu wyniku, gdy runda skonczona zamknela sie sama: kazde slowo ma odpowiedz. */
+    val roundComplete get() = pick("RUNDA UKOŃCZONA", "ROUND COMPLETE")
     val playAgain get() = pick("JESZCZE RAZ", "PLAY AGAIN")
     val toMenu get() = pick("DO MENU", "TO MENU")
+    /** Glowny przycisk ekranu wyniku, gdy runda jest krokiem czegos wiekszego (sesja, trudne slowa). */
+    val next get() = pick("DALEJ", "NEXT")
+
+    // ---- EKRAN WYNIKU: slowa, ktore doszly do dziala --------------------------
+    // Naglowek rysuje czcionka pikselowa, wiec bez nawiasow i cudzyslowow; wiersze listy i
+    // zdanie o pustej liscie ida zwyklym Text.
+    val toReview get() = pick("DO POWTÓRKI", "TO REVIEW")
+    /** Jedna linia takze na telefonie 320 dp (13 sp), stad zdanie bez zadnych dopowiedzen. */
+    val nothingMissed get() = pick(
+        "Żadne słowo nie doszło do działka.",
+        "No word reached the cannon.",
+    )
+    /** Licznik przy slowie przepuszczonym wiecej niz raz, dla czytnika ekranu (na ekranie stoi "×2"). */
+    fun missedTimes(n: Int): String = pick("$n razy", "$n times")
     val pause get() = pick("Pauza", "Pause")
     val resume get() = pick("Wróć do gry", "Resume")
     val killsLabel get() = pick("Pokonane", "Defeated")

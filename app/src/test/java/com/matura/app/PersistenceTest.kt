@@ -245,6 +245,37 @@ class PersistenceTest {
     }
 
     @Test
+    fun `runda spokojna liczy sie jako rozegrana, ale nie trafia do rankingu ani do rekordow`() {
+        // Rundy spokojnej nie da sie przegrac: gra sie ja tak dlugo, az sie skonczy sama. Jej
+        // wynik obok prawdziwych gier byl by rekordem za cierpliwosc, a odznaki za punkty
+        // i serie odblokowywalyby sie w trybie, w ktorym nie ma czego ryzykowac.
+        val repo = Repository(katalog.root)
+        assertTrue(repo.save(daneUcznia("Kuba")))
+        val przed = repo.load()
+
+        val spokojna = ScoreRecord("Kuba", "Moje słówka", 5_000, 1, 40, 12, 1_700_000_100_000L)
+        assertTrue(repo.recordGame(spokojna, "user-1", doRankingu = false))
+
+        val po = Repository(katalog.root).load()
+        assertEquals("ranking nie moze dostac rundy, ktorej nie da sie przegrac", przed.scores, po.scores)
+        assertEquals(przed.profile.bestScore, po.profile.bestScore)
+        assertEquals(przed.profile.bestStreak, po.profile.bestStreak)
+        // Runda sie jednak odbyla: gra, pokonane potworki i rozegranie zestawu licza sie jak zawsze.
+        assertEquals(przed.profile.gamesPlayed + 1, po.profile.gamesPlayed)
+        assertEquals(przed.profile.totalKills + 12, po.profile.totalKills)
+        assertEquals(1, po.sets.first { it.id == "user-1" }.timesPlayed)
+
+        // Kontrola: ta sama runda zapisana zwyczajnie trafia wszedzie, wiec to parametr ja wstrzymal.
+        assertTrue(repo.recordGame(spokojna, "user-1"))
+        val zwykla = Repository(katalog.root).load()
+        assertEquals(przed.scores.size + 1, zwykla.scores.size)
+        assertEquals(5_000, zwykla.profile.bestScore)
+        assertEquals(40, zwykla.profile.bestStreak)
+        assertEquals(przed.profile.gamesPlayed + 2, zwykla.profile.gamesPlayed)
+        assertEquals(2, zwykla.sets.first { it.id == "user-1" }.timesPlayed)
+    }
+
+    @Test
     fun `plik bez pola wersji dostaje numer schematu, a powtorne wczytanie nic nie zmienia`() {
         // Zapis sprzed wersjonowania: pola schemaVersion w pliku po prostu nie ma.
         plik(Repository.FILE_NAME).writeText("""{"profile":{"name":"Stary"},"sets":[],"scores":[]}""")
