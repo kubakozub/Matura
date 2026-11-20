@@ -232,6 +232,35 @@ index 0000000..45949cb
 +        return repozytoria.getOrPut(katalog) { Repository(katalog) }
 +    }
 +}
+diff --git a/app/src/test/java/com/matura/app/GlownaPetla.kt b/app/src/test/java/com/matura/app/GlownaPetla.kt
+new file mode 100644
+index 0000000..7142b6e
+--- /dev/null
++++ b/app/src/test/java/com/matura/app/GlownaPetla.kt
+@@ -0,0 +1,23 @@
++package com.matura.app
++
++import android.os.Looper
++import org.robolectric.Shadows.shadowOf
++
++/**
++ * Wykonuje to, co czeka w glownej petli Robolectrica. Kazdy test, ktory tworzy MainActivity
++ * kontrolerem Robolectrica, MUSI to zawolac na koncu (w @After), takze wtedy, gdy nie dolacza
++ * okna i niczego nie rysuje.
++ *
++ * Dlaczego: setContent zapisuje stan Compose juz w onCreate, a Compose zatwierdza takie zapisy
++ * wiadomoscia wyslana do glownej petli. Kontroler (create, destroy, close) petli nie oproznia,
++ * a Robolectric po tescie wyrzuca wszystko, co w niej zostalo. Compose ma wtedy wiadomosc za
++ * wyslana juz na zawsze i w tej maszynie testowej przestaje zatwierdzac zmiany stanu: kazdy
++ * NASTEPNY test ekranu z automatycznym zegarem czeka 60 s i pada z AppNotIdleException
++ * ("Compose did not get idle"). Winny test przechodzi, padaja niewinne po nim.
++ *
++ * Testy ekranow oparte o createComposeRule albo ActivityScenario tego nie potrzebuja:
++ * ActivityScenario oproznia petle po kazdym kroku cyklu zycia.
++ */
++internal fun wykonajToCoCzekaWGlownejPetli() {
++    shadowOf(Looper.getMainLooper()).idle()
++}
 diff --git a/app/src/test/java/com/matura/app/JednoRepozytoriumTest.kt b/app/src/test/java/com/matura/app/JednoRepozytoriumTest.kt
 new file mode 100644
 index 0000000..a686fea
@@ -598,10 +627,10 @@ index 0000000..d41f8e7
 +}
 diff --git a/app/src/test/java/com/matura/app/StartAktywnosciTest.kt b/app/src/test/java/com/matura/app/StartAktywnosciTest.kt
 new file mode 100644
-index 0000000..9545907
+index 0000000..182c808
 --- /dev/null
 +++ b/app/src/test/java/com/matura/app/StartAktywnosciTest.kt
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,123 @@
 +package com.matura.app
 +
 +import android.content.Context
@@ -609,6 +638,7 @@ index 0000000..9545907
 +import android.view.ViewGroup
 +import androidx.core.view.WindowCompat
 +import androidx.test.core.app.ApplicationProvider
++import org.junit.After
 +import org.junit.Assert.assertEquals
 +import org.junit.Assert.assertFalse
 +import org.junit.Assert.assertTrue
@@ -633,16 +663,17 @@ index 0000000..9545907
 + *     instalatorze, a potem z ikony, kladzie druga MainActivity na pierwszej. Kazda ma wlasny
 + *     obraz danych w pamieci, wiec ta odslonieta pozniej pokazuje i zapisuje stary stan.
 + *
-+ * DLACZEGO SAMO create(), BEZ setup(). Okno dolaczone do systemu (visible()) uruchamia Compose,
-+ * a ten test nie ma reguly Compose, bo dziala tez w wariancie release. Kompozycja ruszona bez
-+ * reguly zostawia po tescie niedokonczona prace w glownej petli i kolejne testy ekranow w tej
-+ * samej maszynie wisza do limitu czasu (zmierzone: 60 s na kazdy test, AppNotIdleException,
-+ * 32 testy w pelnym przebiegu). Wszystko, co tu sprawdzamy, dzieje sie w onCreate, wiec okno
-+ * nie jest potrzebne.
++ * DLACZEGO SAMO create(), BEZ setup(). Okno dolaczone do systemu (visible()) uruchamia cala
++ * kompozycje, a ten test nie ma reguly Compose, bo dziala tez w wariancie release. Wszystko,
++ * co tu sprawdzamy, dzieje sie w onCreate, wiec okno nie jest potrzebne.
 + */
 +@RunWith(RobolectricTestRunner::class)
 +@Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 +class StartAktywnosciTest {
++
++    /** Bez tego nastepne testy ekranow w tej samej maszynie wisza: patrz GlownaPetla.kt. */
++    @After
++    fun posprzataj() = wykonajToCoCzekaWGlownejPetli()
 +
 +    private val aplikacja get() = ApplicationProvider.getApplicationContext<Context>()
 +
@@ -725,10 +756,10 @@ index 0000000..9545907
 +}
 diff --git a/app/src/test/java/com/matura/app/ZmianaKonfiguracjiTest.kt b/app/src/test/java/com/matura/app/ZmianaKonfiguracjiTest.kt
 new file mode 100644
-index 0000000..b48525f
+index 0000000..0886090
 --- /dev/null
 +++ b/app/src/test/java/com/matura/app/ZmianaKonfiguracjiTest.kt
-@@ -0,0 +1,141 @@
+@@ -0,0 +1,144 @@
 +package com.matura.app
 +
 +import android.app.Activity
@@ -737,6 +768,7 @@ index 0000000..b48525f
 +import android.content.res.Configuration
 +import android.os.Bundle
 +import androidx.test.core.app.ApplicationProvider
++import org.junit.After
 +import org.junit.Assert.assertEquals
 +import org.junit.Assert.assertFalse
 +import org.junit.Assert.assertSame
@@ -767,13 +799,15 @@ index 0000000..b48525f
 + * jest tylko w wariancie debug.
 + *
 + * Z tego samego powodu ekran jest tu wznowiony, ale jego okno NIE jest dolaczone (brak
-+ * visible()): dolaczone okno uruchamia Compose, a kompozycja ruszona bez reguly zostawia po
-+ * tescie niedokonczona prace w glownej petli i kolejne testy ekranow wisza do limitu czasu
-+ * (opis i pomiar w StartAktywnosciTest).
++ * visible()): dolaczone okno uruchamia cala kompozycje, a ta bez reguly nie ma kto prowadzic.
 + */
 +@RunWith(RobolectricTestRunner::class)
 +@Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 +class ZmianaKonfiguracjiTest {
++
++    /** Bez tego nastepne testy ekranow w tej samej maszynie wisza: patrz GlownaPetla.kt. */
++    @After
++    fun posprzataj() = wykonajToCoCzekaWGlownejPetli()
 +
 +    /** Jedno zdarzenie z zycia telefonu: co zmienia w konfiguracji i ktorych flag manifestu wymaga. */
 +    private class Zdarzenie(val opis: String, val flagi: Int, val zmiana: Configuration.() -> Unit)
@@ -872,15 +906,14 @@ index 0000000..b48525f
 +}
 diff --git a/app/src/testDebug/java/com/matura/app/MainActivityNaEkranieTest.kt b/app/src/testDebug/java/com/matura/app/MainActivityNaEkranieTest.kt
 new file mode 100644
-index 0000000..8fb33a5
+index 0000000..bcdbe26
 --- /dev/null
 +++ b/app/src/testDebug/java/com/matura/app/MainActivityNaEkranieTest.kt
-@@ -0,0 +1,149 @@
+@@ -0,0 +1,140 @@
 +package com.matura.app
 +
 +import android.content.Context
 +import android.content.res.Configuration
-+import android.os.Looper
 +import androidx.compose.ui.test.hasSetTextAction
 +import androidx.compose.ui.test.junit4.createEmptyComposeRule
 +import androidx.compose.ui.test.onNodeWithContentDescription
@@ -903,7 +936,6 @@ index 0000000..8fb33a5
 +import org.junit.runner.RunWith
 +import org.robolectric.Robolectric
 +import org.robolectric.RobolectricTestRunner
-+import org.robolectric.Shadows.shadowOf
 +import org.robolectric.annotation.Config
 +import kotlin.math.roundToInt
 +
@@ -921,19 +953,12 @@ index 0000000..8fb33a5
 +    @get:Rule val rule = createEmptyComposeRule()
 +
 +    /**
-+     * Kazdy test zamyka swoja MainActivity sam (kontroler Robolectrica), a takie zamkniecie
-+     * nie oproznia glownej petli. Compose wysyla przez te petle wlasne wiadomosci, a to, co
-+     * w niej zostanie, Robolectric po tescie wyrzuca. Compose dalej ma wtedy wiadomosc za
-+     * wyslana i kazdy NASTEPNY test ekranu w tej samej maszynie wisi 60 s, po czym pada
-+     * z AppNotIdleException. Zmierzone na tescie z oknem dolaczonym poza regula Compose:
-+     * 3 kolejne testy po 60 s, a z ta jedna linia wszystkie zielone.
-+     *
-+     * ActivityScenario, na ktorym stoja pozostale testy ekranow, oproznia petle sam.
++     * Kazdy test zamyka swoja MainActivity sam, kontrolerem Robolectrica, a nie przez
++     * ActivityScenario. Bez tego sprzatania nastepne testy ekranow w tej samej maszynie
++     * wisza: patrz GlownaPetla.kt.
 +     */
 +    @After
-+    fun oproznijGlownaPetle() {
-+        shadowOf(Looper.getMainLooper()).idle()
-+    }
++    fun posprzataj() = wykonajToCoCzekaWGlownejPetli()
 +
 +    private val str = Str(UiLanguage.PL)
 +

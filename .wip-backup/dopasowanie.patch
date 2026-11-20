@@ -1,5 +1,5 @@
 diff --git a/app/src/main/java/com/matura/app/game/VoiceMatch.kt b/app/src/main/java/com/matura/app/game/VoiceMatch.kt
-index cc03694..1c1c6cb 100644
+index cc03694..6d89aa9 100644
 --- a/app/src/main/java/com/matura/app/game/VoiceMatch.kt
 +++ b/app/src/main/java/com/matura/app/game/VoiceMatch.kt
 @@ -8,17 +8,24 @@ package com.matura.app.game
@@ -24,8 +24,8 @@ index cc03694..1c1c6cb 100644
   *
 - * Logika jest wspolna z wersja przegladarkowa (matura.uk/demo) - progi zostaly
 - * dobrane pomiarem na zestawie 55 przypadkow, patrz VoiceMatchTest.
-+ * Gra pyta przez [decide]. [match] to starsze wejscie z plaska lista odpowiedzi: nie zna
-+ * ani celow, ani reszty zestawu i zostaje jako punkt odniesienia dla 55 przypadkow.
++ * Wejsciem dla gry jest [decide]. [match] to starsze wejscie z plaska lista odpowiedzi:
++ * nie zna ani celow, ani reszty zestawu i zostaje jako punkt odniesienia dla 55 przypadkow.
 + *
 + * Scorery sa wspolne z wersja przegladarkowa (matura.uk/demo) - progi zostaly dobrane
 + * pomiarem na zestawie 55 przypadkow, patrz VoiceMatchTest. Regul [decide] pilnuje
@@ -81,7 +81,7 @@ index cc03694..1c1c6cb 100644
              t = t.replace("w", "u")                       // "hows" = house
          }
          return DOUBLED.replace(t, "$1").trim()
-@@ -88,19 +106,171 @@ object VoiceMatch {
+@@ -88,19 +106,173 @@ object VoiceMatch {
  
      /** Szkielet spolgloskowy - ratuje trafienia, gdy ASR pomyli same samogloski. */
      fun skel(s: String): String =
@@ -182,7 +182,9 @@ index cc03694..1c1c6cb 100644
 +    // "mature" i "immature" roznia sie dwiema literami na osiem i dziela caly szkielet
 +    // spolgloskowy, wiec scorery widza w nich prawie to samo slowo, a znacza cos odwrotnego.
 +    // Para, w ktorej jedna strona to druga z przedrostkiem z tej listy, nie trafia nigdy
-+    // "mniej wiecej": takie slowo trzeba powiedziec dokladnie.
++    // "mniej wiecej": takie slowo trzeba powiedziec dokladnie. Lista jest jedna dla obu
++    // jezykow, bo zestaw wlasny moze miec dowolny, a poza prawdziwymi zaprzeczeniami
++    // regula dotyka tylko par, ktore i tak sa roznymi slowami ("side" i "inside").
 +    private val NEGATIONS = listOf("nie", "un", "in", "im", "ir", "il", "dis", "non", "anti")
 +
 +    /** Czy [long] to [short] z przedrostkiem zaprzeczenia, pisanym lacznie albo osobno. */
@@ -192,7 +194,10 @@ index cc03694..1c1c6cb 100644
 +        val prefix = if (long[head - 1] == ' ') long.substring(0, head - 1) else long.substring(0, head)
 +        return prefix in NEGATIONS
 +    }
-+
+ 
+-    fun score(hyp: String, cand: String, polish: Boolean): Double {
+-        if (hyp == cand) return 1.0
+-        val direct = sim(hyp, cand)
 +    /**
 +     * Odpowiedzi, w ktore ta wypowiedz nie moze trafic wcale, bo sama zawiera je razem
 +     * z zaprzeczeniem: w "nie lubic" pada tez samo "lubic" i bez tej listy ono wlasnie
@@ -220,10 +225,7 @@ index cc03694..1c1c6cb 100644
 +        val phon: String by lazy(LazyThreadSafetyMode.PUBLICATION) { phon(text, polish) }
 +        val skel: String by lazy(LazyThreadSafetyMode.PUBLICATION) { skel(text) }
 +    }
- 
--    fun score(hyp: String, cand: String, polish: Boolean): Double {
--        if (hyp == cand) return 1.0
--        val direct = sim(hyp, cand)
++
 +    fun score(hyp: String, cand: String, polish: Boolean): Double =
 +        score(Form(hyp, polish), Form(cand, polish))
 +
@@ -261,7 +263,7 @@ index cc03694..1c1c6cb 100644
      }
  
      /**
-@@ -122,12 +292,15 @@ object VoiceMatch {
+@@ -122,12 +294,15 @@ object VoiceMatch {
      }
  
      fun match(transcripts: List<String>, candidates: List<String>, polish: Boolean): Result {
@@ -279,7 +281,7 @@ index cc03694..1c1c6cb 100644
                      if (s > best.score) {
                          if (best.answer != null && best.answer != cand) second = best
                          best = Hit(s, cand)
-@@ -140,20 +313,303 @@ object VoiceMatch {
+@@ -140,20 +315,313 @@ object VoiceMatch {
          return Result(best, second)
      }
  
@@ -350,10 +352,12 @@ index cc03694..1c1c6cb 100644
 +    }
 +
 +    /**
-+     * @param answer odpowiedz do wpisania w gre; niepusta tylko wtedy, gdy strzelamy
++     * @param answer odpowiedz do wpisania w gre, w zapisie z zestawu; niepusta tylko wtedy,
++     *        gdy strzelamy
 +     * @param targetId cel z planszy, ktory przyjmuje [answer]. Jesli przyjmuje ja kilka
 +     *        celow, pierwszy z listy; ktory z nich dostanie strzal, rozstrzyga i tak gra.
-+     * @param score wynik najblizszej odpowiedzi, takze gdy strzalu nie ma
++     * @param score wynik najblizszej odpowiedzi, takze gdy strzalu nie ma. Wynikow, ktore
++     *        nie moga zmienic decyzji (ponizej 0.6), nie liczymy: wracaja jako zero.
 +     * @param nearest najblizsza odpowiedz, takze spoza planszy (diagnostyka)
 +     * @param rival najlepsza odpowiedz INNEGO celu, od ktorej liczy sie przewaga
 +     */
@@ -380,18 +384,24 @@ index cc03694..1c1c6cb 100644
 +     *    wypowiedzi ("boxer shorts" przy samym "shorts"). Alternatywy silnika ida po
 +     *    kolei, bo pierwsza jest najbardziej prawdopodobna.
 +     * 2. Bez takiej wypowiedzi szukamy najblizszej odpowiedzi w CALYM zestawie. Strzal
-+     *    pada tylko wtedy, gdy stoi ona na planszy i ma przewage nad najlepsza odpowiedzia
-+     *    innego celu, z planszy albo spoza niej. Drugi wariant tego samego celu rywalem
-+     *    nie jest, cel przyjmujacy te sama odpowiedz tez nie.
++     *    pada tylko wtedy, gdy stoi ona na planszy i ma przewage nad rywalem: najlepsza
++     *    odpowiedzia, ktorej trafiony cel nie przyjmuje, z planszy albo spoza niej. Drugi
++     *    zapis tej samej odpowiedzi rywalem nie jest. Wypowiedz z kilku slow czytamy
++     *    najpierw w calosci, a dopiero potem jako jedno z jej slow z dopowiedzeniem.
 +     * 3. Wynik czesciowy strzela tylko przy pewnosci [PARTIAL_SCORE] i tylko wtedy, gdy
 +     *    odpowiedz nie moze byc poczatkiem ani kawalkiem dluzszej odpowiedzi innego celu
-+     *    ("bluza" czeka, gdy w zestawie jest "bluza sportowa").
++     *    ("bluza" czeka, gdy w zestawie jest "bluza sportowa"). Kazdy inny wynik
++     *    czesciowy to [Reason.WAIT].
++     *
++     * Do tego dwie reguly samych scorerow, opisane wyzej przy swoich listach: zaprzeczenie
++     * trafia tylko dokladnie, a zapis brytyjski i amerykanski to to samo slowo.
 +     *
 +     * @param transcripts alternatywy silnika, od najbardziej prawdopodobnej
 +     * @param board cele na planszy: kazdy potwor i kazda skrzynia osobno
 +     * @param others wiersze zestawu po stronie odpowiedzi w jezyku nasluchu. Wystarczy
 +     *        podac wszystkie: wiersz, ktory akurat stoi na planszy, niczego nie zmienia.
-+     *        Ich [Target.id] nie jest czytane.
++     *        Ich [Target.id] nie jest czytane. Te liste warto zbudowac raz na runde
++     *        i podawac te sama, bo cele pamietaja swoje postacie dla scorerow.
 +     * @param polish jezyk, w ktorym slucha silnik
 +     * @param isFinal false dla wyniku czesciowego
 +     */
@@ -541,7 +551,10 @@ index cc03694..1c1c6cb 100644
 +            return judge(byAll) { it.all }
 +        }
 +
-+        /** Najlepszy kandydat. Remis idzie do dluzszego, potem do tego z planszy. */
++        /**
++         * Najlepszy kandydat. Dokladny remis idzie do dluzszej odpowiedzi, a przy rownej
++         * dlugosci do wczesniejszej: plansza stoi w slowniku przed reszta zestawu.
++         */
 +        private inline fun best(level: (Candidate) -> Double): Candidate? {
 +            var top: Candidate? = null
 +            var topScore = 0.0
@@ -549,11 +562,10 @@ index cc03694..1c1c6cb 100644
 +                val s = level(c)
 +                if (s <= 0.0) continue
 +                val t = top
-+                val wins = t == null || s > topScore || (s == topScore && (
-+                    c.text.length > t.text.length ||
-+                        (c.text.length == t.text.length && t.boardId == null && c.boardId != null)
-+                    ))
-+                if (wins) { top = c; topScore = s }
++                if (t == null || s > topScore || (s == topScore && c.text.length > t.text.length)) {
++                    top = c
++                    topScore = s
++                }
 +            }
 +            return top
 +        }
@@ -708,10 +720,10 @@ index 2bcd997..0006f41 100644
   * Czy po powrocie z systemowego okna zgody wolno wlaczyc nasluch.
 diff --git a/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt b/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt
 new file mode 100644
-index 0000000..a1e73c9
+index 0000000..0874552
 --- /dev/null
 +++ b/app/src/test/java/com/matura/app/VoiceDecyzjaTest.kt
-@@ -0,0 +1,581 @@
+@@ -0,0 +1,653 @@
 +package com.matura.app
 +
 +import com.matura.app.data.BuiltInSets
@@ -727,6 +739,7 @@ index 0000000..a1e73c9
 +import org.junit.Assert.assertNull
 +import org.junit.Assert.assertTrue
 +import org.junit.Test
++import kotlin.random.Random
 +
 +/**
 + * Reguly VoiceMatch.decide: slownikiem jest caly zestaw, a strzal pada tylko w to, co stoi
@@ -1292,104 +1305,459 @@ index 0000000..a1e73c9
 +            assertTrue(tried > 250)
 +        }
 +    }
-+}
-diff --git a/app/src/test/java/com/matura/app/ZrzutTmpTest.kt b/app/src/test/java/com/matura/app/ZrzutTmpTest.kt
-new file mode 100644
-index 0000000..5d06cd7
---- /dev/null
-+++ b/app/src/test/java/com/matura/app/ZrzutTmpTest.kt
-@@ -0,0 +1,94 @@
-+package com.matura.app
 +
-+import com.matura.app.data.BuiltInSets
-+import com.matura.app.game.Matching
-+import com.matura.app.game.VoiceMatch
-+import com.matura.app.game.VoiceMatch.Target
-+import org.junit.Test
-+import java.io.File
-+import kotlin.random.Random
++    // =====================================================================
++    // 9. Wlasnosci, ktore maja zachodzic dla kazdej wypowiedzi.
++    // =====================================================================
 +
-+/** TYMCZASOWE. Nie commitowac. */
-+class ZrzutTmpTest {
-+    private fun oneLetterOff(answer: String): String {
-+        val words = answer.split(' ').toMutableList()
-+        val nr = words.indices.maxByOrNull { words[it].length }!!
-+        val word = words[nr]
-+        val at = word.length / 2
-+        val other = when (val ch = word[at]) { 'z' -> 'a'; '9' -> '0'; else -> ch + 1 }
-+        words[nr] = word.substring(0, at) + other + word.substring(at + 1)
-+        return words.joinToString(" ")
-+    }
-+
-+    @Test fun przedNoisy() {
-+        val sb = StringBuilder()
-+        for (polish in listOf(true, false)) {
-+            var n = 0; var okFlatAlone = 0; var okFlatFull = 0; var wrongFlat = 0
-+            for (set in BuiltInSets.all()) {
-+                val all = set.entries.map { Matching.acceptedAnswers(if (polish) it.definition else it.term) }
-+                for ((i, own) in all.withIndex()) {
-+                    val primary = own.first()
-+                    if (' ' !in primary) continue
-+                    n++
-+                    val said = oneLetterOff(primary)
-+                    val a = VoiceMatch.match(listOf(said), own, polish)
-+                    if (a.accepted) okFlatAlone++
-+                    val b = VoiceMatch.match(listOf(said), all.flatten().distinct(), polish)
-+                    if (b.accepted && b.best.answer in own) okFlatFull++
-+                    val c = VoiceMatch.match(listOf(said), all.filterIndexed { j, _ -> j != i }.flatten().distinct(), polish)
-+                    if (c.accepted && c.best.answer !in own) wrongFlat++
++    /** Losowa odpowiedz z zestawu, czasem przekrecona, czasem z dopowiedzianym slowem. */
++    private fun utterance(all: List<Target>, random: Random): List<String> {
++        val source = all[random.nextInt(all.size)].answers.let { it[random.nextInt(it.size)] }
++        var said = source
++        repeat(random.nextInt(3)) {
++            if (said.length > 1) {
++                val at = random.nextInt(said.length)
++                val letter = 'a' + random.nextInt(26)
++                said = when (random.nextInt(3)) {
++                    0 -> said.substring(0, at) + letter + said.substring(at + 1)
++                    1 -> said.substring(0, at) + said.substring(at + 1)
++                    else -> said.substring(0, at) + letter + said.substring(at)
 +                }
 +            }
-+            sb.append("flat match, polish=$polish multiword=$n acceptedAlone=$okFlatAlone acceptedFullBoard=$okFlatFull wrongWhenOwnOffBoard=$wrongFlat\n")
 +        }
-+        File("/tmp/claude-0/-home-user-Matura/0e5748ef-99b0-59e1-b03e-46ac0f545d18/scratchpad/dopasowanie/s2/przed-noisy.txt").writeText(sb.toString())
++        val fillers = listOf("the", "a", "to", "nie", "no", "in", "un", "yyy", "please", "to jest")
++        if (random.nextInt(4) == 0) said = fillers[random.nextInt(fillers.size)] + " " + said
++        if (random.nextInt(8) == 0) said = said + " " + fillers[random.nextInt(fillers.size)]
++        return if (random.nextInt(3) == 0) listOf(said, source) else listOf(said)
 +    }
 +
-+    /** Wlasnosci: wiecej wierszy poza plansza nigdy nie tworzy strzalu; czesciowy strzal = koncowy strzal. */
-+    @Test fun wlasnosci() {
-+        val sb = StringBuilder()
-+        val rnd = Random(20261120)
-+        val fillers = listOf("the", "a", "to", "nie", "no", "in", "un", "yyy", "please", "to jest")
-+        var cases = 0; var shots = 0; var v1 = 0; var v2 = 0; var v3 = 0; var v4 = 0
-+        for (polish in listOf(true, false)) for (set in BuiltInSets.all()) {
-+            val all = set.entries.mapIndexed { i, e -> Target(i.toLong(), Matching.acceptedAnswers(if (polish) e.definition else e.term)) }
-+            repeat(60) {
-+                val board = all.shuffled(rnd).take(1 + rnd.nextInt(6))
-+                val others = all.filter { it !in board }
-+                val src = all[rnd.nextInt(all.size)].answers.let { it[rnd.nextInt(it.size)] }
-+                var said = src
-+                repeat(rnd.nextInt(3)) {
-+                    if (said.length > 1) {
-+                        val at = rnd.nextInt(said.length)
-+                        said = when (rnd.nextInt(3)) {
-+                            0 -> said.substring(0, at) + ('a' + rnd.nextInt(26)) + said.substring(at + 1)
-+                            1 -> said.substring(0, at) + said.substring(at + 1)
-+                            else -> said.substring(0, at) + ('a' + rnd.nextInt(26)) + said.substring(at)
++    @Test fun randomUtterances_restOfTheSetOnlyEverTakesShotsAway() {
++        val random = Random(20261120)
++        var cases = 0
++        var shots = 0
++        val broken = ArrayList<String>()
++        for (polish in listOf(true, false)) {
++            for (set in catalogue) {
++                val all = rows(set, polish)
++                repeat(60) {
++                    val board = all.shuffled(random).take(1 + random.nextInt(6))
++                    val others = all.filter { it !in board }
++                    val said = utterance(all, random)
++                    val what = "${set.id} $said plansza=${board.map { it.answers.first() }}"
++                    val final = VoiceMatch.decide(said, board, others, polish, true)
++                    val boardOnly = VoiceMatch.decide(said, board, emptyList(), polish, true)
++                    val partial = VoiceMatch.decide(said, board, others, polish, false)
++                    cases++
++                    // wynik czesciowy strzela tylko tym, czym strzelilby koncowy
++                    if (partial.accepted && partial.answer != final.answer) broken.add("czesciowy: $what $partial")
++                    if (!partial.accepted && partial.reason != Reason.WAIT) broken.add("powod: $what $partial")
++                    if (!final.accepted) {
++                        if (final.targetId != null || final.reason == Reason.EXACT || final.reason == Reason.NEAREST) {
++                            broken.add("pola: $what $final")
 +                        }
++                        return@repeat
++                    }
++                    shots++
++                    // strzal idzie w cel z planszy, ktory te odpowiedz przyjmuje
++                    val target = board.firstOrNull { it.id == final.targetId }
++                    if (target == null || final.answer !in target.answers) broken.add("cel: $what $final")
++                    // wiersze spoza planszy nie tworza strzalu, ktorego bez nich by nie bylo,
++                    // ani nie przenosza go na inny cel
++                    val alone = boardOnly.answer
++                    if (alone == null) {
++                        broken.add("nowy strzal: $what $final")
++                    } else if (board.none { final.answer in it.answers && alone in it.answers }) {
++                        broken.add("inny cel: $what $final, sama plansza: $boardOnly")
 +                    }
 +                }
-+                if (rnd.nextInt(4) == 0) said = fillers[rnd.nextInt(fillers.size)] + " " + said
-+                if (rnd.nextInt(8) == 0) said = said + " " + fillers[rnd.nextInt(fillers.size)]
-+                val alts = if (rnd.nextInt(3) == 0) listOf(said, src) else listOf(said)
-+                cases++
-+                val withOthers = VoiceMatch.decide(alts, board, others, polish, true)
-+                val noOthers = VoiceMatch.decide(alts, board, emptyList(), polish, true)
-+                val partial = VoiceMatch.decide(alts, board, others, polish, false)
-+                if (withOthers.accepted) shots++
-+                // 1. strzal zawsze w cel z planszy, ktory przyjmuje odpowiedz
-+                if (withOthers.accepted) {
-+                    val t = board.firstOrNull { it.id == withOthers.targetId }
-+                    if (t == null || withOthers.answer !in t.answers) { v1++; sb.append("V1 $alts -> $withOthers\n") }
-+                }
-+                // 2. reszta zestawu nigdy nie tworzy strzalu
-+                if (withOthers.accepted && !noOthers.accepted) { v2++; sb.append("V2 ${set.id} $alts board=${board.map { it.answers.first() }} -> $withOthers | bez: $noOthers\n") }
-+                // 3. ta sama odpowiedz
-+                if (withOthers.accepted && noOthers.accepted && withOthers.answer != noOthers.answer) { v3++; sb.append("V3 ${set.id} $alts board=${board.map { it.answers.first() }} -> ${withOthers.answer} | bez: ${noOthers.answer}\n") }
-+                // 4. czesciowy strzal to takze koncowy strzal, tym samym
-+                if (partial.accepted && partial.answer != withOthers.answer) { v4++; sb.append("V4 $alts -> $partial | $withOthers\n") }
 +            }
 +        }
-+        sb.append("cases=$cases shots=$shots v1=$v1 v2=$v2 v3=$v3 v4=$v4\n")
-+        File("/tmp/claude-0/-home-user-Matura/0e5748ef-99b0-59e1-b03e-46ac0f545d18/scratchpad/dopasowanie/s2/wlasnosci.txt").writeText(sb.toString())
++        println("losowe wypowiedzi: $cases, strzalow: $shots")
++        assertTrue("zlamane wlasnosci: ${broken.take(20)}", broken.isEmpty())
++        assertTrue("za malo strzalow, zeby test cos sprawdzal: $shots z $cases", shots > cases / 10)
++    }
++}
+diff --git a/app/src/test/java/com/matura/app/VoiceMatchTest.kt b/app/src/test/java/com/matura/app/VoiceMatchTest.kt
+index 7891236..a8d1c3d 100644
+--- a/app/src/test/java/com/matura/app/VoiceMatchTest.kt
++++ b/app/src/test/java/com/matura/app/VoiceMatchTest.kt
+@@ -116,6 +116,31 @@ class VoiceMatchTest {
+         )
+     }
+ 
++    /**
++     * Gra pyta przez decide(). Na planszy z jednym celem na odpowiedz i bez reszty zestawu
++     * ma ono rozstrzygac kazdy przypadek tak samo jak match(), razem z czterema
++     * przypadkami z osobnych testow nizej.
++     */
++    @Test fun decideResolvesEveryCaseLikeMatch() {
++        val standalone = listOf(
++            Case(listOf("dog"), null, emptyList(), false),
++            Case(listOf("moze"), "morze", listOf("morze", "samochod"), true),
++            Case(listOf("nite"), "night", listOf("night", "teacher"), false),
++            Case(listOf("nauczycel"), "nauczyciel", pl, true),
++        )
++        val bad = ArrayList<String>()
++        for (c in cases + standalone) {
++            val board = c.board.mapIndexed { i, answer -> VoiceMatch.Target(i.toLong(), listOf(answer)) }
++            val d = VoiceMatch.decide(c.said, board, emptyList(), c.polish, isFinal = true)
++            val target = c.want?.let { c.board.indexOf(it).toLong() }
++            if (d.answer != c.want || d.answer != heard(c.said, c.board, c.polish) || d.targetId != target) {
++                bad.add("${c.said.first()} chcialem=${c.want} dostalem=$d")
++            }
++        }
++        assertTrue("niezgodne: $bad", bad.isEmpty())
++        assertEquals(53, cases.size)
++    }
++
+     @Test fun emptyBoardNeverFires() {
+         assertEquals(null, heard(listOf("dog"), emptyList(), false))
+     }
+diff --git a/app/src/test/java/com/matura/app/VoicePolicyTest.kt b/app/src/test/java/com/matura/app/VoicePolicyTest.kt
+index 71c2f44..2498d65 100644
+--- a/app/src/test/java/com/matura/app/VoicePolicyTest.kt
++++ b/app/src/test/java/com/matura/app/VoicePolicyTest.kt
+@@ -1,10 +1,17 @@
+ package com.matura.app
+ 
++import com.matura.app.game.Matching
++import com.matura.app.model.Entry
++import com.matura.app.model.WordSet
+ import com.matura.app.ui.SilenceDetector
+ import com.matura.app.ui.VoiceLabel
+ import com.matura.app.ui.VoiceMode
+ import com.matura.app.ui.VoicePath
+ import com.matura.app.ui.VoicePolicy
++import com.matura.app.ui.odpowiedziPoPolsku
++import com.matura.app.ui.polskiZDeklaracji
++import com.matura.app.ui.stronaPolska
++import com.matura.app.ui.zaliczycWypowiedz
+ import org.junit.Assert.assertEquals
+ import org.junit.Assert.assertFalse
+ import org.junit.Assert.assertTrue
+@@ -186,4 +193,109 @@ class VoicePolicyTest {
+         repeat(6) { nadProgiem.onRms(-1.4f) }
+         assertFalse(nadProgiem.onEmptyCycle())
+     }
++
++    // ---- jedna wypowiedz, jedno zaliczenie -----------------------------------
++
++    @Test
++    fun wypowiedzKtoraZaliczyla_nieZaliczaNicWiecej() {
++        assertFalse("ta sama odpowiedz", zaliczycWypowiedz("bluza", "bluza", 4, 4))
++        assertFalse("inna odpowiedz", zaliczycWypowiedz("bluza sportowa", "bluza", 4, 4))
++        assertTrue("nastepna wypowiedz, inna odpowiedz", zaliczycWypowiedz("bluza sportowa", "bluza", 5, 4))
++        assertTrue("nastepna wypowiedz, ta sama odpowiedz", zaliczycWypowiedz("bluza", "bluza", 5, 4))
++        // okno systemowe liczy swoje wypowiedzi na minusie
++        assertFalse(zaliczycWypowiedz("plecy", "kolano", -2, -2))
++        assertTrue(zaliczycWypowiedz("plecy", "kolano", -3, -2))
++        assertTrue(zaliczycWypowiedz("plecy", "kolano", -1, 1))
++    }
++
++    /** Ekran zaczyna od "nic nie zaliczono": pusta odpowiedz i numer 0. To nie jest wypowiedz. */
++    @Test
++    fun pierwszaOdpowiedzRundy_zaliczaPrzyKazdymNumerze() {
++        assertTrue(zaliczycWypowiedz("kolano", "", 1, 0))
++        assertTrue("silnik, ktory numeruje od zera", zaliczycWypowiedz("kolano", "", 0, 0))
++        assertTrue(zaliczycWypowiedz("kolano", "", -1, 0))
++    }
++
++    // ---- jezyk odpowiedzi z deklaracji zestawu -------------------------------
++
++    @Test
++    fun stronaPolska_zestawWbudowany() {
++        assertFalse("odpowiedzia jest haslo", stronaPolska(haslo = true, "English", "Polski"))
++        assertTrue("odpowiedzia jest tlumaczenie", stronaPolska(haslo = false, "English", "Polski"))
++    }
++
++    /** Przycisk zamiany w edytorze przestawia kolumny razem z podpisami. */
++    @Test
++    fun stronaPolska_poZamianieKolumn() {
++        assertTrue(stronaPolska(haslo = true, "Polski", "English"))
++        assertFalse(stronaPolska(haslo = false, "Polski", "English"))
++    }
++
++    @Test
++    fun polskiZDeklaracji_znaNazwyObuJezykow() {
++        for (nazwa in listOf("Polski", "polski", "Polish", "polish", "PL", "pl", " Polski ", "POLSKI", "pl-PL")) {
++            assertEquals(nazwa, true, polskiZDeklaracji(nazwa))
++        }
++        for (nazwa in listOf("English", "english", "Angielski", "angielski", "EN", "en", " English ", "ENGLISH", "en-GB")) {
++            assertEquals(nazwa, false, polskiZDeklaracji(nazwa))
++        }
++        for (nazwa in listOf("", "?", "Deutsch", "niemiecki", "polski i angielski", "plus")) {
++            assertEquals(nazwa, null, polskiZDeklaracji(nazwa))
++        }
++    }
++
++    @Test
++    fun stronaPolska_jednaStronaBezDeklaracji_jestDrugimJezykiemGry() {
++        // edytor zapisuje "?" w miejsce pustego podpisu
++        assertFalse(stronaPolska(haslo = false, "Polski", "?"))
++        assertTrue(stronaPolska(haslo = true, "Polski", "?"))
++        assertTrue(stronaPolska(haslo = true, "?", "English"))
++        assertFalse(stronaPolska(haslo = false, "?", "English"))
++        assertTrue(stronaPolska(haslo = false, "English", "moje slowka"))
++    }
++
++    @Test
++    fun stronaPolska_zadnaDeklaracja_zostajeRegulaKierunku() {
++        assertFalse("haslo liczy sie za angielskie", stronaPolska(haslo = true, "?", "?"))
++        assertTrue("tlumaczenie liczy sie za polskie", stronaPolska(haslo = false, "?", "?"))
++        assertFalse(stronaPolska(haslo = true, "Deutsch", "Latina"))
++        assertTrue(stronaPolska(haslo = false, "Deutsch", "Latina"))
++    }
++
++    @Test
++    fun stronaPolska_obieStronyWTymSamymJezyku() {
++        assertTrue(stronaPolska(haslo = true, "Polski", "polski"))
++        assertTrue(stronaPolska(haslo = false, "Polski", "polski"))
++        assertFalse(stronaPolska(haslo = true, "English", "EN"))
++        assertFalse(stronaPolska(haslo = false, "English", "EN"))
++    }
++
++    /**
++     * Zestaw wlasny po zamianie kolumn, tak jak zlozy go ekran gry. Do 0.9.18 przy kierunku
++     * domyslnym silnik sluchal tu po polsku angielskich odpowiedzi.
++     */
++    @Test
++    fun zestawPoZamianieKolumn_sluchaWJezykuOdpowiedzi() {
++        val zestaw = WordSet(
++            id = "wlasny",
++            title = "Cialo",
++            termLanguage = "Polski",
++            definitionLanguage = "English",
++            entries = listOf(Entry("kolano", "knee"), Entry("plecy", "back"), Entry("głowa", "head")),
++        )
++        val haslaPolskie = stronaPolska(haslo = true, zestaw.termLanguage, zestaw.definitionLanguage)
++        val tlumaczeniaPolskie = stronaPolska(haslo = false, zestaw.termLanguage, zestaw.definitionLanguage)
++        // kierunek domyslny (haslo -> tlumaczenie): uczen mowi "knee", silnik ma sluchac en-US
++        assertFalse(tlumaczeniaPolskie)
++        // kierunek odwrotny: uczen mowi "kolano"
++        assertTrue(haslaPolskie)
++
++        // kierunek losowy: strony zestawu zbierane wedlug deklaracji, nie wedlug kolumny
++        val hasla = zestaw.entries.flatMap { Matching.acceptedAnswers(it.term) }.toSet()
++        val tlumaczenia = zestaw.entries.flatMap { Matching.acceptedAnswers(it.definition) }.toSet()
++        val polskie = (if (haslaPolskie) hasla else emptySet()) + (if (tlumaczeniaPolskie) tlumaczenia else emptySet())
++        val angielskie = (if (haslaPolskie) emptySet() else hasla) + (if (tlumaczeniaPolskie) emptySet() else tlumaczenia)
++        assertEquals(true, odpowiedziPoPolsku(listOf("kolano", "plecy", "head"), polskie, angielskie))
++        assertEquals(false, odpowiedziPoPolsku(listOf("knee", "back", "glowa"), polskie, angielskie))
++    }
+ }
+diff --git a/app/src/test/java/com/matura/app/VoiceRegresjaTest.kt b/app/src/test/java/com/matura/app/VoiceRegresjaTest.kt
+index 973074c..c9c3585 100644
+--- a/app/src/test/java/com/matura/app/VoiceRegresjaTest.kt
++++ b/app/src/test/java/com/matura/app/VoiceRegresjaTest.kt
+@@ -272,8 +272,13 @@ class VoiceRegresjaTest {
+             "dwa osobne 'kolano' to dwie odpowiedzi, choćby padly tuz po sobie",
+             zaliczycWypowiedz("kolano", "kolano", 2, 1),
+         )
+-        assertTrue("inne slowo w tej samej wypowiedzi liczy sie normalnie",
++        // Do 0.9.18 inne slowo w tej samej wypowiedzi liczylo sie normalnie i wynik czesciowy
++        // z koncowym potrafily zestrzelic dwa rozne potwory. Wypowiedz, ktora juz zaliczyla,
++        // nie zalicza nic wiecej.
++        assertFalse("inne slowo w TEJ SAMEJ wypowiedzi juz nie zalicza",
+             zaliczycWypowiedz("plecy", "kolano", 1, 1))
++        assertTrue("inne slowo w nastepnej wypowiedzi liczy sie normalnie",
++            zaliczycWypowiedz("plecy", "kolano", 2, 1))
+ 
+         // Wynik czesciowy i koncowy tej samej wypowiedzi maja TEN SAM numer...
+         start()
+diff --git a/app/src/test/java/com/matura/app/VoiceStopStatusTest.kt b/app/src/test/java/com/matura/app/VoiceStopStatusTest.kt
+new file mode 100644
+index 0000000..ca9a03b
+--- /dev/null
++++ b/app/src/test/java/com/matura/app/VoiceStopStatusTest.kt
+@@ -0,0 +1,191 @@
++package com.matura.app
++
++import android.Manifest
++import android.app.Application
++import android.content.ComponentName
++import android.content.Context
++import android.content.IntentFilter
++import android.os.Bundle
++import android.os.Looper
++import android.speech.RecognitionService
++import android.speech.SpeechRecognizer
++import androidx.test.core.app.ApplicationProvider
++import com.matura.app.ui.PowodStop
++import com.matura.app.ui.VoiceInput
++import org.junit.After
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Before
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.Shadows.shadowOf
++import org.robolectric.annotation.Config
++import org.robolectric.shadow.api.Shadow
++import org.robolectric.shadows.ShadowSpeechRecognizer
++import java.time.Duration
++
++/**
++ * Podpis pod paskiem glosu po wylaczeniu nasluchu.
++ *
++ * Komunikat z trwajacej sesji ("probuje innego silnika mowy...", podpowiedz o cichym
++ * mikrofonie) zostawal po stop() na ekranie az do nastepnego startu: pasek byl zgaszony,
++ * a podpis dalej twierdzil, ze cos sie dzieje. Komunikat, ktory jest WYNIKIEM (koniec
++ * drabinki, brak zgody, zajety mikrofon), ma zostac, bo to z niego uczen dowiaduje sie,
++ * co dalej, i pozniejsza pauza nie moze mu go zabrac.
++ */
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [34])
++class VoiceStopStatusTest {
++
++    private lateinit var voice: VoiceInput
++    private var wyczerpane = 0
++    private var brakZgody = 0
++
++    private val PAKIET_USLUGI = "com.przyklad.mowa"
++    private val petla get() = shadowOf(Looper.getMainLooper())
++
++    private fun ostatni(): SpeechRecognizer =
++        requireNotNull(ShadowSpeechRecognizer.getLatestSpeechRecognizer()) {
++            "start() nie utworzyl zadnego rozpoznawacza"
++        }
++
++    private fun cien(r: SpeechRecognizer): ShadowSpeechRecognizer = Shadow.extract(r)
++
++    private fun uplyw(ms: Long) = petla.idleFor(Duration.ofMillis(ms))
++
++    @Before
++    fun ustaw() {
++        val ctx = ApplicationProvider.getApplicationContext<Context>()
++        val komponent = ComponentName(PAKIET_USLUGI, PAKIET_USLUGI + ".Rozpoznawanie")
++        shadowOf(ctx.packageManager).addServiceIfNotPresent(komponent)
++        shadowOf(ctx.packageManager)
++            .addIntentFilterForService(komponent, IntentFilter(RecognitionService.SERVICE_INTERFACE))
++        ShadowSpeechRecognizer.setIsOnDeviceRecognitionAvailable(false)
++        voice = VoiceInput(ctx)
++        voice.tekstInnySilnik = "INNY SILNIK"
++        voice.tekstCiszy = "MIKROFON MILCZY"
++        voice.tekstBrakZgody = "BRAK ZGODY"
++        voice.onExhausted = { wyczerpane += 1 }
++        voice.onBrakZgody = { brakZgody += 1 }
++    }
++
++    /** Kazdy test oddaje mikrofon i NISZCZY rozpoznawacz: patrz komentarz w VoiceDrabinkaTest. */
++    @After
++    fun sprzataj() {
++        voice.release()
++        uplyw(200)
++    }
++
++    private fun start() {
++        voice.start("pl-PL", listOf("kolano", "plecy", "głowa")) { _, _ -> }
++        uplyw(50)
++    }
++
++    private fun blad(kod: Int, potem: Long = 300) {
++        cien(ostatni()).triggerOnError(kod)
++        uplyw(potem)
++    }
++
++    /** Straznik dzwieku schodzi na inny silnik i mowi o tym uczniowi; nasluch trwa. */
++    private fun zejscieNaInnySilnik() {
++        start()
++        cien(ostatni()).triggerOnReadyForSpeech(Bundle())
++        uplyw(3_000)
++        assertEquals("INNY SILNIK", voice.status)
++        assertTrue("to nadal trwajacy nasluch", voice.listening)
++    }
++
++    private fun wylaczenieKasujePodpis(powod: PowodStop) {
++        zejscieNaInnySilnik()
++        voice.stop(powod)
++        assertFalse(voice.listening)
++        assertEquals("po wylaczeniu (" + powod + ") nie ma juz czego opisywac", "", voice.status)
++        // i nic spoznionego nie przywraca go po chwili
++        uplyw(3_000)
++        assertEquals("", voice.status)
++    }
++
++    @Test
++    fun dotknieciePaska_kasujePodpisTrwajacejSesji() = wylaczenieKasujePodpis(PowodStop.DOTKNIECIE)
++
++    @Test
++    fun pauza_kasujePodpisTrwajacejSesji() = wylaczenieKasujePodpis(PowodStop.PAUZA)
++
++    @Test
++    fun zejscieWTlo_kasujePodpisTrwajacejSesji() = wylaczenieKasujePodpis(PowodStop.TLO)
++
++    @Test
++    fun wyjscieZEkranu_kasujePodpisTrwajacejSesji() {
++        zejscieNaInnySilnik()
++        voice.release()
++        assertEquals("", voice.status)
++    }
++
++    /** Podpowiedz o cichym mikrofonie tez opisuje sesje, ktora trwa. */
++    @Test
++    fun podpowiedzOCichymMikrofonie_znikaPoWylaczeniu() {
++        start()
++        blad(SpeechRecognizer.ERROR_AUDIO, potem = 600)
++        blad(SpeechRecognizer.ERROR_AUDIO)
++        assertEquals("MIKROFON MILCZY", voice.status)
++        assertTrue(voice.listening)
++
++        voice.stop(PowodStop.DOTKNIECIE)
++        assertEquals("", voice.status)
++    }
++
++    /**
++     * Koniec drabinki: komunikat ustawia sie PO stop(DRABINKA), a ekran zaraz potem zwykle
++     * wstrzymuje gre. Pauza po wygaszonym nasluchu nie moze zabrac uczniowi wyjasnienia.
++     */
++    @Test
++    fun koniecDrabinki_zostawiaKomunikat_takzePoPauzie() {
++        start()
++        repeat(3) { blad(SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) }
++        assertEquals("drabinka ma sie skonczyc", 1, wyczerpane)
++        assertFalse(voice.listening)
++        val komunikat = voice.status
++        assertTrue("komunikat ma nazwac przyczyne", komunikat.isNotEmpty())
++
++        for (powod in listOf(PowodStop.PAUZA, PowodStop.TLO, PowodStop.DOTKNIECIE)) {
++            voice.stop(powod)
++            assertEquals("stop(" + powod + ") po koncu drabinki", komunikat, voice.status)
++        }
++    }
++
++    @Test
++    fun brakZgody_zostawiaKomunikat() {
++        val aplikacja = ApplicationProvider.getApplicationContext<Application>()
++        shadowOf(aplikacja).denyPermissions(Manifest.permission.RECORD_AUDIO)
++        start()
++        blad(SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS)
++        assertEquals("brak zgody to sprawa ekranu", 1, brakZgody)
++        assertFalse(voice.listening)
++        assertTrue("komunikat: " + voice.status, voice.status.startsWith("BRAK ZGODY"))
++
++        voice.stop(PowodStop.PAUZA)
++        assertTrue("pauza po odmowie: " + voice.status, voice.status.startsWith("BRAK ZGODY"))
++    }
++
++    @Test
++    fun zajetyMikrofon_zostawiaPodpowiedz() {
++        start()
++        blad(SpeechRecognizer.ERROR_AUDIO, potem = 600)
++        repeat(5) { blad(SpeechRecognizer.ERROR_AUDIO, potem = 2_000) }
++        assertFalse("po serii bledow nagrywania nasluch gasnie", voice.listening)
++        assertEquals("MIKROFON MILCZY", voice.status)
++
++        voice.stop(PowodStop.TLO)
++        assertEquals("MIKROFON MILCZY", voice.status)
++    }
++
++    /** Wywolanie bez podanego powodu zachowuje sie tak jak przed zmiana. */
++    @Test
++    fun stopBezPowodu_zostawiaPodpis() {
++        zejscieNaInnySilnik()
++        voice.stop()
++        assertEquals("INNY SILNIK", voice.status)
 +    }
 +}
