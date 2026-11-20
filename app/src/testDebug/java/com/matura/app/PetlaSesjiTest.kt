@@ -21,6 +21,7 @@ import com.matura.app.model.Direction
 import com.matura.app.model.Entry
 import com.matura.app.model.TaskKind
 import com.matura.app.model.UiLanguage
+import com.matura.app.model.WordSet
 import com.matura.app.ui.MaturaApp
 import com.matura.app.ui.SesjaStr
 import com.matura.app.ui.Str
@@ -234,6 +235,73 @@ class PetlaSesjiTest {
     }
 
     private fun krok(nr: Int) = sesja.sessionStepLabel.replace("%1", nr.toString()).replace("%2", "3")
+
+    // ---- slowo, ktorego nie da sie wpisac ----------------------------------
+
+    @Test
+    fun slowoNieDoWpisania_nieWchodziNaTrase_aRundaSesjiSieKonczy() {
+        lateinit var druk: Entry
+        uruchom { r ->
+            // Wlasny zestaw ucznia ze slowem, na ktore klawiatura gry nie ma jak odpowiedziec
+            // (cyfra), i slad po zwyklej rundzie sprzed trzech dni: slowo doszlo wtedy do dziala.
+            // Od tej pory jest najstarsza zalegloscia, czyli pierwsza powtorka kazdej sesji.
+            r.upsertSet(WordSet(id = "moj", title = "Moj zestaw", entries = listOf(Entry("3D printer", "drukarka 3D"))))
+            druk = r.load().sets.first { it.id == "moj" }.entries.single()
+            r.recordAttempt(
+                Attempt(druk.id, Direction.TERM_TO_DEF, TaskKind.PRZYPOMNIENIE, Outcome.POKAZANA, "dawno"),
+                poludnie(DZIS - 3),
+            )
+        }
+        val piatka = pierwszaPiatka().also { assertFalse(druk in it) }
+
+        dotknij(str.dailyMenu)
+        // Piec nowych slow i nic wiecej. Ze slowem nie do wpisania trasa miala szesc pozycji,
+        // a jej pierwsza runda nie konczyla sie nigdy: to slowo wracalo po kazdym pokazaniu
+        // odpowiedzi.
+        assertTrue("slowo, ktorego nie da sie wpisac, weszlo na trase", jest("0 / 5"))
+
+        dotknij(sesja.sessionStart)
+        przejdzRunde(piatka.map { odpowiedz(it.definition) })
+        dotknij(str.next)
+
+        assertTrue(naEkranieSesji())
+        assertTrue(jest(krok(2)))
+        assertTrue("licznik sesji sie nie domknal", jest("5 / 5"))
+        // Slowo nie zniknelo z harmonogramu: dalej czeka, tylko nie w rundzie pisanej.
+        assertTrue(repo.load().progress.containsKey(Srs.key(druk.id, Direction.TERM_TO_DEF)))
+    }
+
+    @Test
+    fun cwiczenieTrudnychSlow_pomijaSlowoNieDoWpisania_iKonczySieSamo() {
+        lateinit var trudne: Entry
+        uruchom { r ->
+            // Dwa trudne slowa na jednej liscie: zwykle i takie, ktorego klawiatura gry nie wpisze.
+            r.upsertSet(WordSet(id = "moj", title = "Moj zestaw", entries = listOf(Entry("3D printer", "drukarka 3D"))))
+            val druk = r.load().sets.first { it.id == "moj" }.entries.single()
+            trudne = r.load().sets.first().entries.first()
+            for (wpis in listOf(trudne, druk)) {
+                r.recordAttempt(
+                    Attempt(wpis.id, Direction.TERM_TO_DEF, TaskKind.PRZYPOMNIENIE, Outcome.BLEDNA, "dawno-" + wpis.id),
+                    poludnie(DZIS - 3),
+                )
+            }
+        }
+
+        dotknij(str.hardWordsMenu)
+        // Na liscie sa oba: slowo nie do wpisania dalej jest trudne, tylko nie do tej rundy.
+        rule.onNodeWithText(str.hardWordsCount + ": 2").assertExists()
+        dotknij(str.hardPracticeAll)
+        assertTrue("cwiczenie nie ruszylo", jest("Q"))
+
+        // W rundzie jest tylko slowo, na ktore da sie odpowiedziec. Z drugim runda nie miala
+        // konca: wracalo po kazdym pokazaniu odpowiedzi.
+        rule.mainClock.advanceTimeBy(1_500)
+        wpisz(odpowiedz(trudne.definition))
+        grajAz("ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
+
+        dotknij(str.next)
+        assertTrue("z cwiczenia wraca sie na liste trudnych slow", jest(str.hardPracticeAll))
+    }
 
     // ---- wyjscie w polowie -------------------------------------------------
 

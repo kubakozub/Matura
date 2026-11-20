@@ -128,6 +128,16 @@ class GameEngineTest {
         assertTrue("the monsters should have reached the cannon", snapshot().monsters.isEmpty() || gameOver)
     }
 
+    /** Let the answer on show go out: until then the word it belongs to stays off the field. */
+    private fun GameEngine.waitOutReveal() {
+        var n = 0
+        while (snapshot().reveal != null && n < 200) {
+            tick(0.1f)
+            n++
+        }
+        assertNull("the answer should have gone out", snapshot().reveal)
+    }
+
     /**
      * Plays an auto-spawning round the way a student who knows every word would: whenever a
      * monster stands on the field with no shot on its way, its own first answer is typed.
@@ -569,6 +579,52 @@ class GameEngineTest {
     }
 
     @Test
+    fun `a row kept waiting by its twin until the bag runs out is first in the next pass`() {
+        // The first "ręka" is left standing while the rest of the bag comes out and is answered.
+        // What is left in the bag is its twin, which cannot stand next to it, so a new pass has
+        // to start. The twin has not had its turn yet and must not lose it: before this was
+        // looked after, both rows went to the back of the new bag in shuffled order, and every
+        // other time the row that had just been asked came out again while its twin had not
+        // been asked once.
+        val entries = listOf(
+            Entry("arm", "ręka", "w1"),
+            Entry("hand", "ręka", "w2"),
+            Entry("leg", "noga", "w3"),
+            Entry("foot", "stopa", "w4"),
+        )
+        for (seed in 1..30) {
+            val e = GameEngine(
+                set = WordSet(id = "t", title = "body", entries = entries),
+                config = GameConfig(direction = Direction.DEF_TO_TERM, autoSpawn = false),
+                random = Random(seed),
+            )
+            repeat(3) { e.spawnMonster() }
+            val first = e.snapshot().monsters.single { it.prompt == "ręka" }
+            for (m in e.snapshot().monsters.filter { it.prompt != "ręka" }) {
+                e.setTyped(m.answers.first()); e.submit()
+                e.resolveShots()
+            }
+
+            // The new pass begins with a word that can stand on the field, never a second "ręka".
+            e.spawnMonster()
+            assertEquals("seed $seed", 2, e.snapshot().monsters.size)
+            assertTrue("seed $seed", e.snapshot().monsters.last().prompt != "ręka")
+
+            // The first twin leaves. The row that waited is next, before anything else.
+            e.setTyped(first.answers.first())
+            assertTrue(e.submit() is SubmitResult.Fired)
+            e.resolveShots()
+            e.spawnMonster()
+            val second = e.snapshot().monsters.last()
+            assertEquals("seed $seed: the waiting row comes out as soon as its prompt is free", "ręka", second.prompt)
+            assertEquals(
+                "seed $seed: both rows have been asked before either is asked twice",
+                setOf("w1", "w2"), setOf(first.entryId, second.entryId),
+            )
+        }
+    }
+
+    @Test
     fun `a prompt without letters or digits stays playable`() {
         // Such a prompt normalises to nothing, so it cannot be looked up among the prompts of
         // the set. The row's own answers must not depend on that lookup, or a user set with
@@ -800,6 +856,98 @@ class GameEngineTest {
     }
 
     @Test
+    fun `a word does not come back while its answer is on show`() {
+        // The answer stays on the field for three seconds and a wave leaves every 3.8 s. When
+        // the word that got through was the only one left to hand out (the tail of every
+        // finite round), it walked back in under its own translation and could be copied.
+        val e = engine(calm = true, finite = true)
+        repeat(2) {
+            e.spawnMonster()
+            val m = e.snapshot().monsters.single()
+            e.setTyped(m.answers.first()); e.submit()
+            e.resolveShots()
+        }
+        e.spawnMonster()
+        val missed = e.snapshot().monsters.single()
+        e.walkToCannon()
+        assertEquals(missed.prompt, e.snapshot().reveal?.prompt)
+
+        var t = 0f
+        while (t < GameEngine.REVEAL_TIME - 0.1f) {
+            e.spawnMonster()
+            assertTrue("back on the field under its own answer, after $t s", e.snapshot().monsters.isEmpty())
+            e.tick(0.05f)
+            t += 0.05f
+        }
+        assertNotNull(e.snapshot().reveal)
+
+        e.waitOutReveal()
+        e.spawnMonster()
+        assertEquals("once the answer is gone the word returns", missed.prompt, e.snapshot().monsters.single().prompt)
+        assertFalse(e.gameOver)
+    }
+
+    @Test
+    fun `the wave held back by an answer on show leaves when the answer goes out`() {
+        // With waves running by themselves: the word is never on the field together with its
+        // answer, and holding it back costs no more than the answer's own three seconds. A
+        // wave that found nothing to hand out is not lost for a whole interval.
+        for (seed in 1..25) {
+            val e = GameEngine(
+                set = WordSet(id = "t", title = "t", entries = listOf(Entry("agile", "zręczny", "w1"))),
+                config = GameConfig(calm = true, finite = true),
+                random = Random(seed),
+            )
+            var reached = -1f
+            var back = -1f
+            var frames = 0
+            while (back < 0f && frames++ < 20_000) {
+                e.tick(0.01f)
+                val s = e.snapshot()
+                if (s.reveal != null) {
+                    if (reached < 0f) reached = e.elapsed
+                    assertTrue("seed $seed: the word is back while its answer is shown", s.monsters.isEmpty())
+                } else if (reached >= 0f && s.monsters.isNotEmpty()) {
+                    back = e.elapsed
+                }
+            }
+            assertTrue("seed $seed: the word never came back", back >= 0f)
+            val gap = back - reached
+            assertTrue("seed $seed: back after $gap s", gap >= GameEngine.REVEAL_TIME - 0.02f)
+            // 3.8 s is one wave interval at level 1: the latest the word came back before.
+            assertTrue("seed $seed: back only after $gap s", gap <= 3.8f + 0.05f)
+        }
+    }
+
+    @Test
+    fun `an endless round waits for the answer to go out rather than double a prompt`() {
+        // Two words, both off the field, one of them with its answer on show. The other one
+        // comes out; after that an endless round used to fill the lane with whatever was next,
+        // and now it may only wait: the held word is about to be free, so nothing is doubled.
+        val e = GameEngine(
+            set = WordSet(id = "t", title = "t", entries = listOf(Entry("agile", "zręczny"), Entry("tart", "cierpki"))),
+            config = GameConfig(lives = 5, autoSpawn = false),
+            random = Random(3),
+        )
+        e.spawnMonster()
+        val missed = e.snapshot().monsters.single()
+        e.walkToCannon()
+
+        e.spawnMonster()
+        val other = e.snapshot().monsters.single()
+        assertTrue(other.prompt != missed.prompt)
+        e.spawnMonster()
+        assertEquals("nothing is doubled while a word waits for its answer to go out", 1, e.snapshot().monsters.size)
+
+        e.waitOutReveal()
+        e.spawnMonster()
+        assertEquals(setOf(missed.prompt, other.prompt), e.snapshot().monsters.map { it.prompt }.toSet())
+        // Now everything stands on the field, and a set smaller than the field still spawns.
+        e.spawnMonster()
+        assertEquals(3, e.snapshot().monsters.size)
+    }
+
+    @Test
     fun `a monster with a shot already on its way is not a missed word`() {
         // The answer was right, the shot was only slower than the last step. Listing the word
         // for review, or showing its answer, would contradict what the student has just typed.
@@ -1004,13 +1152,16 @@ class GameEngineTest {
         assertEquals(2, e.snapshot().targetsDone)
         assertFalse("one word is still owed", e.gameOver)
 
-        // Now it returns, as often as it takes, and nothing else does.
+        // Now it returns, as often as it takes, and nothing else does. Each time it first
+        // waits for its answer to leave the field.
         repeat(2) {
+            e.waitOutReveal()
             e.spawnMonster()
             assertEquals(missed.prompt, e.snapshot().monsters.single().prompt)
             e.walkToCannon()
             assertFalse(e.gameOver)
         }
+        e.waitOutReveal()
         e.spawnMonster()
         assertEquals(missed.prompt, e.snapshot().monsters.single().prompt)
         e.setTyped(missed.answers.first()); e.submit()

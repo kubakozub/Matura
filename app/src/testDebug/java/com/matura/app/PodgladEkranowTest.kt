@@ -193,6 +193,22 @@ class PodgladEkranowTest {
     }
 
     /**
+     * Runda przy nieudanym zapisie. W trakcie komunikat lezy u dolu, na klawiaturze, tak jak
+     * kladzie go aplikacja nad kazdym ekranem; po rundzie stoi nad przyciskami wyniku, a nie na nich.
+     */
+    @Test
+    fun gra_klasyczna_blad_zapisu() = podglad(
+        "gra-klasyczna-blad-zapisu",
+        kroki = listOf("w-toku" to czas(14_000), "koniec" to czas(150_000)),
+    ) {
+        PlayScreen(
+            set = BuiltInSets.all().first(), options = Options(), str = str,
+            playerName = "Kuba", onExit = {}, onFinished = {},
+            uwaga = str.saveFailed, onAttempt = {},
+        )
+    }
+
+    /**
      * Cztery slowa, zeby runde skonczona dalo sie w podgladzie PRZEJSC klawiatura gry, a nie
      * tylko obejrzec w biegu. "schoolmate" ma najdluzsza odpowiedz w calym katalogu: to na niej
      * widac, czy odkryta odpowiedz i wiersz listy mieszcza sie na waskim telefonie.
@@ -279,14 +295,18 @@ class PodgladEkranowTest {
         )
     }
 
-    /** Runda skonczona z zyciami (krok GRA bez nowych slow): serca, a pod nimi licznik. */
+    /**
+     * Runda skonczona z zyciami (krok GRA bez nowych slow). Licznik stoi w rzedzie serc, za
+     * ostatnim, dopoki miesci sie przed przyciskiem pauzy: tak jest na niskich telefonach.
+     * Na wysokiej planszy caly HUD jest wiekszy i licznik schodzi pod serca.
+     */
     @Test
     fun gra_klasyczna_skonczona() = podglad(
         "gra-klasyczna-skonczona",
         kroki = listOf("w-toku" to { czas(13_000)(); wpisz("pensja"); czas(700)() }),
     ) {
         PlayScreen(
-            set = malyZestaw, options = Options(lives = 5), str = str,
+            set = malyZestaw, options = Options(), str = str,
             playerName = "Kuba", onExit = {}, onFinished = {},
             finite = true, onContinue = {}, onAttempt = {},
         )

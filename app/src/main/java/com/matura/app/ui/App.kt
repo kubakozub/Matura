@@ -340,6 +340,9 @@ fun MaturaApp(
                             // Z rundy, ktora jest krokiem sesji albo cwiczeniem, idzie sie DALEJ
                             // (tam, skad przyszla), a nie do menu.
                             onContinue = if (powrotZRundy == PowrotZRundy.Menu) null else exit,
+                            // Komunikat o nieudanym zapisie pokazuje tu ekran gry, a nie karta
+                            // na dole okna (patrz koniec tej funkcji).
+                            uwaga = if (bladZapisu) str.saveFailed else null,
                             onAttempt = zapiszProbe,
                         )
                         GameMode.TRUE_FALSE -> TrueFalseScreen(
@@ -393,12 +396,20 @@ fun MaturaApp(
                 // ma lista), a po cwiczeniu w tym, w ktorym uczen ja zostawil.
                 kierunekPoczatkowy = kierunekTrudnych ?: Trudne.kierunekDoListy(data.options.direction),
                 onCwicz = { trudne ->
-                    // Jedno slowo do poprawki gramy w malym towarzystwie: samo wracaloby na plansze
-                    // od razu po pokazaniu odpowiedzi i uczen przepisywalby je z pamieci chwili,
-                    // a nie z pamieci. Patrz SLOW_W_CWICZENIU.
+                    // Jedno slowo do poprawki gramy w malym towarzystwie. Samo wracaloby na
+                    // plansze, gdy tylko zgasnie jego odpowiedz, i uczen wpisywalby je z pamieci
+                    // chwili. W towarzystwie wraca po slowach, ktore jeszcze czekaja; ile to
+                    // naprawde daje, mowi SLOW_W_CWICZENIU.
+                    // Do rundy ida tylko slowa, ktore da sie wpisac (patrz doRundyPisanej): runda
+                    // cwiczenia konczy sie dopiero odpowiedziami, wiec slowo nie do wpisania
+                    // trzymaloby w niej ucznia bez konca.
                     mixSet = BuiltInSets.randomMix().let { mix ->
                         mix.copy(
-                            entries = (listOf(trudne.entry) + mix.entries).distinct().take(SLOW_W_CWICZENIU),
+                            entries = doRundyPisanej(
+                                (listOf(trudne.entry) + mix.entries).distinct(),
+                                trudne.kierunek,
+                                data.options.systemKeyboard,
+                            ).take(SLOW_W_CWICZENIU),
                         )
                     }
                     kierunekTrudnych = trudne.kierunek
@@ -415,9 +426,15 @@ fun MaturaApp(
                     push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
                 },
                 onCwiczWszystkie = { lista ->
-                    mixSet = BuiltInSets.randomMix().copy(entries = lista.map { it.entry }.take(20))
                     // Cala lista jest w jednym kierunku, wiec wystarczy zapytac pierwsze slowo.
                     val kierunekListy = lista.firstOrNull()?.kierunek
+                    mixSet = BuiltInSets.randomMix().copy(
+                        entries = doRundyPisanej(
+                            lista.map { it.entry },
+                            kierunekListy ?: Direction.TERM_TO_DEF,
+                            data.options.systemKeyboard,
+                        ).take(20),
+                    )
                     kierunekTrudnych = kierunekListy
                     rodzajRundy(
                         spokojna = true,
@@ -438,8 +455,13 @@ fun MaturaApp(
                 } else {
                     data.options.direction
                 }
-                val idki = remember(data.sets) {
-                    data.sets.flatMap { it.entries }.map { it.id }.filter { it.isNotBlank() }
+                // Slownik sesji to slowa, na ktore runda umie przyjac odpowiedz. Rundy sesji
+                // koncza sie dopiero odpowiedziami, wiec slowo, ktorego nie da sie wpisac
+                // klawiatura ucznia (patrz doRundyPisanej), nie wchodzi na trase: runda z nim nie
+                // konczylaby sie nigdy, a licznik dnia czekalby na nie do wieczora.
+                val idki = remember(data.sets, kierunek, data.options.systemKeyboard) {
+                    doRundyPisanej(data.sets.flatMap { it.entries }, kierunek, data.options.systemKeyboard)
+                        .map { it.id }.filter { it.isNotBlank() }
                 }
                 // Plan bierze sie z TRASY zapisanej w stanie sesji, a nie z biezacego harmonogramu:
                 // slowo odpowiedziane w rundzie nie znika z trasy i nic nowego na nia nie wchodzi
@@ -480,7 +502,12 @@ fun MaturaApp(
                             val wpisy = data.sets.flatMap { it.entries }
                                 .filter { it.id in cele }
                                 .distinctBy { it.id }
-                            mixSet = BuiltInSets.randomMix().copy(entries = wpisy.take(20))
+                            // Trasa z zapisu ma wlasny kierunek, a slownik sesji odsiano wyzej dla
+                            // kierunku z ustawien. Gdy uczen zmienil go w ciagu dnia, te dwa sie
+                            // roznia, wiec o tym, co da sie wpisac, pytamy jeszcze raz, juz dla
+                            // kierunku, w ktorym runda naprawde pojdzie.
+                            val doWpisania = doRundyPisanej(wpisy, plan.kierunek, data.options.systemKeyboard)
+                            mixSet = BuiltInSets.randomMix().copy(entries = doWpisania.take(20))
                             // Runda sesji konczy sie sama po przerobieniu slow kroku, jest spokojna
                             // tam, gdzie plan tak mowi, i idzie w kierunku planu. Plan jedzie razem
                             // z nia: bez niego zapiszProbe nie wie, ktore slowo bylo powtorka,
@@ -568,7 +595,14 @@ fun MaturaApp(
 
         // Nad kazdym ekranem, bo zapis pada niezaleznie od tego, gdzie uczen wtedy jest.
         // Na dole, zeby nie zaslaniac planszy ani nagłowka z zyciami.
-        if (bladZapisu) {
+        //
+        // Wyjatek: tryb klasyczny dostaje ten komunikat parametrem i pokazuje go sam. Jego ekran
+        // wyniku ma przyciski przypiete do dolu okna, wiec karta stad lezala dokladnie na nich:
+        // przy pelnym dysku pierwszy nieudany zapis wychodzi na jaw wlasnie po rundzie i uczen
+        // nie widzial ani JESZCZE RAZ, ani wyjscia. O tym, czy stoi plansza, czy wynik, wie tylko
+        // ekran gry.
+        val komunikatWGrze = screen.let { it is Screen.Play && it.mode == GameMode.CLASSIC }
+        if (bladZapisu && !komunikatWGrze) {
             InfoCard(
                 str.saveFailed,
                 Modifier
@@ -584,8 +618,12 @@ fun MaturaApp(
  *
  * Runda cwiczenia jest skonczona, czyli trwa, dopoki uczen nie odpowie na kazde slowo. Dawne
  * dwadziescia (wypelniacz dla rundy bez konca) znaczyloby dzis kilka minut i dziewietnascie
- * obcych hasel do zaliczenia po to, zeby poprawic jedno. Szesc daje krotka runde, w ktorej
- * trudne slowo, jesli nie padnie od razu, wraca dopiero po kilku innych.
+ * obcych hasel do zaliczenia po to, zeby poprawic jedno. Szesc daje krotka runde.
+ *
+ * Trudne slowo, ktore doszlo do dziala, wraca po slowach, ktore jeszcze czekaja na wyjscie,
+ * a nigdy wczesniej, niz zgasnie jego odpowiedz na planszy (tego pilnuje silnik). Towarzystwo
+ * nie gwarantuje wiec dlugiej przerwy: gdy uczen odpowiedzial juz na wszystkie pozostale slowa,
+ * trudne wraca zaraz po zgaszeniu odpowiedzi.
  */
 private const val SLOW_W_CWICZENIU = 6
 

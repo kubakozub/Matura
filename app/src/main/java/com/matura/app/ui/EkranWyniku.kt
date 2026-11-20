@@ -59,6 +59,10 @@ class PrzyciskWyniku(val etykieta: String, val onClick: () -> Unit)
  * @param opisPunktow punkty dla czytnika ekranu; sama liczba bez nazwy nic mu nie mowi.
  * @param glowny przycisk, ktory ma byc pod kciukiem: zielony, na cala wolna szerokosc.
  * @param drugi przycisk poboczny; null zostawia jeden przycisk.
+ * @param uwaga komunikat aplikacji, ktory ma byc widoczny takze tutaj (dzis: nieudany zapis).
+ *   Stoi NAD przyciskami, poza przewijaniem. Aplikacja pokazuje go zwykle karta u dolu okna,
+ *   a dol tego ekranu to wlasnie przyciski: karta lezala dokladnie na nich i uczen po rundzie
+ *   nie widzial ani JESZCZE RAZ, ani wyjscia. Kto podaje [uwaga], nie rysuje juz tamtej karty.
  * @param srodek zawartosc miedzy punktami a przyciskami. Dostaje szerokosc kolumny, zeby
  *   napis rysowany czcionka pikselowa mial do czego zawijac (PixelText sam jej nie zna).
  */
@@ -72,6 +76,7 @@ fun EkranWyniku(
     glowny: PrzyciskWyniku,
     modifier: Modifier = Modifier,
     drugi: PrzyciskWyniku? = null,
+    uwaga: String? = null,
     srodek: @Composable ColumnScope.(szerokosc: Dp) -> Unit = {},
 ) {
     BoxWithConstraints(
@@ -107,6 +112,10 @@ fun EkranWyniku(
                     PixelText("$punkty", color = Palette.Gold, glyphHeight = 26.dp, opis = opisPunktow)
                 }
                 srodek(szerokosc)
+            }
+            if (uwaga != null) {
+                InfoCard(uwaga)
+                Spacer(Modifier.height(8.dp))
             }
             // Kreska mowi, ze to, co nad nia, przewija sie pod przyciski, a nie konczy w tym miejscu.
             Box(Modifier.fillMaxWidth().height(2.dp).background(Palette.SurfaceHigh))
