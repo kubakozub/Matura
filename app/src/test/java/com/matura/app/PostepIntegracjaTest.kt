@@ -221,7 +221,8 @@ class PostepIntegracjaTest {
     ): Boolean = repo.recordAttempt(
         proba(entryId = entryId, outcome = outcome, id = znacznik),
         poludnie(DZIS),
-    ) { stan -> Sesja.zaliczOdpowiedz(stan, plan, entryId, outcome) }
+        { stan -> Sesja.zaliczOdpowiedz(stan, plan, entryId, outcome) },
+    )
 
     @Test
     fun `dzienna sesja notuje odpowiedzi z rundy - pasek i podsumowanie zgadzaja sie z praca ucznia`() {
@@ -343,7 +344,6 @@ class PostepIntegracjaTest {
             repo.recordGame(
                 ScoreRecord("Kuba", "Moje słówka", 800, 4, 6, 30, 1_700_000_000_000L),
                 WLASNY_ZESTAW,
-                poludnie(DZIS),
             ),
         )
 

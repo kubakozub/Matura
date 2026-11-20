@@ -3,12 +3,14 @@ package com.matura.app.data
 import android.content.Context
 import android.util.Log
 import com.matura.app.learn.Attempt
+import com.matura.app.learn.Doliczenie
 import com.matura.app.learn.EntryId
 import com.matura.app.learn.Nagrody
 import com.matura.app.learn.Odznaki
 import com.matura.app.learn.Srs
+import com.matura.app.learn.Wplyw
+import com.matura.app.learn.Zaliczenie
 import com.matura.app.model.Direction
-import com.matura.app.model.Dorobek
 import com.matura.app.model.Entry
 import com.matura.app.model.Profile
 import com.matura.app.model.Options
@@ -63,6 +65,21 @@ class Repository(private val dir: File) {
 
     @Volatile
     private var cache: SaveData? = null
+
+    /**
+     * Slownik gry DOLACZONY DO APLIKACJI, a nie zestawy z zapisu: te uczen moze otworzyc
+     * w edytorze, skrocic albo dopisac do nich wlasne wiersze. Po katalogu z aplikacji licza
+     * sie odznaki za slowa ([Odznaki.liczniki]) i po nim poznajemy slowo "wlasne" przy
+     * dziennym limicie punktow. Leniwie i raz na instancje: SampleData.builtInSets() sklada
+     * ponad dwa tysiace wpisow od nowa przy kazdym wywolaniu, a pytamy po kazdej odpowiedzi.
+     */
+    private val katalog: List<WordSet> by lazy { SampleData.builtInSets() }
+
+    private val idKatalogu: Set<String> by lazy {
+        val out = HashSet<String>()
+        for (set in katalog) for (e in set.entries) if (e.id.isNotBlank()) out += e.id
+        out
+    }
 
     /**
      * Wyjatek z ostatniego nieudanego zapisu; null, gdy ostatni zapis sie udal.
@@ -166,6 +183,13 @@ class Repository(private val dir: File) {
      * punkty bez awansu, a dorobek ma sie zgadzac z harmonogramem co do slowa. Nieudany zapis
      * nie zostawia punktow takze w pamieci, bo [save] rusza cache dopiero po sukcesie.
      *
+     * @param naWplyw dostaje to, co proba zrobila w ksiedze ([Wplyw]), i TYLKO po udanym
+     *   zapisie; takze wtedy, gdy dzienny limit zabral zaliczeniu punkty (xp rowne zero).
+     *   Proba bez zaliczenia nie wola go wcale. Ekran gry zbiera z tego rozpisanie rundy
+     *   ([Nagrody.roznica]), wiec rozpisanie nie moze wyprzedzic dysku. Stoi na koncu listy
+     *   parametrow: slad sesji podaje sie odtad w nawiasie albo po nazwie, nie lambda za
+     *   nawiasem.
+     *
      * @return to, co [save]; true takze wtedy, gdy proba niczego nie zmienila (przerwana proba,
      *   kolejne trafienie tego samego dnia) — wtedy nie ma po co ruszac dysku.
      */
@@ -174,6 +198,7 @@ class Repository(private val dir: File) {
         attempt: Attempt,
         nowMs: Long,
         sladWSesji: ((com.matura.app.learn.StanSesji) -> com.matura.app.learn.StanSesji)? = null,
+        naWplyw: ((Wplyw) -> Unit)? = null,
     ): Boolean {
         val przed = load()
         val dzien = Srs.dayOf(nowMs)
@@ -190,37 +215,50 @@ class Repository(private val dir: File) {
         // tez byc powodem, zeby przepisywac caly dokument.
         if (bezZmianyPozaKsiegowa(przed.progress, po, attempt) && sesjaPo == sesjaPrzed) return true
         val zPostepem = przed.copy(progress = po, sesja = sesjaPo)
-        return save(zPostepem.copy(dorobek = dorobekPoProbie(przed, zPostepem, attempt, dzien)))
+        val doliczenie = doliczProbe(przed, zPostepem, attempt, dzien)
+        val zapisane =
+            save(if (doliczenie == null) zPostepem else zPostepem.copy(dorobek = doliczenie.dorobek))
+        if (zapisane && doliczenie != null) naWplyw?.invoke(doliczenie.wplyw)
+        return zapisane
     }
 
     /**
-     * Dorobek po jednej probie: zaliczenie, a po nim odznaki.
+     * Dorobek po jednej probie: zaliczenie, a po nim odznaki; null, gdy proba nie dala
+     * zaliczenia (pomylka, podpowiedz, sam slad sesji).
      *
-     * Reguly mieszkaja w [Nagrody] i [Odznaki]; tutaj jest tylko kolejnosc. Odznaki licza sie
-     * z zapisu JUZ PO doliczeniu, bo czesc z nich patrzy na liczniki samego dorobku (dni
-     * nauki, seria, powtorki). Dzien proby jest dniem i zaliczenia, i odznaki.
+     * Reguly mieszkaja w [Nagrody] i [Odznaki]; tutaj sa tylko dwie rzeczy, ktorych tamte nie
+     * widza, oraz kolejnosc. Po pierwsze, czy slowo jest WLASNE: spoza slownika dolaczonego
+     * do aplikacji. Po drugie, czy zaliczenie jest NAPRAWA: pierwszym utrwaleniem slowa ze
+     * slownika, przy ktorym uczen wczesniej sie pomylil (licznik pomylek sprzed tej proby).
+     * Odznaki licza sie z zapisu JUZ PO doliczeniu, bo czesc z nich patrzy na liczniki samego
+     * dorobku (dni nauki, seria, powtorki). Dzien proby jest dniem i zaliczenia, i odznaki.
      *
-     * Proba bez zaliczenia (pomylka, podpowiedz, sam slad sesji) oddaje dorobek NIETKNIETY
-     * i odznak nie przelicza. To nie jest skrot kosztem poprawnosci: liczniki odznak zaleza od
-     * szczytow pudelek i od dorobku, a jedno i drugie rosnie tylko razem z zaliczeniem, wiec
-     * nie ma czego szukac. Oszczedza za to przejscie po calym katalogu (ponad dwa tysiace
-     * hasel w obu kierunkach) po kazdej blednej odpowiedzi w rundzie.
+     * Bez zaliczenia odznak nie przeliczamy. To nie jest skrot kosztem poprawnosci: liczniki
+     * odznak zaleza od szczytow pudelek i od dorobku, a jedno i drugie rosnie tylko razem
+     * z zaliczeniem, wiec nie ma czego szukac. Oszczedza za to przejscie po calym katalogu
+     * (ponad dwa tysiace hasel w obu kierunkach) po kazdej blednej odpowiedzi w rundzie.
+     * Z tego samego powodu liczenie odpada, gdy uczen ma juz wszystkie odznaki.
      */
-    private fun dorobekPoProbie(
+    private fun doliczProbe(
         przed: SaveData,
         po: SaveData,
         attempt: Attempt,
         dzien: Int,
-    ): Dorobek {
+    ): Doliczenie? {
         val klucz = Srs.key(attempt.entryId, attempt.direction)
-        val zaliczenie = Nagrody.zaliczenie(
-            przed.progress[klucz] ?: WordProgress(),
-            po.progress[klucz] ?: WordProgress(),
-            attempt,
-        ) ?: return po.dorobek
-        val doliczony =
-            Nagrody.dolicz(po.dorobek, zaliczenie, dzien, Nagrody.celDnia(po.options.celDnia))
-        return Odznaki.odblokuj(doliczony, Odznaki.liczniki(po.copy(dorobek = doliczony)), dzien)
+        val stanPrzed = przed.progress[klucz] ?: WordProgress()
+        val zaliczenie =
+            Nagrody.zaliczenie(stanPrzed, po.progress[klucz] ?: WordProgress(), attempt)
+                ?: return null
+        val wlasne = attempt.entryId !in idKatalogu
+        val naprawa = zaliczenie == Zaliczenie.UTRWALENIE && stanPrzed.mistakes > 0 && !wlasne
+        val doliczenie = Nagrody.dolicz(
+            po.dorobek, zaliczenie, dzien, Nagrody.celDnia(po.options.celDnia), wlasne, naprawa,
+        )
+        val ksiega = doliczenie.dorobek
+        if (Odznaki.komplet(ksiega)) return doliczenie
+        val liczniki = Odznaki.liczniki(po.copy(dorobek = ksiega), katalog)
+        return doliczenie.copy(dorobek = Odznaki.odblokuj(ksiega, liczniki, dzien))
     }
 
     /**
@@ -271,32 +309,70 @@ class Repository(private val dir: File) {
     /**
      * Records the outcome of a finished run and rolls the profile counters forward.
      *
+     * @param doRankingu false dla rundy, ktora nie idzie o wynik (spokojna runda sesji dziennej,
+     *   trudne slowa, poprawka). Liczba gier, liczba pokonanych i licznik rozgrywek zestawu
+     *   rosna wtedy dalej, ale wynik NIE trafia na liste wynikow i nie podnosi rekordow profilu
+     *   (najlepszy wynik, najdluzsza seria): runda z zapasem zyc i bez presji czasu nie moze
+     *   ustawiac poprzeczki rundom granym na serio. Skutek uboczny, zamierzony: taka runda nie
+     *   liczy sie tez do odznaki za cztery tryby, bo ta czyta liste wynikow.
+     *
+     * @param nowMs chwila konca gry; daje dzien odznakom zdobytym w tej grze. Wartosc domyslna
+     *   jest tylko po to, zeby wywolanie bez czasu (rekord, zestaw, ewentualnie ranking)
+     *   dzialalo bez poprawek; testy podaja czas jawnie, jak wszedzie w tej klasie.
+     *
+     * @param potwierdzOdznaki ekran wyniku za chwile pokaze odznaki czekajace na pokazanie
+     *   ([com.matura.app.model.Dorobek.odznakiNowe]), wiec ten sam zapis je odhacza. Zdobyte
+     *   w tej grze ekran i tak znajdzie: sa w ksiedze, a nie bylo ich w stanie sprzed rundy
+     *   ([Nagrody.roznica]).
+     *
      * Po grze stempluja sie odznaki, ktore licza sie z profilu i z listy wynikow (rozegrane
-     * gry, najlepszy wynik, liczba trybow). [nowMs] daje im dzien zdobycia i wchodzi
-     * parametrem, jak kazdy czas w tej klasie. PUNKTOW NAUKI gra nie dopisuje: wynik rundy
-     * placi takze za szybkosc i za trafienie potworka, a ksiega dorobku rosnie wylacznie
-     * z prob ([recordAttempt]).
+     * gry, najlepszy wynik, liczba trybow). PUNKTOW NAUKI gra nie dopisuje: wynik rundy placi
+     * takze za szybkosc i za trafienie potworka, a ksiega dorobku rosnie wylacznie z prob
+     * ([recordAttempt]).
      */
-    fun recordGame(record: ScoreRecord, setId: String, nowMs: Long) = update { d ->
+    fun recordGame(
+        record: ScoreRecord,
+        setId: String,
+        doRankingu: Boolean = true,
+        nowMs: Long = System.currentTimeMillis(),
+        potwierdzOdznaki: Boolean = false,
+    ) = update { d ->
         val p = d.profile
         val poGrze = d.copy(
             profile = p.copy(
                 gamesPlayed = p.gamesPlayed + 1,
                 totalKills = p.totalKills + record.kills,
-                bestScore = maxOf(p.bestScore, record.score),
-                bestStreak = maxOf(p.bestStreak, record.bestStreak),
+                bestScore = if (doRankingu) maxOf(p.bestScore, record.score) else p.bestScore,
+                bestStreak = if (doRankingu) maxOf(p.bestStreak, record.bestStreak) else p.bestStreak,
             ),
             // Leaderboard lokalny: top 50 osobno dla kazdego trybu, zeby wyniki
             // z jednego trybu nie wypychaly pozostalych.
-            scores = (d.scores + record)
+            scores = if (!doRankingu) d.scores else (d.scores + record)
                 .groupBy { it.mode }
                 .flatMap { (_, list) -> list.sortedByDescending { it.score }.take(50) }
                 .sortedByDescending { it.score },
             sets = d.sets.map { if (it.id == setId) it.copy(timesPlayed = it.timesPlayed + 1) else it },
         )
-        poGrze.copy(
-            dorobek = Odznaki.odblokuj(poGrze.dorobek, Odznaki.liczniki(poGrze), Srs.dayOf(nowMs)),
-        )
+        val ksiega = poGrze.dorobek
+        val zOdznakami =
+            if (Odznaki.komplet(ksiega)) ksiega
+            else Odznaki.odblokuj(ksiega, Odznaki.liczniki(poGrze, katalog), Srs.dayOf(nowMs))
+        poGrze.copy(dorobek = if (potwierdzOdznaki) Odznaki.potwierdz(zOdznakami) else zOdznakami)
+    }
+
+    /**
+     * Odhacza odznaki jako pokazane: czysci zbior czekajacych, samych odznak nie rusza. Wola
+     * to ekran, ktory wlasnie je pokazal (osiagniecia); ekran wyniku robi to samo przez
+     * [recordGame]. Gdy nic nie czeka, dysku nie dotyka.
+     *
+     * @return to, co [save]; true takze wtedy, gdy nie bylo czego odhaczac.
+     */
+    @Synchronized
+    fun potwierdzOdznaki(): Boolean {
+        val d = load()
+        val potwierdzony = Odznaki.potwierdz(d.dorobek)
+        if (potwierdzony === d.dorobek) return true
+        return save(d.copy(dorobek = potwierdzony))
     }
 
     /**
@@ -339,12 +415,14 @@ class Repository(private val dir: File) {
      *      katalogu to samo slowo lezy w niej pod starym i pod nowym kluczem (patrz
      *      [przeniesPostep]) i liczyloby sie dwa razy. Z punktow za gry nie bierzemy nic,
      *      z tego samego powodu, dla ktorego krok 1 -> 2 nie wymysla z nich postepu. Dni
-     *      nauki, seria i powtorki zaczynaja od zera: stary zapis ich nie notowal, wiec
-     *      liczymy od tej wersji i niczego nie zgadujemy.
+     *      nauki, seria, powtorki i naprawione slowa zaczynaja od zera, a zapas dni wolnych
+     *      od jednego, jak u nowego ucznia: stary zapis tego nie notowal, wiec liczymy od
+     *      tej wersji i niczego nie zgadujemy (takze z dni ostatnich awansow).
      *
      *  (c) Odznaki, ktorych prog jest juz spelniony, wchodza do ksiegi PO CICHU, z dniem
-     *      [Odznaki.DZIEN_SPRZED_KSIEGI]. Inaczej pierwsza runda po aktualizacji oglaszalaby
-     *      jako nowosc odznaki, ktore uczen ma od miesiecy (osiem z nich to dawne osiagniecia).
+     *      [Odznaki.DZIEN_SPRZED_KSIEGI] i bez odkladania do pokazania. Inaczej pierwsza runda
+     *      po aktualizacji oglaszalaby jako nowosc odznaki, ktore uczen ma od miesiecy (osiem
+     *      z nich to dawne osiagniecia).
      *
      * Ksiegi, ktora MA JUZ PUNKTY, krok nie zaklada drugi raz i robi samo (a). Wyliczenie
      * z pudelek nadpisaloby wtedy punkty zarobione nauka (powtorek w terminie z pudelek nie
@@ -374,8 +452,9 @@ class Repository(private val dir: File) {
         return zPunktami.copy(
             dorobek = Odznaki.odblokuj(
                 zPunktami.dorobek,
-                Odznaki.liczniki(zPunktami),
+                Odznaki.liczniki(zPunktami, katalog),
                 Odznaki.DZIEN_SPRZED_KSIEGI,
+                poCichu = true,
             ),
         )
     }

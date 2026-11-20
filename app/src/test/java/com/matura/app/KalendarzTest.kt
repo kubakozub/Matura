@@ -2,10 +2,13 @@ package com.matura.app
 
 import com.matura.app.learn.DataKalendarzowa
 import com.matura.app.learn.Kalendarz
+import com.matura.app.learn.Nagrody
+import com.matura.app.learn.Odliczanie
 import com.matura.app.learn.Srs
 import com.matura.app.model.Options
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
@@ -64,6 +67,77 @@ class KalendarzTest {
         // Nie zero: ekran ma wiedziec, ze termin minal, i zrobic cos innego niz odliczanie.
         assertEquals(-1, Kalendarz.dniDoMatury(matura, matura + 1))
         assertEquals(-365, Kalendarz.dniDoMatury(matura, matura + 365))
+    }
+
+    // --- odliczanie do pokazania -----------------------------------------------------------
+
+    @Test
+    fun `odliczanie ma piec stanow i kazdy pada dokladnie w swoim dniu`() {
+        val matura = Options().maturaDzien
+        fun wDniu(zostalo: Int) = Nagrody.odliczanie(matura, matura - zostalo, wlaczone = true)
+
+        assertEquals(Odliczanie.Dzis, wDniu(0))
+        assertEquals(Odliczanie.Jutro, wDniu(1))
+        assertEquals(Odliczanie.Sto, wDniu(100))
+        assertEquals(Odliczanie.Dni(167), wDniu(167))
+        assertNull("po terminie nie ma czego odliczac", wDniu(-1))
+
+        // Granice: sasiedzi dni szczegolnych sa zwyklymi dniami, a kazdy dzien po terminie
+        // jest "po terminie", nie tylko pierwszy.
+        assertEquals(Odliczanie.Dni(2), wDniu(2))
+        assertEquals(Odliczanie.Dni(99), wDniu(99))
+        assertEquals(Odliczanie.Dni(101), wDniu(101))
+        assertNull(wDniu(-365))
+        assertEquals(100, Odliczanie.STO_DNI)
+    }
+
+    @Test
+    fun `wylaczone odliczanie nie pokazuje niczego, w zadnym dniu`() {
+        val matura = Options().maturaDzien
+        for (zostalo in listOf(-1, 0, 1, 2, 100, 167)) {
+            assertNull("zostalo $zostalo", Nagrody.odliczanie(matura, matura - zostalo, wlaczone = false))
+        }
+    }
+
+    @Test
+    fun `odliczanie mowi to samo co kalendarz i trzyma sie daty ustawionej przez ucznia`() {
+        // 20 listopada 2026 przy domyslnej dacie: 167 dni. Sto dni wypada 26 stycznia 2027.
+        val dzis = Kalendarz.dzienEpoki(2026, 11, 20)
+        assertEquals(Odliczanie.Dni(167), Nagrody.odliczanie(Options().maturaDzien, dzis, wlaczone = true))
+        assertEquals(
+            Odliczanie.Sto,
+            Nagrody.odliczanie(Options().maturaDzien, Kalendarz.dzienEpoki(2027, 1, 26), wlaczone = true),
+        )
+
+        // Uczen z innym terminem: odliczanie liczy do jego daty, nie do domyslnej.
+        val poprawka = Kalendarz.dzienEpoki(2027, 8, 24)
+        assertEquals(Odliczanie.Jutro, Nagrody.odliczanie(poprawka, poprawka - 1, wlaczone = true))
+        assertEquals(
+            Odliczanie.Dni(Kalendarz.dniDoMatury(poprawka, dzis)),
+            Nagrody.odliczanie(poprawka, dzis, wlaczone = true),
+        )
+    }
+
+    @Test
+    fun `napisy odliczania podaja liczbe dni i nie strasza`() {
+        assertEquals("DO MATURY: 167 DNI", Odliczanie.Dni(167).pl)
+        assertEquals("MATURA IN 167 DAYS", Odliczanie.Dni(167).en)
+        assertEquals("STO DNI DO MATURY", Odliczanie.Sto.pl)
+        assertEquals("100 DAYS TO MATURA", Odliczanie.Sto.en)
+        assertEquals("MATURA JUTRO", Odliczanie.Jutro.pl)
+        assertEquals("MATURA TOMORROW", Odliczanie.Jutro.en)
+        assertEquals("MATURA DZIŚ. POWODZENIA!", Odliczanie.Dzis.pl)
+        assertEquals("MATURA TODAY. GOOD LUCK!", Odliczanie.Dzis.en)
+
+        // Ton: sama liczba, bez popedzania. "Tylko" i "juz" przed liczba to straszenie.
+        val wszystkie = listOf(Odliczanie.Dzis, Odliczanie.Jutro, Odliczanie.Sto, Odliczanie.Dni(5))
+        for (o in wszystkie) {
+            for (tekst in listOf(o.pl, o.en)) {
+                for (zwrot in listOf("TYLKO", "JUŻ", "ONLY", "JUST", "HURRY")) {
+                    assertFalse("'$tekst' zawiera '$zwrot'", tekst.contains(zwrot))
+                }
+            }
+        }
     }
 
     // --- zamiana daty na numer dnia i z powrotem ------------------------------------------

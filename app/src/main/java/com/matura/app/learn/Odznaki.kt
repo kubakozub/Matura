@@ -4,14 +4,15 @@ import com.matura.app.model.Direction
 import com.matura.app.model.Dorobek
 import com.matura.app.model.SaveData
 import com.matura.app.model.WordProgress
+import com.matura.app.model.WordSet
 
 /**
  * Liczby, z ktorych licza sie odznaki. Kazda jest LICZBA PRAWDZIWYCH RZECZY policzona z zapisu
  * przez [Odznaki.liczniki]: slow, dni, powtorek, gier. Zadna nie jest procentem ani ocena.
  *
- * Piec pierwszych dotyczy wylacznie zestawow wbudowanych i opiera sie na
- * [WordProgress.szczyt], czyli na najwyzszym pudelku, do jakiego slowo kiedykolwiek doszlo:
- * pomylka cofa pudelko, ale nie moze cofnac licznika, bo uczniowi niczego nie odbieramy.
+ * Piec pierwszych dotyczy wylacznie slownika gry (katalogu dolaczonego do aplikacji) i opiera
+ * sie na [WordProgress.szczyt], czyli na najwyzszym pudelku, do jakiego slowo kiedykolwiek
+ * doszlo: pomylka cofa pudelko, ale nie moze cofnac licznika, bo uczniowi niczego nie odbieramy.
  */
 data class Liczniki(
     /** Slowa, ktore wyszly z pudelka 0 w ktorymkolwiek kierunku. */
@@ -23,14 +24,17 @@ data class Liczniki(
     /** Slowa, ktore doszly co najmniej do pudelka 2 w OBU kierunkach. */
     val obieStrony: Int = 0,
 
-    /** Dzialy tematyczne, w ktorych poznanych jest co najmniej [Odznaki.PROG_DZIALU] slow. */
+    /** Dzialy, w ktorych co najmniej [Odznaki.PROG_DZIALU] slow doszlo do pudelka 2. */
     val dzialy: Int = 0,
 
-    /** Zestawy wbudowane, w ktorych KAZDE slowo doszlo do pudelka 3 w ktorymkolwiek kierunku. */
+    /** Zestawy slownika gry, w ktorych KAZDE slowo doszlo do pudelka 3 w ktorymkolwiek kierunku. */
     val zestawy: Int = 0,
 
     /** Powtorki w terminie zaliczone z pamieci ([Dorobek.powtorki]). */
     val powtorki: Int = 0,
+
+    /** Slowa utrwalone mimo wczesniejszej pomylki ([Dorobek.naprawione]). */
+    val naprawione: Int = 0,
 
     /** Dni z zaliczonym celem, lacznie ([Dorobek.dniNauki]). */
     val dniNauki: Int = 0,
@@ -38,7 +42,7 @@ data class Liczniki(
     /** Najdluzsza seria dni z celem ([Dorobek.rekordSerii]). */
     val rekordSerii: Int = 0,
 
-    /** W ilu trybach gry uczen ma choc jeden wynik. */
+    /** W ilu trybach gry uczen ma choc jeden wynik na liscie, czyli zagral o wynik. */
     val tryby: Int = 0,
 
     // Cztery liczniki profilu, pod nazwami z Profile, bo to te same liczby.
@@ -50,279 +54,227 @@ data class Liczniki(
 
 /** Grupa odznak: naglowek sekcji na ekranie. Kolejnosc stalych to kolejnosc sekcji. */
 enum class GrupaOdznak(val pl: String, val en: String) {
-    /** Slowa: poznane, utrwalone, powtorzone w terminie, umiane w obie strony. */
+    /** Slowa: poznane, utrwalone, powtorzone w terminie, umiane w obie strony, naprawione. */
     NAUKA("NAUKA", "LEARNING"),
 
     /** Dni z zaliczonym celem i serie takich dni. */
-    REGULARNOSC("REGULARNOŚĆ", "CONSISTENCY"),
+    REGULARNOSC("REGULARNOŚĆ", "HABIT"),
 
-    /** Pokrycie katalogu: dzialy tematyczne i cale zestawy. */
-    DZIALY("DZIAŁY I ZESTAWY", "TOPICS AND SETS"),
+    /** Pokrycie slownika gry: cale zestawy i dzialy tematyczne. */
+    DZIALY("DZIAŁY", "TOPICS"),
 
     /** Gra: to, co do tej pory liczyl ekran OSIAGNIECIA. */
     GRA("GRA", "GAME"),
 }
 
 /**
- * Odznaki. Kazda ma grupe, prog ([cel]), licznik, z ktorego sie liczy, oraz tytul i opis
- * w obu jezykach.
+ * Rodzina odznak: kolejne stopnie liczone z JEDNEGO licznika (25 slow, 75 slow, 250 slow).
+ * Ekran pokazuje rodzine jednym wierszem: najwyzszy zdobyty stopien i droge do nastepnego.
+ * Nazwy stalych nie sa czescia zapisu; w zapisie leza nazwy stalych [Odznaka].
+ */
+enum class RodzinaOdznak(val grupa: GrupaOdznak, val licznik: (Liczniki) -> Int) {
+    SLOWA(GrupaOdznak.NAUKA, Liczniki::poznane),
+    UTRWALONE(GrupaOdznak.NAUKA, Liczniki::utrwalone),
+    POWTORKI(GrupaOdznak.NAUKA, Liczniki::powtorki),
+    OBIE(GrupaOdznak.NAUKA, Liczniki::obieStrony),
+    NAPRAWA(GrupaOdznak.NAUKA, Liczniki::naprawione),
+    DNI(GrupaOdznak.REGULARNOSC, Liczniki::dniNauki),
+    SERIA(GrupaOdznak.REGULARNOSC, Liczniki::rekordSerii),
+    ZESTAWY(GrupaOdznak.DZIALY, Liczniki::zestawy),
+    DZIALY(GrupaOdznak.DZIALY, Liczniki::dzialy),
+    TRYBY(GrupaOdznak.GRA, Liczniki::tryby),
+
+    // Cztery pary dawnych osiagniec ([com.matura.app.model.Achievement]).
+    POKONANE(GrupaOdznak.GRA, Liczniki::totalKills),
+    GRY(GrupaOdznak.GRA, Liczniki::gamesPlayed),
+    MNOZNIK(GrupaOdznak.GRA, Liczniki::bestStreak),
+    WYNIK(GrupaOdznak.GRA, Liczniki::bestScore),
+}
+
+// Opisy rodzin. Wszystkie stopnie rodziny mowia to samo, bo opis tlumaczy, CO jest liczone,
+// a ile trzeba, mowi tytul i pasek postepu. Slownik, zeby kazde slowo znaczylo jedno:
+//  - "zaliczone choc raz" to wyjscie z pudelka 0, takze przez rozpoznanie;
+//  - "z pamieci po przerwie" to pudelko 2, mozliwe tylko odpowiedzia wpisana albo powiedziana
+//    co najmniej dzien po pierwszym zaliczeniu;
+//  - "utrwalenie" to pudelko 3;
+//  - "slownik gry" to katalog dolaczony do aplikacji. Wlasne zestawy ucznia sie do tych
+//    licznikow NIE licza, bo inaczej dalo by sie je nabic lista pieciu latwych slow. Dni nauki,
+//    serie i powtorki w terminie licza sie z kazdej nauki, takze na wlasnych zestawach,
+//    i dlatego ich opisy o slowniku gry nie wspominaja.
+// Bez "na stale", "na zawsze" i "z rzedu": utrwalenie to stan harmonogramu, a nie obietnica,
+// a seria z dniami wolnymi nie jest doslownie dzien po dniu.
+private const val SLOWA_PL = "Słowa ze słownika gry zaliczone choć raz: z pamięci albo w trybach wyboru."
+private const val SLOWA_EN = "Dictionary words passed at least once: from memory or in a choice mode."
+private const val UTRWALONE_PL =
+    "Słowa ze słownika gry wpisane albo powiedziane z pamięci w trzech różnych terminach. " +
+        "Liczy się każde, które choć raz doszło do utrwalenia."
+private const val UTRWALONE_EN =
+    "Dictionary words typed or spoken from memory on three separate scheduled days. " +
+        "Every word that got there at least once counts."
+private const val POWTORKI_PL = "Powtórki zaliczone z pamięci wtedy, gdy słowo wróciło."
+private const val POWTORKI_EN = "Reviews passed from memory when the word came back."
+private const val OBIE_PL = "Słowa zaliczone z pamięci po przerwie w obu kierunkach tłumaczenia."
+private const val OBIE_EN = "Words passed from memory after a break in both translation directions."
+private const val NAPRAWA_PL = "Słowa utrwalone mimo wcześniejszej pomyłki. Każde liczy się raz."
+private const val NAPRAWA_EN = "Words consolidated despite an earlier mistake. Each counts once."
+private const val DNI_PL = "Dni z zaliczonym celem dnia. Nie muszą być po kolei."
+private const val DNI_EN = "Days with the daily goal met. They need not be consecutive."
+private const val SERIA_PL =
+    "Najdłuższa seria dni z zaliczonym celem. Opuszczony dzień pokrywa dzień wolny z zapasu."
+private const val SERIA_EN =
+    "Your longest streak of days with the goal met. " +
+        "A missed day is covered by a day off from your reserve."
+private const val ZESTAWY_PL =
+    "Zestawy ze słownika gry, w których każde słowo choć raz doszło do utrwalenia."
+private const val ZESTAWY_EN = "Dictionary sets in which every word has been consolidated at least once."
+private const val DZIALY_PL =
+    "Działy, w których co najmniej 10 słów masz zaliczonych z pamięci po przerwie."
+private const val DZIALY_EN = "Topics where you have passed at least 10 words from memory after a break."
+
+/**
+ * Odznaki. Kazda ma rodzine (a przez nia grupe i licznik, z ktorego sie liczy), prog ([cel])
+ * oraz tytul i opis w obu jezykach.
  *
  * NAZWY STALYCH SA CZESCIA ZAPISU I NIE WOLNO ICH ZMIENIAC: [Dorobek.odznaki] trzyma zdobyte
  * odznaki pod nazwa stalej. Zmiana nazwy odebralaby uczniowi odznake, ktora juz ma, a ekran
- * oglosilby mu ja drugi raz. Zmieniac wolno cztery teksty, a kolejnosc stalych tylko z glowa:
- * to ona ustawia ekran. Pelna liste nazw trzyma test (OdznakiTest).
+ * oglosilby mu ja drugi raz. Lista jest zamrozona od wydania, w ktorym ksiega weszla; pelny
+ * spis nazw trzyma test (OdznakiTest). Wyzsze stopnie dopisuje sie jako NOWE stale. Zmieniac
+ * wolno cztery teksty, a kolejnosc stalych tylko z glowa: ustawia ekran, a stopnie jednej
+ * rodziny musza stac obok siebie, od najnizszego progu.
  *
- * Osiem odznak grupy [GrupaOdznak.GRA] to dawne osiagniecia ([com.matura.app.model.Achievement])
- * POD TYMI SAMYMI NAZWAMI, z tymi samymi tekstami i progami. Tamten enum i jego ekran zostaja
- * na razie nietkniete; test pilnuje, zeby oba spisy mowily o profilu to samo.
+ * Osiem odznak z czterech ostatnich rodzin to dawne osiagniecia
+ * ([com.matura.app.model.Achievement]) POD TYMI SAMYMI NAZWAMI, z tymi samymi tekstami
+ * i progami. Tamten enum i jego ekran zostaja na razie nietkniete; test pilnuje, zeby oba spisy
+ * mowily o profilu to samo.
+ *
+ * PROGI sa ustawione pod dzisiejszy harmonogram, w ktorym pudelko 3 wraca co 7 dni, wiec
+ * liczba slow w obiegu rosnie wolno (w symulacji z projektu sama sesja dzienna daje do matury
+ * okolo 80 slow). Prog w rodzaju "tysiac slow" bylby odznaka, ktorej nie zdobedzie nikt.
+ * Gdy odstepy powtorek sie wydluza, wyzsze stopnie dojda jako nowe stale.
  *
  * TEKSTY. Tytul idzie na ekran czcionka pikselowa: najwyzej 24 znaki i tylko litery (takze
  * polskie), cyfry, spacja oraz . , ! ? : / - _ + ' (bez nawiasow, procentu i cudzyslowow).
- * Opis jest pisany czcionka systemowa i ma mowic WPROST, co jest liczone, jednym wzorem:
- * czasownik, liczba, rzecz. Opisy osmiu dawnych osiagniec zostaja slowo w slowo, razem z
- * brakiem kropki na koncu.
- *
- * Slownik opisow, zeby kazde slowo znaczylo jedno:
- *  - "poznaj" to pierwsze zaliczenie slowa (pudelko 1), takze przez rozpoznanie;
- *  - "pierwsza powtorka" to wejscie do pudelka 2, mozliwe tylko odpowiedzia z pamieci;
- *  - "utrwal" to pudelko 3;
- *  - "slownik gry" i "zestaw wbudowany" to katalog aplikacji. Do odznak za slowa, dzialy
- *    i zestawy wlasne zestawy ucznia sie NIE licza, bo inaczej dalo by sie je zdobyc na
- *    liscie pieciu latwych slow. Dni nauki, serie i powtorki w terminie licza sie z kazdej
- *    nauki, takze na wlasnych zestawach, i dlatego ich opisy o slowniku gry nie wspominaja.
+ * Tytuly nowych odznak sa wersalikami, jak etapy. Opis jest pisany czcionka systemowa i mowi,
+ * CO jest liczone; jest wspolny dla calej rodziny (patrz stale nad tym enumem). Tytuly i opisy
+ * osmiu dawnych osiagniec zostaja slowo w slowo, razem z brakiem kropki na koncu.
  */
 enum class Odznaka(
-    val grupa: GrupaOdznak,
+    val rodzina: RodzinaOdznak,
     val cel: Int,
     val tytulPl: String,
     val tytulEn: String,
     val opisPl: String,
     val opisEn: String,
-    val licznik: (Liczniki) -> Int,
 ) {
     // --- nauka --------------------------------------------------------------------------
-    SLOWA_5(
-        GrupaOdznak.NAUKA, 5, "Pierwsza piątka", "First five",
-        "Poznaj 5 słów ze słownika gry.",
-        "Learn 5 words from the game's dictionary.",
-        Liczniki::poznane,
+    SLOWA_1(RodzinaOdznak.SLOWA, 1, "PIERWSZE SŁOWO", "FIRST WORD", SLOWA_PL, SLOWA_EN),
+    SLOWA_25(RodzinaOdznak.SLOWA, 25, "25 SŁÓW", "25 WORDS", SLOWA_PL, SLOWA_EN),
+    SLOWA_75(RodzinaOdznak.SLOWA, 75, "75 SŁÓW", "75 WORDS", SLOWA_PL, SLOWA_EN),
+    SLOWA_250(RodzinaOdznak.SLOWA, 250, "ĆWIERĆ TYSIĄCA", "QUARTER THOUSAND", SLOWA_PL, SLOWA_EN),
+
+    UTRWALONE_5(
+        RodzinaOdznak.UTRWALONE, 5, "5 UTRWALONYCH", "5 CONSOLIDATED", UTRWALONE_PL, UTRWALONE_EN,
     ),
-    SLOWA_50(
-        GrupaOdznak.NAUKA, 50, "Pół setki", "Half a hundred",
-        "Poznaj 50 słów ze słownika gry.",
-        "Learn 50 words from the game's dictionary.",
-        Liczniki::poznane,
+    UTRWALONE_20(
+        RodzinaOdznak.UTRWALONE, 20, "20 UTRWALONYCH", "20 CONSOLIDATED", UTRWALONE_PL, UTRWALONE_EN,
     ),
-    SLOWA_250(
-        GrupaOdznak.NAUKA, 250, "Ćwierć tysiąca", "Quarter thousand",
-        "Poznaj 250 słów ze słownika gry.",
-        "Learn 250 words from the game's dictionary.",
-        Liczniki::poznane,
-    ),
-    SLOWA_1000(
-        GrupaOdznak.NAUKA, 1000, "Tysiąc słów", "A thousand words",
-        "Poznaj 1000 słów ze słownika gry.",
-        "Learn 1000 words from the game's dictionary.",
-        Liczniki::poznane,
-    ),
-    UTRWALONE_10(
-        GrupaOdznak.NAUKA, 10, "Dziesięć na stałe", "Ten locked in",
-        "Utrwal 10 słów ze słownika gry.",
-        "Lock in 10 words from the game's dictionary.",
-        Liczniki::utrwalone,
-    ),
-    UTRWALONE_50(
-        GrupaOdznak.NAUKA, 50, "Pięćdziesiąt na stałe", "Fifty locked in",
-        "Utrwal 50 słów ze słownika gry.",
-        "Lock in 50 words from the game's dictionary.",
-        Liczniki::utrwalone,
+    UTRWALONE_60(
+        RodzinaOdznak.UTRWALONE, 60, "60 UTRWALONYCH", "60 CONSOLIDATED", UTRWALONE_PL, UTRWALONE_EN,
     ),
     UTRWALONE_200(
-        GrupaOdznak.NAUKA, 200, "Dwieście na stałe", "Two hundred locked in",
-        "Utrwal 200 słów ze słownika gry.",
-        "Lock in 200 words from the game's dictionary.",
-        Liczniki::utrwalone,
+        RodzinaOdznak.UTRWALONE, 200, "200 UTRWALONYCH", "200 CONSOLIDATED", UTRWALONE_PL, UTRWALONE_EN,
     ),
-    UTRWALONE_500(
-        GrupaOdznak.NAUKA, 500, "Pięćset na stałe", "Five hundred locked in",
-        "Utrwal 500 słów ze słownika gry.",
-        "Lock in 500 words from the game's dictionary.",
-        Liczniki::utrwalone,
-    ),
-    POWTORKI_10(
-        GrupaOdznak.NAUKA, 10, "W terminie", "On time",
-        "Zalicz z pamięci 10 powtórek w terminie.",
-        "Pass 10 on-time reviews from memory.",
-        Liczniki::powtorki,
-    ),
+
+    POWTORKI_10(RodzinaOdznak.POWTORKI, 10, "W TERMINIE", "ON TIME", POWTORKI_PL, POWTORKI_EN),
     POWTORKI_100(
-        GrupaOdznak.NAUKA, 100, "Sto w terminie", "A hundred on time",
-        "Zalicz z pamięci 100 powtórek w terminie.",
-        "Pass 100 on-time reviews from memory.",
-        Liczniki::powtorki,
+        RodzinaOdznak.POWTORKI, 100, "STO W TERMINIE", "A HUNDRED ON TIME", POWTORKI_PL, POWTORKI_EN,
     ),
     POWTORKI_500(
-        GrupaOdznak.NAUKA, 500, "Pięćset w terminie", "Five hundred on time",
-        "Zalicz z pamięci 500 powtórek w terminie.",
-        "Pass 500 on-time reviews from memory.",
-        Liczniki::powtorki,
+        RodzinaOdznak.POWTORKI, 500, "PIĘĆSET W TERMINIE", "FIVE HUNDRED ON TIME",
+        POWTORKI_PL, POWTORKI_EN,
     ),
-    OBIE_10(
-        GrupaOdznak.NAUKA, 10, "W obie strony", "Both ways",
-        "Zalicz pierwszą powtórkę 10 słów ze słownika gry w obu kierunkach tłumaczenia.",
-        "Pass the first review of 10 words from the game's dictionary in both translation directions.",
-        Liczniki::obieStrony,
+    POWTORKI_1500(
+        RodzinaOdznak.POWTORKI, 1500, "1500 W TERMINIE", "1500 ON TIME", POWTORKI_PL, POWTORKI_EN,
     ),
-    OBIE_100(
-        GrupaOdznak.NAUKA, 100, "Tam i z powrotem", "There and back again",
-        "Zalicz pierwszą powtórkę 100 słów ze słownika gry w obu kierunkach tłumaczenia.",
-        "Pass the first review of 100 words from the game's dictionary in both translation directions.",
-        Liczniki::obieStrony,
+
+    OBIE_10(RodzinaOdznak.OBIE, 10, "W OBIE STRONY", "BOTH WAYS", OBIE_PL, OBIE_EN),
+    OBIE_50(RodzinaOdznak.OBIE, 50, "TAM I Z POWROTEM", "THERE AND BACK AGAIN", OBIE_PL, OBIE_EN),
+
+    NAPRAWA_1(
+        RodzinaOdznak.NAPRAWA, 1, "DO TRZECH RAZY SZTUKA", "THIRD TIME LUCKY", NAPRAWA_PL, NAPRAWA_EN,
     ),
+    NAPRAWA_5(
+        RodzinaOdznak.NAPRAWA, 5, "TRUDNE? JUŻ NIE", "HARD? NOT ANYMORE", NAPRAWA_PL, NAPRAWA_EN,
+    ),
+    NAPRAWA_25(RodzinaOdznak.NAPRAWA, 25, "25 PO POPRAWCE", "25 FIXED", NAPRAWA_PL, NAPRAWA_EN),
 
     // --- regularnosc --------------------------------------------------------------------
-    DNI_1(
-        GrupaOdznak.REGULARNOSC, 1, "Pierwszy dzień", "Day one",
-        "Osiągnij cel dnia po raz pierwszy.",
-        "Meet the daily goal for the first time.",
-        Liczniki::dniNauki,
-    ),
-    DNI_7(
-        GrupaOdznak.REGULARNOSC, 7, "Siedem dni", "Seven days",
-        "Osiągnij cel dnia w 7 różnych dniach, niekoniecznie z rzędu.",
-        "Meet the daily goal on 7 different days, not necessarily in a row.",
-        Liczniki::dniNauki,
-    ),
-    DNI_30(
-        GrupaOdznak.REGULARNOSC, 30, "Trzydzieści dni", "Thirty days",
-        "Osiągnij cel dnia w 30 różnych dniach, niekoniecznie z rzędu.",
-        "Meet the daily goal on 30 different days, not necessarily in a row.",
-        Liczniki::dniNauki,
-    ),
+    DNI_10(RodzinaOdznak.DNI, 10, "10 DNI NAUKI", "10 STUDY DAYS", DNI_PL, DNI_EN),
+    DNI_25(RodzinaOdznak.DNI, 25, "25 DNI NAUKI", "25 STUDY DAYS", DNI_PL, DNI_EN),
+    DNI_50(RodzinaOdznak.DNI, 50, "50 DNI NAUKI", "50 STUDY DAYS", DNI_PL, DNI_EN),
+    // Jedyny stopien z wlasnym dopiskiem: sto dni to u maturzystow liczba z tradycja.
     DNI_100(
-        GrupaOdznak.REGULARNOSC, 100, "Własna studniówka", "Your own hundred days",
-        "Osiągnij cel dnia w 100 różnych dniach, niekoniecznie z rzędu.",
-        "Meet the daily goal on 100 different days, not necessarily in a row.",
-        Liczniki::dniNauki,
-    ),
-    SERIA_3(
-        GrupaOdznak.REGULARNOSC, 3, "Trzy z rzędu", "Three in a row",
-        "Osiągnij cel dnia 3 razy z rzędu. Pojedynczy opuszczony dzień nie przerywa serii.",
-        "Meet the daily goal 3 times in a row. A single missed day does not break the streak.",
-        Liczniki::rekordSerii,
-    ),
-    SERIA_7(
-        GrupaOdznak.REGULARNOSC, 7, "Tydzień z rzędu", "A week in a row",
-        "Osiągnij cel dnia 7 razy z rzędu. Pojedynczy opuszczony dzień nie przerywa serii.",
-        "Meet the daily goal 7 times in a row. A single missed day does not break the streak.",
-        Liczniki::rekordSerii,
-    ),
-    SERIA_14(
-        GrupaOdznak.REGULARNOSC, 14, "Dwa tygodnie z rzędu", "Two weeks in a row",
-        "Osiągnij cel dnia 14 razy z rzędu. Pojedynczy opuszczony dzień nie przerywa serii.",
-        "Meet the daily goal 14 times in a row. A single missed day does not break the streak.",
-        Liczniki::rekordSerii,
-    ),
-    SERIA_30(
-        GrupaOdznak.REGULARNOSC, 30, "Miesiąc z rzędu", "A month in a row",
-        "Osiągnij cel dnia 30 razy z rzędu. Pojedynczy opuszczony dzień nie przerywa serii.",
-        "Meet the daily goal 30 times in a row. A single missed day does not break the streak.",
-        Liczniki::rekordSerii,
+        RodzinaOdznak.DNI, 100, "STO DNI NAUKI", "A HUNDRED STUDY DAYS",
+        "$DNI_PL Tyle, ile od studniówki do matury.",
+        "$DNI_EN As many as from the studniówka ball to the exam.",
     ),
 
-    // --- dzialy i zestawy ---------------------------------------------------------------
-    DZIAL_1(
-        GrupaOdznak.DZIALY, 1, "Pierwszy dział", "First topic",
-        "Poznaj 10 słów z jednego działu.",
-        "Learn 10 words from one topic.",
-        Liczniki::dzialy,
-    ),
-    DZIALY_5(
-        GrupaOdznak.DZIALY, 5, "Pięć działów", "Five topics",
-        "Poznaj po 10 słów z 5 działów.",
-        "Learn 10 words from each of 5 topics.",
-        Liczniki::dzialy,
-    ),
-    DZIALY_14(
-        GrupaOdznak.DZIALY, 14, "Cała podstawa", "The whole basic level",
-        "Poznaj po 10 słów z każdego z 14 działów.",
-        "Learn 10 words from each of the 14 topics.",
-        Liczniki::dzialy,
-    ),
-    ZESTAW_1(
-        GrupaOdznak.DZIALY, 1, "Zestaw na stałe", "A set locked in",
-        "Utrwal wszystkie słowa z jednego wbudowanego zestawu.",
-        "Lock in every word of one built-in set.",
-        Liczniki::zestawy,
-    ),
-    ZESTAWY_5(
-        GrupaOdznak.DZIALY, 5, "Pięć zestawów", "Five sets",
-        "Utrwal wszystkie słowa z 5 wbudowanych zestawów.",
-        "Lock in every word of 5 built-in sets.",
-        Liczniki::zestawy,
-    ),
-    // Tytul cyframi, bo "Dwadzieścia pięć zestawów" ma 25 znakow, o jeden za duzo.
-    ZESTAWY_25(
-        GrupaOdznak.DZIALY, 25, "25 zestawów", "Twenty-five sets",
-        "Utrwal wszystkie słowa z 25 wbudowanych zestawów.",
-        "Lock in every word of 25 built-in sets.",
-        Liczniki::zestawy,
-    ),
-    ZESTAWY_102(
-        GrupaOdznak.DZIALY, 102, "Komplet", "The full set",
-        "Utrwal wszystkie słowa ze wszystkich 102 wbudowanych zestawów.",
-        "Lock in every word of all 102 built-in sets.",
-        Liczniki::zestawy,
+    // Serie koncza sie na 30 celowo: dalej licznik bylby wazniejszy od slow.
+    SERIA_3(RodzinaOdznak.SERIA, 3, "SERIA 3", "STREAK 3", SERIA_PL, SERIA_EN),
+    SERIA_7(RodzinaOdznak.SERIA, 7, "SERIA 7", "STREAK 7", SERIA_PL, SERIA_EN),
+    SERIA_14(RodzinaOdznak.SERIA, 14, "SERIA 14", "STREAK 14", SERIA_PL, SERIA_EN),
+    SERIA_30(RodzinaOdznak.SERIA, 30, "SERIA 30", "STREAK 30", SERIA_PL, SERIA_EN),
+
+    // --- zestawy i dzialy ---------------------------------------------------------------
+    ZESTAW_1(RodzinaOdznak.ZESTAWY, 1, "PIERWSZY ZESTAW", "FIRST SET", ZESTAWY_PL, ZESTAWY_EN),
+    ZESTAWY_3(RodzinaOdznak.ZESTAWY, 3, "TRZY ZESTAWY", "THREE SETS", ZESTAWY_PL, ZESTAWY_EN),
+    ZESTAWY_8(RodzinaOdznak.ZESTAWY, 8, "OSIEM ZESTAWÓW", "EIGHT SETS", ZESTAWY_PL, ZESTAWY_EN),
+    ZESTAWY_15(
+        RodzinaOdznak.ZESTAWY, 15, "PIĘTNAŚCIE ZESTAWÓW", "FIFTEEN SETS", ZESTAWY_PL, ZESTAWY_EN,
     ),
 
-    // --- gra: osiem dawnych osiagniec i jedna nowa ----------------------------------------
+    DZIAL_1(RodzinaOdznak.DZIALY, 1, "PIERWSZY DZIAŁ", "FIRST TOPIC", DZIALY_PL, DZIALY_EN),
+    DZIALY_5(RodzinaOdznak.DZIALY, 5, "PIĘĆ DZIAŁÓW", "FIVE TOPICS", DZIALY_PL, DZIALY_EN),
+    DZIALY_14(RodzinaOdznak.DZIALY, 14, "OBJAZDÓWKA", "GRAND TOUR", DZIALY_PL, DZIALY_EN),
+
+    // --- gra: jedna nowa i osiem dawnych osiagniec -----------------------------------------
+    TRYBY_4(
+        RodzinaOdznak.TRYBY, 4, "CZTERY TRYBY", "ALL FOUR MODES",
+        "Zagraj o wynik w każdym z czterech trybów.",
+        "Play a ranked game in each of the four modes.",
+    ),
     FIRST_BLOOD(
-        GrupaOdznak.GRA, 1, "Pierwszy celny strzał", "First hit",
+        RodzinaOdznak.POKONANE, 1, "Pierwszy celny strzał", "First hit",
         "Pokonaj pierwszego potworka", "Defeat your first monster",
-        Liczniki::totalKills,
-    ),
-    ROOKIE(
-        GrupaOdznak.GRA, 5, "Rekrut", "Rookie",
-        "Rozegraj 5 gier", "Play 5 games",
-        Liczniki::gamesPlayed,
-    ),
-    VETERAN(
-        GrupaOdznak.GRA, 25, "Weteran", "Veteran",
-        "Rozegraj 25 gier", "Play 25 games",
-        Liczniki::gamesPlayed,
     ),
     SHARPSHOOTER(
-        GrupaOdznak.GRA, 100, "Strzelec wyborowy", "Sharpshooter",
+        RodzinaOdznak.POKONANE, 100, "Strzelec wyborowy", "Sharpshooter",
         "Pokonaj 100 potworków", "Defeat 100 monsters",
-        Liczniki::totalKills,
     ),
+    ROOKIE(RodzinaOdznak.GRY, 5, "Rekrut", "Rookie", "Rozegraj 5 gier", "Play 5 games"),
+    VETERAN(RodzinaOdznak.GRY, 25, "Weteran", "Veteran", "Rozegraj 25 gier", "Play 25 games"),
     // Mnoznik x3 wlacza sie przy serii 6 trafien, a x5 przy 9: progi z Achievement.unlockedBy.
     COMBO_X3(
-        GrupaOdznak.GRA, 6, "Seria x3", "Combo x3",
+        RodzinaOdznak.MNOZNIK, 6, "Seria x3", "Combo x3",
         "Osiągnij mnożnik x3", "Reach the x3 multiplier",
-        Liczniki::bestStreak,
     ),
     COMBO_X5(
-        GrupaOdznak.GRA, 9, "Seria x5", "Combo x5",
+        RodzinaOdznak.MNOZNIK, 9, "Seria x5", "Combo x5",
         "Osiągnij mnożnik x5", "Reach the x5 multiplier",
-        Liczniki::bestStreak,
     ),
     SCORE_500(
-        GrupaOdznak.GRA, 500, "Pięćset", "Five hundred",
+        RodzinaOdznak.WYNIK, 500, "Pięćset", "Five hundred",
         "Zdobądź 500 punktów w jednej grze", "Score 500 in a single game",
-        Liczniki::bestScore,
     ),
     SCORE_2000(
-        GrupaOdznak.GRA, 2000, "Dwa tysiące", "Two thousand",
+        RodzinaOdznak.WYNIK, 2000, "Dwa tysiące", "Two thousand",
         "Zdobądź 2000 punktów w jednej grze", "Score 2000 in a single game",
-        Liczniki::bestScore,
-    ),
-    TRYBY_4(
-        GrupaOdznak.GRA, 4, "Cztery tryby", "All four modes",
-        "Rozegraj grę w każdym z czterech trybów.",
-        "Play a game in each of the four modes.",
-        Liczniki::tryby,
-    ),
+    );
+
+    val grupa: GrupaOdznak get() = rodzina.grupa
+
+    /** Licznik, z ktorego liczy sie ta odznaka: licznik jej rodziny. */
+    val licznik: (Liczniki) -> Int get() = rodzina.licznik
 }
 
 /**
@@ -331,7 +283,10 @@ enum class Odznaka(
  */
 object Odznaki {
 
-    /** Ile slow dzialu trzeba poznac, zeby dzial liczyl sie do odznak [GrupaOdznak.DZIALY]. */
+    /**
+     * Ile slow dzialu trzeba zaliczyc z pamieci po przerwie, zeby dzial liczyl sie do odznak.
+     * Ta sama liczba stoi w opisie rodziny dzialow; pilnuje tego test.
+     */
     const val PROG_DZIALU = 10
 
     /**
@@ -343,28 +298,25 @@ object Odznaki {
     /**
      * Liczniki z calego zapisu.
      *
-     * Slowa liczymy po ROZNYCH identyfikatorach wpisow BIEZACYCH zestawow wbudowanych, a nie
-     * po mapie postepu. Powody sa trzy i kazdy z nich zawyzalby wynik:
+     * @param katalog slownik gry DOLACZONY DO APLIKACJI (SampleData.builtInSets), a nie
+     *   zestawy z zapisu.
+     *
+     * Slowa liczymy po ROZNYCH identyfikatorach wpisow katalogu, a nie po mapie postepu ani
+     * po zestawach z zapisu. Kazda z tych drog zawyzalaby wynik:
      *  - mapa postepu nie jest sprzatana, wiec po korekcie katalogu to samo slowo lezy w niej
-     *    pod starym i pod nowym kluczem (patrz SaveData.progress);
+     *    pod starym i pod nowym kluczem (patrz SaveData.progress), a obok lezy postep
+     *    z wlasnych zestawow ucznia;
      *  - czesc hasel powtarza sie miedzy dzialami i dzieli jeden identyfikator, wiec liczone
      *    zestaw po zestawie wchodzilyby do sumy dwa razy;
-     *  - w mapie lezy tez postep z wlasnych zestawow ucznia, a te nie moga zarabiac odznak
-     *    katalogu (wystarczylaby wlasna lista pieciu latwych slow).
-     *
-     * GRANICA, ktorej zapis nie pozwala dzis przekroczyc: ekran ZESTAWY otwiera w edytorze
-     * takze zestaw wbudowany, a wiersz dopisany tam przez ucznia wyglada w danych tak samo,
-     * jak wiersz z katalogu. Zestaw skrocony w edytorze latwiej wiec "utrwalic w calosci".
-     * Rozroznienie wymaga znacznika we wpisie, ktorego model nie ma (ta sama luka, ktora
-     * opisuje Repository.odswiezZestawyWbudowane).
+     *  - zapis trzyma WLASNA kopie zestawow wbudowanych, ktora uczen moze otworzyc w edytorze.
+     *    Skrocilby zestaw do trzech latwych slow i mial "caly zestaw utrwalony", a wiersz
+     *    dopisany do kopii wygladalby w danych jak haslo ze slownika. Katalogu z aplikacji
+     *    uczen zmienic nie moze.
      */
-    fun liczniki(data: SaveData): Liczniki {
-        val wbudowane = data.sets.filter { it.builtIn }
-
+    fun liczniki(data: SaveData, katalog: List<WordSet>): Liczniki {
         // Szczyt kazdego slowa liczony RAZ: identyfikatory powtarzaja sie miedzy zestawami.
-        // Wpis bez identyfikatora (zapis sprzed migracji) nie ma jak miec postepu.
         val szczyty = HashMap<String, Szczyty>()
-        for (zestaw in wbudowane) {
+        for (zestaw in katalog) {
             for (wpis in zestaw.entries) {
                 if (wpis.id.isBlank() || szczyty.containsKey(wpis.id)) continue
                 szczyty[wpis.id] = Szczyty(
@@ -374,13 +326,15 @@ object Odznaki {
             }
         }
 
-        val poznaneWDziale = HashMap<String, HashSet<String>>()
-        for (zestaw in wbudowane) {
-            // Zestaw wbudowany bez dzialu w tytule nie nalezy do zadnego dzialu.
+        // Dzial liczy sie ze slow przypomnianych PO PRZERWIE (pudelko 2), nie z samych poznanych:
+        // dziesiec kafli trafionych w trybie wyboru to jeszcze nie jest znajomosc dzialu.
+        val poPrzerwieWDziale = HashMap<String, HashSet<String>>()
+        for (zestaw in katalog) {
+            // Zestaw bez dzialu w tytule nie nalezy do zadnego dzialu.
             val dzial = zestaw.category ?: continue
             for (wpis in zestaw.entries) {
-                if ((szczyty[wpis.id]?.wyzszy ?: 0) >= Srs.FIRST_BOX) {
-                    poznaneWDziale.getOrPut(dzial) { HashSet() }.add(wpis.id)
+                if ((szczyty[wpis.id]?.wyzszy ?: 0) >= PUDELKO_PO_PRZERWIE) {
+                    poPrzerwieWDziale.getOrPut(dzial) { HashSet() }.add(wpis.id)
                 }
             }
         }
@@ -388,14 +342,15 @@ object Odznaki {
         return Liczniki(
             poznane = szczyty.values.count { it.wyzszy >= Srs.FIRST_BOX },
             utrwalone = szczyty.values.count { it.wyzszy >= Srs.MAX_BOX },
-            obieStrony = szczyty.values.count { it.nizszy >= PUDELKO_PIERWSZEJ_POWTORKI },
-            dzialy = poznaneWDziale.values.count { it.size >= PROG_DZIALU },
+            obieStrony = szczyty.values.count { it.nizszy >= PUDELKO_PO_PRZERWIE },
+            dzialy = poPrzerwieWDziale.values.count { it.size >= PROG_DZIALU },
             // Pusty zestaw nie jest "utrwalony w calosci": all() na pustej liscie daje prawde.
-            zestawy = wbudowane.count { zestaw ->
+            zestawy = katalog.count { zestaw ->
                 zestaw.entries.isNotEmpty() &&
                     zestaw.entries.all { (szczyty[it.id]?.wyzszy ?: 0) >= Srs.MAX_BOX }
             },
             powtorki = data.dorobek.powtorki,
+            naprawione = data.dorobek.naprawione,
             dniNauki = data.dorobek.dniNauki,
             rekordSerii = data.dorobek.rekordSerii,
             tryby = data.scores.mapTo(HashSet()) { it.mode }.size,
@@ -406,8 +361,17 @@ object Odznaki {
         )
     }
 
+    /** Stopnie rodziny, od najnizszego progu. */
+    fun stopnie(r: RodzinaOdznak): List<Odznaka> = Odznaka.entries.filter { it.rodzina == r }
+
     /**
-     * Postep odznaki do pokazania jako "12 / 50": licznik przyciety do progu. Dla odznaki juz
+     * Pierwszy stopien rodziny, ktorego w ksiedze jeszcze nie ma; null, gdy sa wszystkie.
+     * To do niego ekran rysuje pasek: [postep] tego stopnia na tle jego progu.
+     */
+    fun nastepna(r: RodzinaOdznak, d: Dorobek): Odznaka? = stopnie(r).firstOrNull { !zdobyta(it, d) }
+
+    /**
+     * Postep odznaki do pokazania jako "12 / 25": licznik przyciety do progu. Dla odznaki juz
      * zdobytej ([zdobyta]) ekran ma pokazac pelny prog bez pytania licznika, bo odznaki nie
      * odbieramy, nawet gdyby licznik kiedys wypadl nizej.
      */
@@ -419,20 +383,38 @@ object Odznaki {
     /** Czy odznaka jest w ksiedze. Raz zdobyta zostaje na zawsze. */
     fun zdobyta(o: Odznaka, d: Dorobek): Boolean = o.name in d.odznaki
 
+    /** Czy w ksiedze sa juz wszystkie odznaki; wtedy nie ma po co liczyc licznikow. */
+    fun komplet(d: Dorobek): Boolean = Odznaka.entries.all { it.name in d.odznaki }
+
     /**
      * Dopisuje do ksiegi kazda odznake, ktorej prog jest spelniony, a ktorej w ksiedze jeszcze
-     * nie ma, z dniem [dzien]. NICZEGO nie usuwa i nie przestemplowuje: odznaka zdobyta zostaje
-     * z dniem, w ktorym padla. Nazwy, ktorych ten kod nie zna (zapis z nowszej wersji), tez
-     * zostaja nietkniete. Gdy nie ma czego dopisac, oddaje te sama ksiege.
+     * nie ma, z dniem [dzien], i odklada ja do pokazania ([Dorobek.odznakiNowe]). NICZEGO nie
+     * usuwa i nie przestemplowuje: odznaka zdobyta zostaje z dniem, w ktorym padla. Nazwy,
+     * ktorych ten kod nie zna (zapis z nowszej wersji), tez zostaja nietkniete. Gdy nie ma
+     * czego dopisac, oddaje te sama ksiege.
+     *
+     * @param poCichu odznaki wchodza do ksiegi, ale NIE do pokazania. Tak robi migracja zapisu:
+     *   uczen ma je od miesiecy, wiec ogloszenie ich po aktualizacji jako nowosci byloby
+     *   nieprawda.
      */
-    fun odblokuj(d: Dorobek, l: Liczniki, dzien: Int): Dorobek {
+    fun odblokuj(d: Dorobek, l: Liczniki, dzien: Int, poCichu: Boolean = false): Dorobek {
         val nowe = Odznaka.entries.filter { it.name !in d.odznaki && spelniona(it, l) }
         if (nowe.isEmpty()) return d
-        return d.copy(odznaki = d.odznaki + nowe.associate { it.name to dzien })
+        return d.copy(
+            odznaki = d.odznaki + nowe.associate { it.name to dzien },
+            odznakiNowe = if (poCichu) d.odznakiNowe else d.odznakiNowe + nowe.map { it.name },
+        )
     }
 
-    /** Pudelko 2: slowo przeszlo pierwsza powtorke z pamieci. Prog dla [Liczniki.obieStrony]. */
-    private const val PUDELKO_PIERWSZEJ_POWTORKI = 2
+    /**
+     * Odhacza odznaki jako pokazane: czysci [Dorobek.odznakiNowe], samych odznak nie rusza.
+     * Gdy nie ma czego odhaczyc, oddaje te sama ksiege, zeby wolajacy mogl pominac zapis.
+     */
+    fun potwierdz(d: Dorobek): Dorobek =
+        if (d.odznakiNowe.isEmpty()) d else d.copy(odznakiNowe = emptySet())
+
+    /** Pudelko 2: slowo przypomniane z pamieci po przerwie. Prog dla dzialow i obu stron. */
+    private const val PUDELKO_PO_PRZERWIE = 2
 
     /** Szczyty jednego slowa w obu kierunkach, juz uporzadkowane. */
     private class Szczyty(a: Int, b: Int) {

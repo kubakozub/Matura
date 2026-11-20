@@ -4,6 +4,47 @@ package com.matura.app.learn
 data class DataKalendarzowa(val rok: Int, val miesiac: Int, val dzien: Int)
 
 /**
+ * Odliczanie do matury w postaci gotowej do pokazania; sklada je [Nagrody.odliczanie].
+ *
+ * Stany sa osobnymi typami, a nie jedna liczba, bo trzy dni maja wlasne zdanie zamiast wzoru
+ * "zostalo N dni": dzien egzaminu, dzien przed nim i sto dni przed nim, czyli dzien, w ktorym
+ * tradycja kaze robic studniowke. [pl] i [en] ida na ekran czcionka pikselowa: wersaliki,
+ * najwyzej 24 znaki. Ton ma zostac rzeczowy: zadnego "tylko" przed liczba.
+ */
+sealed interface Odliczanie {
+    val pl: String
+    val en: String
+
+    /** Egzamin jest dzis. */
+    data object Dzis : Odliczanie {
+        override val pl = "MATURA DZIŚ. POWODZENIA!"
+        override val en = "MATURA TODAY. GOOD LUCK!"
+    }
+
+    /** Egzamin jest jutro. */
+    data object Jutro : Odliczanie {
+        override val pl = "MATURA JUTRO"
+        override val en = "MATURA TOMORROW"
+    }
+
+    /** Do egzaminu zostalo dokladnie [STO_DNI] dni. */
+    data object Sto : Odliczanie {
+        override val pl = "STO DNI DO MATURY"
+        override val en = "100 DAYS TO MATURA"
+    }
+
+    /** Kazdy inny dzien przed egzaminem: [ile] to co najmniej dwa. */
+    data class Dni(val ile: Int) : Odliczanie {
+        override val pl get() = "DO MATURY: $ile DNI"
+        override val en get() = "MATURA IN $ile DAYS"
+    }
+
+    companion object {
+        const val STO_DNI = 100
+    }
+}
+
+/**
  * Kalendarz do ODLICZANIA DNI DO MATURY: zamiana daty na numer dnia i z powrotem oraz roznica
  * dwoch dni. Czysta arytmetyka na liczbach calkowitych.
  *
@@ -13,7 +54,8 @@ data class DataKalendarzowa(val rok: Int, val miesiac: Int, val dzien: Int)
  * czasu polskiego dzien harmonogramu jest jeszcze wczorajszy, a uczen patrzacy na "167 dni"
  * sprawdzi to na palcach wedlug daty w telefonie. Dlatego tutaj, i tylko tutaj, liczy sie
  * LOKALNY dzien kalendarzowy ([dzienLokalny]). Tych dwoch dni nie wolno mieszac: dzien
- * z tego pliku nie moze trafic ani do [Srs], ani do [Nagrody].
+ * z tego pliku nie moze trafic ani do [Srs], ani do ksiegi dorobku. Jedyny odbiorca w
+ * [Nagrody] to [Nagrody.odliczanie], ktore ksiegi nie dotyka.
  *
  * DLACZEGO WLASNA ARYTMETYKA. minSdk to 24, a java.time jest w Androidzie od API 26; wciaganie
  * biblioteki zastepczej dla trzech dzialan na liczbach byloby przesada. Przesuniecie strefy
