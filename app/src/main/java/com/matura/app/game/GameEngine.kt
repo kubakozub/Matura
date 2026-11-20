@@ -158,6 +158,9 @@ data class MissedWord(
  * zycie i znikalo, a jego tlumaczenia nie bylo widac nigdzie, wiec zostawalo nieznane.
  * [ttl] to sekundy do zgaszenia napisu. Odlicza je [GameEngine.tick], wiec pauza zatrzymuje
  * ten zegar razem z plansza, a po koncu rundy napis zostaje taki, jaki byl w ostatniej klatce.
+ *
+ * Dopoki napis stoi, jego slowo nie wychodzi ponownie na plansze: odpowiedz jest do
+ * przeczytania, a nie do przepisania.
  */
 data class Reveal(
     val prompt: String,
@@ -293,6 +296,13 @@ class GameEngine(
          * Trzy sekundy to czas na przeczytanie pary slow bez odrywania sie od nastepnego potworka.
          */
         const val REVEAL_TIME = 3.0f
+
+        /**
+         * Najdluzszy wpis, jaki przyjmuje silnik. Odpowiedz dluzsza niz tyle znakow nie da sie
+         * wpisac zadna klawiatura, wiec pyta o te liczbe takze ten, kto uklada runde, ktora
+         * konczy sie dopiero odpowiedziami.
+         */
+        const val MAX_TYPED = 40
 
         /**
          * Jak blisko hasla musi byc chybiona odpowiedz, zeby uznac ja za pomylke WLASNIE
@@ -566,6 +576,9 @@ class GameEngine(
             }
         }
         if (config.finite) return null
+        // Poza plansza zostalo tylko slowo, ktorego odpowiedz wlasnie na niej stoi. Czekamy, az
+        // zgasnie, zamiast dublowac inny napis: to slowo zaraz bedzie mialo co wystawic.
+        if (kolejka.any { it.prompt !in zajete }) return null
         // Cala pula stoi juz na planszy (pula mniejsza niz plansza). Powtarzamy biezace slowo
         // zamiast nie wystawic nic - tak samo, jak robil to dobor losowy.
         val cel = kolejka[planIdx]
@@ -573,9 +586,20 @@ class GameEngine(
         return cel
     }
 
-    /** Czy slowo moze teraz wyjsc: nie stoi na planszy, a w rundzie skonczonej jeszcze czeka. */
-    private fun doWystawienia(cel: Playable, zajete: Set<String>): Boolean =
-        cel.prompt !in zajete && (!config.finite || klucz(cel) in pending)
+    /**
+     * Czy slowo moze teraz wyjsc: jego napis nie stoi na planszy, w rundzie skonczonej jeszcze
+     * czeka na odpowiedz, a plansza nie pokazuje wlasnie jego tlumaczenia.
+     *
+     * Ostatni warunek pilnuje, zeby odpowiedz byla nauka, a nie sciaga. Fala wychodzi co 3,8 s,
+     * a odpowiedz stoi 3 s ([REVEAL_TIME]), wiec slowo, ktore jako jedyne moglo wyjsc (koniec
+     * kazdej rundy skonczonej, pierwsza sesja z piecioma slowami), wracalo na plansze pod
+     * wlasnym tlumaczeniem i uczen je po prostu przepisywal.
+     */
+    private fun doWystawienia(cel: Playable, zajete: Set<String>): Boolean {
+        if (cel.prompt in zajete) return false
+        val klucz = klucz(cel)
+        return klucz != odkrywane && (!config.finite || klucz in pending)
+    }
 
     // ---- gra o rekord: worek -----------------------------------------------
 
@@ -600,40 +624,51 @@ class GameEngine(
     private fun zWorka(zajete: Set<String>): Playable? {
         // W rundzie skonczonej slowo zaliczone juz nie wraca, wiec nie zalega tez w worku.
         if (config.finite) worek.removeAll { klucz(it) !in pending }
-        // Haslo, ktorego napis stoi na planszy, idzie na KONIEC worka i tam czeka na swoja kolej.
-        // Dotyczy to takze wiersza o tym samym hasle co potworek, ktory wlasnie wyszedl ("reka"
-        // jako arm i jako hand): nie moze stanac obok niego, ale tez nie traci obiegu.
-        val stojace = worek.filter { it.prompt in zajete }
-        if (stojace.isNotEmpty()) {
-            worek.removeAll(stojace)
-            worek.addAll(stojace)
-        }
-        if (worek.isEmpty() || worek[0].prompt in zajete) {
-            // Worek sie WYCZERPAL: jest pusty albo zostaly w nim same hasla stojace na planszy.
-            // W drugim przypadku nie czekamy, az zejda: nowy obieg zaczyna sie od razu, a one
-            // niczego nie traca, bo nowy worek tez je zawiera (na koncu, patrz [nowyWorek]).
+        // Wychodzi pierwszy wiersz worka, ktory wyjsc MOZE. Te, ktore teraz nie moga, zostaja
+        // na swoim miejscu i czekaja: dotyczy to zwlaszcza wiersza o tym samym hasle co potworek
+        // na planszy ("reka" jako arm i jako hand). Nie stanie obok niego, ale gdy tylko haslo
+        // sie zwolni, jest pierwszy w kolejce, a nie na jej koncu.
+        var i = worek.indexOfFirst { doWystawienia(it, zajete) }
+        if (i < 0) {
+            // Worek sie WYCZERPAL: jest pusty albo zostaly w nim same wiersze, ktore wyjsc nie
+            // moga. Nie czekamy na nie z pusta plansza, nowy obieg zaczyna sie od razu.
             val pula = pulaWorka()
-            if (pula.all { it.prompt in zajete }) {
-                // Na planszy stoi juz wszystko, co mogloby wyjsc. Runda skonczona wtedy czeka,
-                // a runda bez konca godzi sie na drugi taki sam napis, bo zestaw mniejszy od
-                // planszy musi dalej wystawiac cele.
-                if (config.finite) return null
+            if (pula.none { doWystawienia(it, zajete) }) {
+                // Nie ma czego wystawic. Runda skonczona wtedy czeka. Runda bez konca czeka
+                // tylko na slowo, ktorego odpowiedz stoi wlasnie na planszy (zaraz zgasnie),
+                // a gdy na planszy stoi juz wszystko, godzi sie na drugi taki sam napis, bo
+                // zestaw mniejszy od planszy musi dalej wystawiac cele.
+                if (config.finite || pula.any { it.prompt !in zajete }) return null
                 return pula[random.nextInt(pula.size)].also { ostatnieHaslo = it.prompt }
             }
             nowyWorek(pula, zajete)
+            i = worek.indexOfFirst { doWystawienia(it, zajete) }
         }
-        val cel = worek.removeAt(0)
+        val cel = worek.removeAt(i)
         ostatnieHaslo = cel.prompt
         return cel
     }
 
-    /** Tasuje [pula] w nowy worek. Wolajacy sprawdzil, ze jest w niej haslo spoza planszy. */
+    /** Tasuje [pula] w nowy worek. Wolajacy sprawdzil, ze jest w niej slowo, ktore moze wyjsc. */
     private fun nowyWorek(pula: List<Playable>, zajete: Set<String>) {
-        // Hasla stojace na planszy ida na koniec nowego worka. Nowy obieg zaczyna sie zwykle
-        // wtedy, gdy ostatnie potworki poprzedniego jeszcze ida; gdyby ich slowa lezaly w losowym
-        // miejscu worka, wracalyby na plansze w chwili, w ktorej uczen dopiero co na nie
-        // odpowiedzial. Tak samo dziala kolejka planu: slowo pominiete czeka tam na nastepny obieg.
-        val (stojace, wolne) = pula.shuffled(random).partition { it.prompt in zajete }
+        // ZALEGLE Z POPRZEDNIEGO OBIEGU: wiersze, ktore nie wyszly, bo przez caly czas stal na
+        // planszy ich blizniak o tym samym hasle. Obieg im sie nalezy, wiec przechodza na czolo
+        // nowego worka i wyjda, gdy tylko haslo sie zwolni. Inaczej z pary arm i hand ("reka")
+        // przy wolniejszej grze wychodzil w kazdym obiegu tylko jeden wiersz, a potrafil to byc
+        // dwa razy z rzedu ten sam. Wiersz, ktorego WLASNY potworek stoi na planszy, zalegly nie
+        // jest: swoje wyjscie wlasnie ma.
+        val naPlanszy = HashSet<String>()
+        monsters.forEach { naPlanszy.add(klucz(it)) }
+        crates.forEach { naPlanszy.add(klucz(it)) }
+        val zalegle = worek
+            .filter { it.prompt in zajete && klucz(it) !in naPlanszy }
+            .distinctBy { klucz(it) }
+        // Slowa, ktore teraz wyjsc nie moga (stoja na planszy albo plansza pokazuje wlasnie ich
+        // odpowiedz), ida na koniec nowego worka. Nowy obieg zaczyna sie zwykle wtedy, gdy
+        // ostatnie potworki poprzedniego jeszcze ida; gdyby ich slowa lezaly w losowym miejscu
+        // worka, wracalyby na plansze w chwili, w ktorej uczen dopiero co je widzial. Tak samo
+        // dziala kolejka planu: slowo pominiete czeka tam na nastepny obieg.
+        val (wolne, czekajace) = pula.shuffled(random).partition { doWystawienia(it, zajete) }
         val swiezy = wolne.toMutableList()
         // Nowy worek nie zaczyna sie haslem, ktorym skonczyl sie poprzedni: na styku dwoch
         // obiegow to samo slowo wyszloby dwa razy pod rzad.
@@ -647,8 +682,9 @@ class GameEngine(
             }
         }
         worek.clear()
+        worek.addAll(zalegle)
         worek.addAll(swiezy)
-        worek.addAll(stojace)
+        worek.addAll(czekajace)
     }
 
     fun snapshot(): GameSnapshot = GameSnapshot(
@@ -683,7 +719,7 @@ class GameEngine(
 
     fun type(ch: Char) {
         if (gameOver) return
-        if (typed.length >= 40) return
+        if (typed.length >= MAX_TYPED) return
         typed = typed.substring(0, cursor) + ch + typed.substring(cursor)
         cursor++
     }
@@ -710,7 +746,7 @@ class GameEngine(
 
     fun setTyped(value: String) {
         if (gameOver) return
-        typed = value.take(40)
+        typed = value.take(MAX_TYPED)
         cursor = typed.length
     }
 
@@ -843,6 +879,12 @@ class GameEngine(
     private var reveal: Reveal? = null
 
     /**
+     * Slowo, ktorego odpowiedz stoi teraz na planszy, jako klucz z [kluczSlowa]; null razem
+     * z [reveal]. Dopoki napis nie zgasnie, to slowo nie wychodzi ponownie, patrz [doWystawienia].
+     */
+    private var odkrywane: String? = null
+
+    /**
      * Potworek doszedl do dziala, zanim uczen na niego odpowiedzial: slowo idzie na liste do
      * powtorki, a jego tlumaczenie na plansze.
      */
@@ -855,6 +897,7 @@ class GameEngine(
             ?: MissedWord(m.prompt, m.solution, m.entryId, m.direction, 1)
         missedWords = missed.values.toList()
         reveal = Reveal(m.prompt, m.solution, REVEAL_TIME)
+        odkrywane = klucz
     }
 
     // ---- simulation --------------------------------------------------------
@@ -880,6 +923,7 @@ class GameEngine(
             val zostalo = r.ttl - dt
             if (zostalo > 0f) r.copy(ttl = zostalo) else null
         }
+        if (reveal == null) odkrywane = null
 
         moveProjectiles(dt)
         moveMonsters(dt)
@@ -1029,7 +1073,21 @@ class GameEngine(
         if (spawnTimer > 0f) return
         spawnTimer = spawnInterval()
         if (monsters.size >= MAX_MONSTERS) return
+        val przed = monsters.size
         spawnMonster()
+        // Nic nie wyszlo, bo jedyne slowo, ktore moglo, czeka na zgaszenie swojej odpowiedzi.
+        // Fala nie przepada wtedy na caly odstep: rusza w klatce, w ktorej napis gasnie, wiec
+        // slowo wraca najpozniej po tym samym czasie co dotad, tylko juz bez sciagi nad glowa.
+        val r = reveal
+        if (r != null && monsters.size == przed && czekaNaZgaszenie()) spawnTimer = min(spawnTimer, r.ttl)
+    }
+
+    /** Czy slowo z pokazywana odpowiedzia wyszloby teraz na plansze, gdyby nie ona. */
+    private fun czekaNaZgaszenie(): Boolean {
+        val klucz = odkrywane ?: return false
+        if (config.finite && klucz !in pending) return false
+        val zajete = monsters.map { it.prompt }.toSet() + crates.map { it.prompt }.toSet()
+        return playable.any { klucz(it) == klucz && it.prompt !in zajete }
     }
 
     fun spawnMonster() {

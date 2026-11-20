@@ -53,6 +53,7 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -221,6 +222,13 @@ fun PlayScreen(
      */
     onContinue: (() -> Unit)? = null,
     continueLabel: String = str.next,
+    /**
+     * Komunikat aplikacji, ktory ma byc widoczny nad runda (dzis: nieudany zapis); null, gdy nie
+     * ma czego pokazywac. Aplikacja kladzie go zwykle karta u dolu okna, nad kazdym ekranem. Tu
+     * oddaje go ekranowi gry, bo tylko on wie, czy na ekranie stoi plansza, czy wynik: w trakcie
+     * rundy karta lezy tam, gdzie dotad, a po rundzie nad przyciskami wyniku, a nie na nich.
+     */
+    uwaga: String? = null,
     /**
      * Zapis jednej proby (Repository.recordAttempt). Domyslnie pusty, bo ekran ma dzialac
      * takze tam, gdzie nikt postepu nie zbiera — w podgladzie i w testach Compose.
@@ -831,6 +839,7 @@ fun PlayScreen(
             onMenu = onExit,
             onContinue = onContinue,
             continueLabel = continueLabel,
+            uwaga = uwaga,
         )
         return
     }
@@ -842,153 +851,160 @@ fun PlayScreen(
         Modifier.semantics { contentDescription = odkrycie.prompt + ": " + odkrycie.solution }
     } else Modifier
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .background(Palette.Background)
-    ) {
-        Box(
+    // Karta z komunikatem aplikacji lezy NA ukladzie rundy, u dolu, tak jak kladla ja dotad
+    // aplikacja: nad klawiatura, zeby nie zaslaniac planszy ani serc. Dlatego calosc stoi w Box.
+    Box(Modifier.fillMaxSize()) {
+        Column(
             Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(5.dp)
-                .border(3.dp, Palette.Ink)
+                .fillMaxSize()
+                .background(Palette.Background)
         ) {
-            Canvas(Modifier.fillMaxSize().then(opisPlanszy)) {
-                drawField(
-                    snap, highlighted, highlightedCrates, theme, sprites, font, options,
-                    muzzle, podpisTrybu,
-                )
-            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .padding(5.dp)
+                    .border(3.dp, Palette.Ink)
+            ) {
+                Canvas(Modifier.fillMaxSize().then(opisPlanszy)) {
+                    drawField(
+                        snap, highlighted, highlightedCrates, theme, sprites, font, options,
+                        muzzle, podpisTrybu,
+                    )
+                }
 
-            if (!engine.isPlayable) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Box(
-                        Modifier
-                            .background(Palette.Ink)
-                            .border(3.dp, Palette.SurfaceHigh)
-                            .padding(14.dp)
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            PixelText(
-                                str.emptySetWarning,
-                                color = Palette.Danger,
-                                glyphHeight = 9.dp,
-                                maxWidthDp = 240.dp,
-                                font = font,
-                            )
-                            Spacer(Modifier.height(14.dp))
-                            MenuButton(str.toMenu, onClick = onExit)
+                if (!engine.isPlayable) {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier
+                                .background(Palette.Ink)
+                                .border(3.dp, Palette.SurfaceHigh)
+                                .padding(14.dp)
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                PixelText(
+                                    str.emptySetWarning,
+                                    color = Palette.Danger,
+                                    glyphHeight = 9.dp,
+                                    maxWidthDp = 240.dp,
+                                    font = font,
+                                )
+                                Spacer(Modifier.height(14.dp))
+                                MenuButton(str.toMenu, onClick = onExit)
+                            }
                         }
                     }
                 }
-            }
 
-            Box(
-                Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(top = 5.dp)
-                    .background(Palette.Ink.copy(alpha = 0.75f))
-                    .border(2.dp, Palette.SurfaceHigh)
-                    // Wznowienie reka ucznia konczy takze pauze od awarii — inaczej flaga
-                    // zostalaby zapalona i nastepny klawisz "odwieszalby" gre, ktora juz idzie.
-                    .clickable { paused = !paused; if (!paused) pauzaOdAwarii = false }
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PixelImage(pixel(com.matura.app.R.drawable.icon_pause), Modifier.size(13.dp))
-                    Spacer(Modifier.width(7.dp))
-                    PixelText(
-                        if (paused) str.resume else str.pause,
-                        color = Palette.Bone,
-                        glyphHeight = 8.dp,
-                        font = font,
-                    )
+                Box(
+                    Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 5.dp)
+                        .background(Palette.Ink.copy(alpha = 0.75f))
+                        .border(2.dp, Palette.SurfaceHigh)
+                        // Wznowienie reka ucznia konczy takze pauze od awarii, inaczej flaga
+                        // zostalaby zapalona i nastepny klawisz "odwieszalby" gre, ktora juz idzie.
+                        .clickable { paused = !paused; if (!paused) pauzaOdAwarii = false }
+                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        PixelImage(pixel(com.matura.app.R.drawable.icon_pause), Modifier.size(13.dp))
+                        Spacer(Modifier.width(7.dp))
+                        PixelText(
+                            if (paused) str.resume else str.pause,
+                            color = Palette.Bone,
+                            glyphHeight = 8.dp,
+                            font = font,
+                        )
+                    }
+                }
+
+                diagnostyka?.let { tekst ->
+                    DiagnosticsOverlay(tekst, str, font, onClose = { zamknijDiagnostyke() })
                 }
             }
 
-            diagnostyka?.let { tekst ->
-                DiagnosticsOverlay(tekst, str, font, onClose = { zamknijDiagnostyke() })
+            AnswerBar(snap.typed, snap.cursor, font)
+
+            // Podpis paska, od najwazniejszego: wlasny komunikat ekranu (trafienie, awaria, odmowa),
+            // potem konkretna podpowiedz silnika (gluchy mikrofon, inny silnik), a dopiero na koncu
+            // stan mikrofonu jezykiem gracza. Gdy silnika NIE MA, zostawiamy pusto: wtedy VoicePolicy
+            // wpisuje pod przyciskiem droge, ktora pojdzie dotkniecie (okno systemowe / klawiatura),
+            // a to jest w tej sytuacji jedyna informacja, ktora do czegos prowadzi.
+            val podpisPaska = when {
+                voiceMsg.isNotEmpty() -> voiceMsg
+                voice.status.isNotEmpty() -> voice.status
+                voice.maSilnik || voice.listening -> opisStanuMikrofonu(voice.stan, lang)
+                else -> ""
+            }
+
+            VoiceBar(
+                listening = voice.listening,
+                mode = voice.mode,
+                message = podpisPaska,
+                // Tylko w debug: w wydaniu null, zeby gest w ogole nie istnial (patrz VoiceBar).
+                onDiagnostyka = if (BuildConfig.DEBUG) ({ pokazDiagnostyke() }) else null,
+                str = str,
+                onToggle = { toggleVoice() },
+                dialogAvailable = voice.oknoDostepne,
+                hasEngine = voice.maSilnik,
+            )
+
+            if (options.systemKeyboard || klawiaturaTymczasowa) {
+                // POLE SYSTEMOWE. Wbudowana klawiatura pikselowa nie ma mikrofonu, a tryb glosowy
+                // aplikacji na czesci telefonow nie dziala (silnik odmawia obslugi aplikacjom trzecim).
+                // Zwykle pole tekstowe otwiera klawiature TELEFONU, a ta ma wlasne dyktowanie,
+                // ktore nie przechodzi przez ten mechanizm w ogole. To najpewniejsza droga do glosu.
+                val fokus = remember { FocusRequester() }
+                LaunchedEffect(Unit) { runCatching { fokus.requestFocus() } }
+                BasicTextField(
+                    // Zrodlem prawdy zostaje silnik: pole pokazuje `snap.typed`, a kursor trzymamy
+                    // na koncu, zeby dyktowanie doklejalo tekst tam, gdzie uzytkownik sie spodziewa.
+                    value = TextFieldValue(snap.typed, TextRange(snap.typed.length)),
+                    onValueChange = { nowa ->
+                        // Pisanie = koniec przesiadki po awarii mikrofonu (patrz wznowPoAwarii).
+                        wznowPoAwarii()
+                        if (paused) return@BasicTextField
+                        val czyste = nowa.text.filter { it.isLetter() || it == ' ' || it == '-' }.take(40)
+                        if (czyste != snap.typed) {
+                            engine.clearTyped()
+                            for (ch in czyste) engine.type(ch)
+                        }
+                    },
+                    singleLine = true,
+                    textStyle = TextStyle(color = Palette.Ink, fontSize = 22.sp, textAlign = TextAlign.Center),
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.Accent),
+                    keyboardOptions = KeyboardOptions(
+                        autoCorrect = false,
+                        capitalization = KeyboardCapitalization.None,
+                        imeAction = ImeAction.Done,
+                    ),
+                    keyboardActions = KeyboardActions(onDone = { submit() }),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                        .background(Palette.Bone)
+                        .border(3.dp, Palette.Ink)
+                        .padding(14.dp)
+                        .focusRequester(fokus),
+                )
+            } else {
+                GameKeyboard(
+                    opisy = opisyKlawiszy(str),
+                    // Pierwszy klawisz konczy pauze zalozona przez awarie mikrofonu: uczen przeszedl
+                    // wlasnie na klawiature, wiec przerwa spelnila swoja role. Pauzy WLASNEJ (przycisk
+                    // u gory, zejscie w tle) to nie rusza: tam czekamy na swiadome wznowienie.
+                    onChar = { c -> wznowPoAwarii(); if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
+                    onBackspace = { wznowPoAwarii(); if (!paused) engine.backspace() },
+                    onEnter = { wznowPoAwarii(); submit() },
+                    onSpace = { wznowPoAwarii(); if (!paused) engine.type(' ') },
+                    onLeft = { engine.cursorLeft() },
+                    onRight = { engine.cursorRight() },
+                )
             }
         }
-
-        AnswerBar(snap.typed, snap.cursor, font)
-
-        // Podpis paska, od najwazniejszego: wlasny komunikat ekranu (trafienie, awaria, odmowa),
-        // potem konkretna podpowiedz silnika (gluchy mikrofon, inny silnik), a dopiero na koncu
-        // stan mikrofonu jezykiem gracza. Gdy silnika NIE MA, zostawiamy pusto — wtedy VoicePolicy
-        // wpisuje pod przyciskiem droge, ktora pojdzie dotkniecie (okno systemowe / klawiatura),
-        // a to jest w tej sytuacji jedyna informacja, ktora do czegos prowadzi.
-        val podpisPaska = when {
-            voiceMsg.isNotEmpty() -> voiceMsg
-            voice.status.isNotEmpty() -> voice.status
-            voice.maSilnik || voice.listening -> opisStanuMikrofonu(voice.stan, lang)
-            else -> ""
-        }
-
-        VoiceBar(
-            listening = voice.listening,
-            mode = voice.mode,
-            message = podpisPaska,
-            // Tylko w debug: w wydaniu null, zeby gest w ogole nie istnial (patrz VoiceBar).
-            onDiagnostyka = if (BuildConfig.DEBUG) ({ pokazDiagnostyke() }) else null,
-            str = str,
-            onToggle = { toggleVoice() },
-            dialogAvailable = voice.oknoDostepne,
-            hasEngine = voice.maSilnik,
-        )
-
-        if (options.systemKeyboard || klawiaturaTymczasowa) {
-            // POLE SYSTEMOWE. Wbudowana klawiatura pikselowa nie ma mikrofonu, a tryb glosowy
-            // aplikacji na czesci telefonow nie dziala (silnik odmawia obslugi aplikacjom trzecim).
-            // Zwykle pole tekstowe otwiera klawiature TELEFONU — a ta ma wlasne dyktowanie,
-            // ktore nie przechodzi przez ten mechanizm w ogole. To najpewniejsza droga do glosu.
-            val fokus = remember { FocusRequester() }
-            LaunchedEffect(Unit) { runCatching { fokus.requestFocus() } }
-            BasicTextField(
-                // Zrodlem prawdy zostaje silnik: pole pokazuje `snap.typed`, a kursor trzymamy
-                // na koncu, zeby dyktowanie doklejalo tekst tam, gdzie uzytkownik sie spodziewa.
-                value = TextFieldValue(snap.typed, TextRange(snap.typed.length)),
-                onValueChange = { nowa ->
-                    // Pisanie = koniec przesiadki po awarii mikrofonu (patrz wznowPoAwarii).
-                    wznowPoAwarii()
-                    if (paused) return@BasicTextField
-                    val czyste = nowa.text.filter { it.isLetter() || it == ' ' || it == '-' }.take(40)
-                    if (czyste != snap.typed) {
-                        engine.clearTyped()
-                        for (ch in czyste) engine.type(ch)
-                    }
-                },
-                singleLine = true,
-                textStyle = TextStyle(color = Palette.Ink, fontSize = 22.sp, textAlign = TextAlign.Center),
-                cursorBrush = androidx.compose.ui.graphics.SolidColor(Palette.Accent),
-                keyboardOptions = KeyboardOptions(
-                    autoCorrect = false,
-                    capitalization = KeyboardCapitalization.None,
-                    imeAction = ImeAction.Done,
-                ),
-                keyboardActions = KeyboardActions(onDone = { submit() }),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 8.dp)
-                    .background(Palette.Bone)
-                    .border(3.dp, Palette.Ink)
-                    .padding(14.dp)
-                    .focusRequester(fokus),
-            )
-        } else {
-            GameKeyboard(
-                opisy = opisyKlawiszy(str),
-                // Pierwszy klawisz konczy pauze zalozona przez awarie mikrofonu — uczen przeszedl
-                // wlasnie na klawiature, wiec przerwa spelnila swoja role. Pauzy WLASNEJ (przycisk
-                // u gory, zejscie w tle) to nie rusza: tam czekamy na swiadome wznowienie.
-                onChar = { c -> wznowPoAwarii(); if (!paused) { engine.type(c); sfx.key(options.soundEnabled) } },
-                onBackspace = { wznowPoAwarii(); if (!paused) engine.backspace() },
-                onEnter = { wznowPoAwarii(); submit() },
-                onSpace = { wznowPoAwarii(); if (!paused) engine.type(' ') },
-                onLeft = { engine.cursorLeft() },
-                onRight = { engine.cursorRight() },
-            )
+        if (uwaga != null) {
+            InfoCard(uwaga, Modifier.align(Alignment.BottomCenter).padding(12.dp))
         }
     }
 }
@@ -1063,6 +1079,7 @@ private fun WynikRundyKlasycznej(
     onMenu: () -> Unit,
     onContinue: (() -> Unit)?,
     continueLabel: String,
+    uwaga: String?,
 ) {
     val jeszczeRaz = PrzyciskWyniku(str.playAgain, onAgain)
     EkranWyniku(
@@ -1075,6 +1092,7 @@ private fun WynikRundyKlasycznej(
         opisPunktow = str.score + " " + snap.score,
         glowny = if (onContinue != null) PrzyciskWyniku(continueLabel, onContinue) else jeszczeRaz,
         drugi = if (onContinue != null) jeszczeRaz else PrzyciskWyniku(str.toMenu, onMenu),
+        uwaga = uwaga,
     ) { szerokosc ->
         Spacer(Modifier.height(8.dp))
         PixelText(
@@ -1196,13 +1214,16 @@ private fun DrawScope.drawField(
             )
         }
 
+        // Where the words stand, for the one part of the HUD that gives way to them (drawHud).
+        val labels = ArrayList<Rect>(snap.crates.size + snap.monsters.size)
+
         for (c in snap.crates) {
             val x = px(c.x)
             val y = py(c.y)
             val hgt = unit * 0.085f
             val blink = if (c.ttl < 4f) (if ((c.ttl * 6f).toInt() % 2 == 0) 0.4f else 1f) else 1f
             drawSprite(sprites.crateAmmo, x, y, hgt, alpha = blink)
-            drawCentredLabel(
+            labels += drawCentredLabel(
                 font, c.prompt, x, y - hgt * 0.62f, fs * 0.85f,
                 if (c.id in highlightedCrates) Palette.Accent else theme.hudInk,
                 clampToCanvas = true,
@@ -1221,7 +1242,7 @@ private fun DrawScope.drawField(
             if (m.hitFlash > 0f) {
                 drawSprite(sprites.hitFlash, x, y, hgt * 1.05f, alpha = (m.hitFlash / 0.18f).coerceIn(0f, 1f))
             }
-            drawCentredLabel(
+            labels += drawCentredLabel(
                 font, m.prompt, x, y - hgt * 0.62f, fs,
                 if (m.id in highlighted) Palette.Accent else theme.hudInk,
                 clampToCanvas = true,
@@ -1242,7 +1263,7 @@ private fun DrawScope.drawField(
             rotate(degrees = a, pivot = Offset(x, y)) { drawSprite(sprite, x, y, hgt) }
         }
 
-        drawHud(snap, w, h, unit, fs, sprites, font, modeLabel)
+        drawHud(snap, w, h, unit, fs, sprites, font, modeLabel, labels)
 
         if (snap.levelUpBanner > 0f) {
             val alpha = (snap.levelUpBanner / GameEngine.LEVEL_BANNER_TIME).coerceIn(0f, 1f)
@@ -1260,6 +1281,13 @@ private fun DrawScope.drawField(
 
 /** How long before it disappears the revealed answer starts to fade, in seconds. */
 private const val REVEAL_FADE = 0.5f
+
+/**
+ * How far from the middle of the board the pause button reaches, with a little air. The button
+ * is a composable laid over the canvas, so the HUD drawn on the canvas cannot measure it: its
+ * widest label ("Resume") makes it up to about 87 dp wide, depending on how the font scale rounds.
+ */
+private val PAUSE_BUTTON_REACH = 48.dp
 
 /**
  * The answer the game was waiting for, shown for [GameEngine.REVEAL_TIME] after a monster has
@@ -1296,10 +1324,13 @@ private fun DrawScope.drawReveal(reveal: Reveal, font: PixelFont, unit: Float, f
     while (scale > 1f && plateWidth(scale) > size.width) scale -= 1f
 
     // Vertical rhythm in font pixels: accents reach 3 px above a glyph and ogonki 3 px below it,
-    // so 4 px of padding and 5 px between the lines keep every mark inside the plate.
+    // so 4 px of padding keep every mark inside the plate. The lines stand 8 px apart: an
+    // ogonek of the prompt and an accent of the answer then still have 2 px between them. With
+    // less, the dot of "ż" in the answer hung right under the prompt and read as its ogonek.
     val glyph = PixelFont.GLYPH_H * scale
+    val lineGap = 8f * scale
     val plateW = plateWidth(scale)
-    val plateH = 4f * scale + glyph + 5f * scale + glyph + 4f * scale
+    val plateH = 4f * scale + glyph + lineGap + glyph + 4f * scale
     val left = clampToCanvas(size.width / 2f - plateW / 2f, plateW, 0f)
     // Bottom HUD row, same numbers as drawHud: the plate stops above it when the board is so
     // low that the two would meet.
@@ -1334,7 +1365,7 @@ private fun DrawScope.drawReveal(reveal: Reveal, font: PixelFont, unit: Float, f
     drawPixelText(
         font, reveal.solution,
         x = size.width / 2f - font.widthPx(reveal.solution, scale) / 2f,
-        y = promptY + glyph + 5f * scale,
+        y = promptY + glyph + lineGap,
         scale = scale,
         color = Palette.Gold.copy(alpha = alpha),
         outline = outline,
@@ -1357,6 +1388,8 @@ private fun DrawScope.clampToCanvas(x: Float, width: Float, margin: Float): Floa
  * the edge: until 0.7.0 a long word like "disciplined" read as "plined" for the first couple of
  * seconds, which is exactly the time the player needs to start typing. The label is therefore
  * kept inside the canvas; only the sprite walks in from off-screen.
+ *
+ * @return the space the text takes, accents and ogonki included (3 font pixels above and below).
  */
 private fun DrawScope.drawCentredLabel(
     font: PixelFont,
@@ -1367,19 +1400,21 @@ private fun DrawScope.drawCentredLabel(
     color: Color,
     outline: Color? = Palette.Ink,
     clampToCanvas: Boolean = false,
-) {
+): Rect {
     val width = font.widthPx(text, scale)
     var x = cx - width / 2f
     if (clampToCanvas) x = clampToCanvas(x, width, 2f * scale)
+    val top = bottomY - PixelFont.GLYPH_H * scale
     drawPixelText(
         font = font,
         text = text,
         x = x,
-        y = bottomY - PixelFont.GLYPH_H * scale,
+        y = top,
         scale = scale,
         color = color,
         outline = outline,
     )
+    return Rect(x, top - 3f * scale, x + width, bottomY + 3f * scale)
 }
 
 private fun DrawScope.drawTurret(
@@ -1422,35 +1457,58 @@ private fun DrawScope.drawHud(
     sprites: Sprites,
     font: PixelFont,
     modeLabel: String,
+    /** Where the words of monsters and crates stand in this frame. */
+    labels: List<Rect>,
 ) {
     val pad = unit * 0.030f
     val iconH = unit * 0.048f
+    val topRowY = pad + iconH / 2f
 
     // lives, top-left. A calm round takes no lives, so hearts that can never empty would only
     // promise a penalty that does not exist: they are not drawn at all.
-    var cornerY = pad + iconH / 2f
+    val heartStep = iconH + unit * 0.012f
     if (!snap.calm) {
         for (i in 0 until snap.maxLives) {
             val sprite = if (i < snap.lives) sprites.heart else sprites.heartEmpty
-            drawSprite(sprite, pad + iconH / 2f + i * (iconH + unit * 0.012f), cornerY, iconH)
+            drawSprite(sprite, pad + iconH / 2f + i * heartStep, topRowY, iconH)
         }
-        cornerY += iconH + unit * 0.014f
     }
 
     // Progress of a finite round, in the same corner: how many words have had a correct answer
-    // and how many there are. It takes the place of the hearts in a calm round and stands under
-    // them otherwise (beside them it would run into the pause button with five lives or more).
-    // Both numbers are zero unless the round is finite, so this needs no separate flag.
+    // and how many there are. Both numbers are zero unless the round is finite, so this needs
+    // no separate flag.
     if (snap.targetsTotal > 0) {
-        drawSprite(sprites.iconTarget, pad + iconH / 2f, cornerY, iconH * 0.8f)
-        drawPixelText(
-            font,
-            "${snap.targetsDone}/${snap.targetsTotal}",
-            pad + iconH + unit * 0.012f,
-            cornerY - PixelFont.GLYPH_H * fs / 2f,
-            fs,
-            Palette.Bone,
-        )
+        val textX = iconH + unit * 0.012f
+        // The widest reading of this round decides the place, so the counter does not move
+        // when 9/12 becomes 10/12.
+        val width = textX + font.widthPx("${snap.targetsTotal}/${snap.targetsTotal}", fs)
+        var x = pad
+        var y = topRowY
+        if (!snap.calm) {
+            // With hearts on the board the counter stands on their row, to the right of the
+            // last one, as long as it ends before the pause button. A second row under the
+            // hearts doubled the time the word of a monster entering on the top left lane ran
+            // through the HUD, so it is only the fallback: many lives, or a tall board, where
+            // everything in the HUD is drawn larger.
+            val beside = pad + snap.maxLives * heartStep + unit * 0.012f
+            if (beside + width <= w / 2f - PAUSE_BUTTON_REACH.toPx()) x = beside
+            else y += iconH + unit * 0.014f
+        }
+        // The counter gives way to a word. A label is kept inside the canvas while its monster
+        // walks in, so on the top lanes it passes through this corner; digits drawn over it
+        // left neither readable, and the word is the one the student has to read to answer.
+        val box = Rect(x, y - iconH / 2f, x + width, y + iconH / 2f)
+        if (labels.none { it.overlaps(box) }) {
+            drawSprite(sprites.iconTarget, x + iconH / 2f, y, iconH * 0.8f)
+            drawPixelText(
+                font,
+                "${snap.targetsDone}/${snap.targetsTotal}",
+                x + textX,
+                y - PixelFont.GLYPH_H * fs / 2f,
+                fs,
+                Palette.Bone,
+            )
+        }
     }
 
     // ammo, top-right. Basic rounds are endless, so an "∞" readout could never change

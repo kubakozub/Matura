@@ -114,6 +114,10 @@ class DoborSlowTest {
     /**
      * Wystawia jedno haslo i pozwala mu dojsc do dziala bez odpowiedzi. Kroki po pol sekundy:
      * potworek pokonuje w takim kroku duzo mniej niz promien dziala, wiec go nie przeskoczy.
+     *
+     * Na koniec czeka, az pokazana odpowiedz zgasnie. Do tej chwili slowo nie wraca na plansze
+     * (patrz [slowoPrzepuszczone_nieWracaPodWlasnaOdpowiedzia]), a testy kolejki pytaja o to,
+     * W JAKIEJ KOLEJNOSCI slowa wracaja, a nie o te trzy sekundy.
      */
     private fun wystawIPrzepusc(e: GameEngine): String {
         e.spawnMonster()
@@ -121,7 +125,15 @@ class DoborSlowTest {
         var kroki = 0
         while (e.snapshot().monsters.isNotEmpty() && kroki++ < 200) e.tick(0.5f)
         assertTrue("potworek mial dojsc do dziala", e.snapshot().monsters.isEmpty())
+        poczekajNaZgaszenie(e)
         return m.prompt
+    }
+
+    /** Przesuwa czas, az odpowiedz pokazana na planszy zgasnie. */
+    private fun poczekajNaZgaszenie(e: GameEngine) {
+        var kroki = 0
+        while (e.snapshot().reveal != null && kroki++ < 200) e.tick(0.1f)
+        assertTrue("odpowiedz miala zgasnac", e.snapshot().reveal == null)
     }
 
     private fun postep(vararg pary: Pair<String, WordProgress>): Map<String, WordProgress> =
@@ -402,6 +414,42 @@ class DoborSlowTest {
                 "ziarno " + ziarno + ": stoi " + stojace.prompt + ", wyszly " + zaliczone,
                 zaliczone[0], e.snapshot().monsters.last().prompt,
             )
+        }
+    }
+
+    /**
+     * Dwa wiersze o wspolnym hasle ("reka" to arm i hand) nie moga stac na planszy naraz, ale
+     * kazdy ma w obiegu worka swoje wyjscie, takze przy wolnej grze, gdy pierwszy z nich stoi
+     * az do wyczerpania worka.
+     *
+     * Wiersz czekajacy na zejscie blizniaka przepadal razem ze starym workiem, a w nowym oba
+     * ladowaly na koncu w losowej kolejnosci. Gdy nikt nie odpowiadal, z pary wychodzil w obiegu
+     * jeden wiersz, czyli kazdy z nich mniej wiecej o polowe rzadziej niz kazde inne slowo.
+     * Runda jest spokojna tylko po to, zeby trwala i stala na pierwszym poziomie.
+     */
+    @Test
+    fun bezHistorii_wierszeOWspolnymHasle_wychodzaTakCzestoJakReszta() {
+        val wpisy = listOf(Entry("arm", "reka", "w1"), Entry("hand", "reka", "w2")) +
+            slowa.take(10).mapIndexed { i, (t, d) -> Entry(t, d, "w" + (i + 3)) }
+        for (ziarno in 1..10) {
+            val e = GameEngine(
+                set = WordSet(id = "t", title = "test", entries = wpisy),
+                config = GameConfig(direction = Direction.DEF_TO_TERM, calm = true),
+                random = Random(ziarno),
+            )
+            val wyjscia = HashMap<String, Int>()
+            val widziane = HashSet<Long>()
+            repeat(12_000) {
+                e.tick(0.05f)
+                for (m in e.snapshot().monsters) if (widziane.add(m.id)) wyjscia.merge(m.entryId, 1, Int::plus)
+            }
+            val para = listOf("w1", "w2").map { wyjscia[it] ?: 0 }
+            val reszta = (3..12).map { wyjscia["w" + it] ?: 0 }
+            val opis = "ziarno " + ziarno + ": arm i hand " + para + ", reszta " + reszta
+            assertTrue("po dziesieciu minutach kazde slowo wyszlo wiele razy, " + opis, reszta.min() >= 8)
+            // Dwa wyjscia luzu: wiersz, ktory doczekal sie dopiero pod koniec obiegu, bywa
+            // o jedno wyjscie z tylu. Wczesniej roznica wynosila polowe.
+            assertTrue("blizniaki wychodza rzadziej niz reszta, " + opis, para.min() >= reszta.max() - 2)
         }
     }
 
@@ -825,6 +873,50 @@ class DoborSlowTest {
             assertEquals(5, e.snapshot().targetsDone)
             assertEquals(listOf(przepuszczone), e.missedWords.map { it.prompt })
             assertEquals(2, e.missedWords.single().times)
+        }
+    }
+
+    /**
+     * SLOWO NIE WRACA POD WLASNA ODPOWIEDZIA. Dopoki plansza pokazuje tlumaczenie slowa, ktore
+     * doszlo do dziala, to slowo nie wychodzi ponownie, w zadnej kolejce i w zadnym rodzaju rundy.
+     *
+     * Odpowiedz stoi trzy sekundy, a fala wychodzi co 3,8 s. Gdy przepuszczone slowo bylo
+     * jedynym, ktore moglo wyjsc (koniec kazdej rundy skonczonej, pierwsza sesja z piecioma
+     * slowami), wracalo wiec zwykle jeszcze pod wlasnym tlumaczeniem: uczen je przepisywal,
+     * slowo liczylo sie jako zaliczone i runda sie konczyla.
+     *
+     * Runda bez konca nie wystawia w tym czasie drugiego egzemplarza innego hasla: przepuszczone
+     * slowo zaraz bedzie wolne, wiec czeka na nie, zamiast dublowac napis.
+     */
+    @Test
+    fun slowoPrzepuszczone_nieWracaPodWlasnaOdpowiedzia() {
+        val bezHistorii = emptyMap<String, WordProgress>()
+        val zHistoria = postep("w1" to WordProgress(box = 1, dueDay = 0))
+        for (historia in listOf(bezHistorii, zHistoria)) {
+            for (skonczona in listOf(true, false)) {
+                val e = silnik(historia, dzis = 100, ile = 2, zycia = 5, skonczona = skonczona)
+                val opis = (if (historia.isEmpty()) "worek" else "plan") + ", skonczona=" + skonczona
+
+                e.spawnMonster()
+                val przepuszczone = e.snapshot().monsters.single().prompt
+                var kroki = 0
+                while (e.snapshot().monsters.isNotEmpty() && kroki++ < 200) e.tick(0.5f)
+                assertEquals(opis, przepuszczone, e.snapshot().reveal?.prompt)
+
+                // Drugie slowo wychodzi normalnie; przepuszczone nie, choc tylko ono zostalo.
+                e.spawnMonster()
+                val drugie = e.snapshot().monsters.single().prompt
+                assertNotEquals(opis, przepuszczone, drugie)
+                e.spawnMonster()
+                assertEquals("pod wlasna odpowiedzia nic nie wychodzi, " + opis, listOf(drugie), e.snapshot().monsters.map { it.prompt })
+
+                poczekajNaZgaszenie(e)
+                e.spawnMonster()
+                assertEquals(
+                    "gdy odpowiedz zgasla, slowo wraca, " + opis,
+                    listOf(drugie, przepuszczone), e.snapshot().monsters.map { it.prompt },
+                )
+            }
         }
     }
 
