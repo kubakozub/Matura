@@ -43,6 +43,16 @@ data class Monster(
      */
     val entryId: String = "",
     val direction: Direction = Direction.TERM_TO_DEF,
+    /**
+     * Druga strona wiersza, z ktorego wzieto haslo, zapisana tak, jak stoi w zestawie:
+     * z ogonkami, lacznikami i wariantami po przecinku, a nie w postaci znormalizowanej
+     * z [answers]. To ja uczen ma przeczytac, gdy potworek dojdzie do dziala.
+     *
+     * Jedzie z potworkiem, zamiast byc szukana po [prompt], bo haslo nie wskazuje wpisu:
+     * "uprzejmy" to w zestawach i kind, i polite, wiec wyszukanie po tekscie pokazaloby
+     * tlumaczenie z cudzego wiersza. Pusta tylko na planszy testowej bez definicji.
+     */
+    val solution: String = "",
 )
 
 data class Crate(
@@ -56,6 +66,8 @@ data class Crate(
     /** Jak w [Monster]: skrzynia niesie zwykle slowo z zestawu, wiec ma i wlasciciela postepu. */
     val entryId: String = "",
     val direction: Direction = Direction.TERM_TO_DEF,
+    /** Jak w [Monster]: druga strona wiersza w pisowni zestawu. */
+    val solution: String = "",
 )
 
 data class Projectile(
@@ -97,11 +109,60 @@ data class GameSnapshot(
     val streak: Int,
     val multiplier: Int,
     val bestStreak: Int,
+    /**
+     * Runda sie skonczyla. Kiedys znaczylo to zawsze utrate ostatniego zycia; odkad runda
+     * skonczona zamyka sie tez sama, o powodzie mowi [completed]. Patrz [GameEngine.gameOver].
+     */
     val gameOver: Boolean,
     val elapsed: Float,
     val flash: FlashKind?,
     /** Seconds left on the "new level" banner; zero when it should not be shown. */
     val levelUpBanner: Float,
+    /** Slowa, ktore doszly do dziala, od pierwszego przepuszczonego: lista do powtorki po rundzie. */
+    val missedWords: List<MissedWord> = emptyList(),
+    /** Odpowiedz do pokazania na planszy; null, gdy nie ma czego pokazywac. */
+    val reveal: Reveal? = null,
+    /** Runda zamknela sie sama, bo kazde slowo dostalo poprawna odpowiedz ([GameConfig.finite]). */
+    val completed: Boolean = false,
+    /** Runda spokojna ([GameConfig.calm]): zyc nie ubywa, wiec ekran nie ma po co ich rysowac. */
+    val calm: Boolean = false,
+    /**
+     * Postep rundy skonczonej: ile slow ma juz poprawna odpowiedz i ile ich jest razem.
+     * Oba zera, gdy runda nie jest skonczona, wiec ekran nie musi pytac o tryb osobno.
+     */
+    val targetsDone: Int = 0,
+    val targetsTotal: Int = 0,
+)
+
+/**
+ * Slowo, ktore doszlo do dziala bez odpowiedzi, razem z tlumaczeniem, na ktore gra czekala.
+ *
+ * Po to, zeby runda konczyla sie lista do powtorki, a nie samym wynikiem: uczen ma zobaczyc,
+ * CO przepuscil i jak to brzmi poprawnie. [solution] jest w pisowni zestawu (patrz
+ * [Monster.solution]), a [times] liczy, ile razy to samo slowo przeszlo w tej rundzie.
+ * [entryId] i [direction] wskazuja wpis tak samo jak w [LearningEvent]; pusty identyfikator
+ * ma plansza testowa i wpis sprzed wersjonowania.
+ */
+data class MissedWord(
+    val prompt: String,
+    val solution: String,
+    val entryId: String,
+    val direction: Direction,
+    val times: Int,
+)
+
+/**
+ * Odpowiedz pokazywana na planszy tuz po tym, jak potworek doszedl do dziala.
+ *
+ * Bez niej tryb klasyczny niczego nie uczyl przy pierwszym kontakcie: nieznane slowo zabieralo
+ * zycie i znikalo, a jego tlumaczenia nie bylo widac nigdzie, wiec zostawalo nieznane.
+ * [ttl] to sekundy do zgaszenia napisu. Odlicza je [GameEngine.tick], wiec pauza zatrzymuje
+ * ten zegar razem z plansza, a po koncu rundy napis zostaje taki, jaki byl w ostatniej klatce.
+ */
+data class Reveal(
+    val prompt: String,
+    val solution: String,
+    val ttl: Float,
 )
 
 enum class FlashKind { HIT, ARMOR, MISS, CRATE, LIFE_LOST }
@@ -143,10 +204,10 @@ data class GameConfig(
      * Historia nauki slow (klucz sklada Srs.key). Zwykle DANE, wstrzykniete przez wolajacego -
      * silnik nie siega do zapisu i dzieki temu zostaje testowalny bez Androida.
      *
-     * PUSTA MAPA znaczy "gra o rekord": slowa leca losowo, dokladnie jak przed wprowadzeniem
-     * harmonogramu. Mapa niepusta znaczy "runda realizuje plan powtorek". Rozroznienie jest
-     * widoczne dla ucznia (podpis na planszy), bo inaczej dobor slow zmienialby sie sam z
-     * siebie i wygladalby na kaprys losowania.
+     * PUSTA MAPA znaczy "gra o rekord": o kolejnosci slow decyduje tasowanie (worek w
+     * [GameEngine]), a nie harmonogram. Mapa niepusta znaczy "runda realizuje plan powtorek".
+     * Rozroznienie jest widoczne dla ucznia (podpis na planszy), bo inaczej dobor slow
+     * zmienialby sie sam z siebie i wygladalby na kaprys losowania.
      */
     val progress: Map<String, WordProgress> = emptyMap(),
     /**
@@ -164,6 +225,32 @@ data class GameConfig(
      * reszta nowych czeka na kolejna runde (i tak trafi do planu, tylko na jego koniec).
      */
     val newWordsPerRound: Int = 10,
+    /**
+     * RUNDA SPOKOJNA: potworek, ktory doszedl do dziala, nie zabiera zycia i nie konczy rundy.
+     *
+     * Dla rund, w ktorych uczen dopiero poznaje slowa (dzienna sesja, cwiczenie trudnych slow).
+     * Kara za nieznajomosc hasla widzianego pierwszy raz uczy tylko unikania nowych hasel,
+     * a "dziewiec zyc na zapas" i tak konczylo sie ekranem KONIEC GRY. Cala reszta zostaje:
+     * seria sie zeruje, do harmonogramu idzie POKAZANA, slowo trafia na liste
+     * [GameEngine.missedWords], a jego tlumaczenie na plansze ([Reveal]).
+     *
+     * Spokojna znaczy tez: bez pancerzy, bez skrzyn i bez rosnacego tempa. [GameEngine.level]
+     * stoi wtedy na 1 i to z niego wynika cala reszta.
+     */
+    val calm: Boolean = false,
+    /**
+     * RUNDA SKONCZONA: zamyka sie sama, gdy kazde grywalne slowo zestawu dostalo w niej choc
+     * jedna poprawna odpowiedz (patrz [GameEngine.completed]).
+     *
+     * Dzienna sesja i cwiczenie trudnych slow startowaly dotad zwykla runde bez konca: uczen
+     * musial wyjsc z niej sam, nie wiedzac, czy przerobil juz wszystko. W rundzie skonczonej
+     * na plansze wychodza tylko slowa, ktore jeszcze czekaja na odpowiedz; slowo, ktore doszlo
+     * do dziala, czeka dalej i wraca.
+     *
+     * Niezalezna od [calm]: runda skonczona z zyciami dalej potrafi skonczyc sie wczesniej,
+     * ich utrata.
+     */
+    val finite: Boolean = false,
 )
 
 class GameEngine(
@@ -200,6 +287,12 @@ class GameEngine(
         const val LEVEL_BANNER_TIME = 1.6f
         /** Walk cycle: the pack asks for the base frame and `_f2` to alternate ~every 200 ms. */
         const val WALK_FRAME_TIME = 0.2f
+
+        /**
+         * Ile sekund plansza pokazuje poprawna odpowiedz po dojsciu potworka do dziala ([Reveal]).
+         * Trzy sekundy to czas na przeczytanie pary slow bez odrywania sie od nastepnego potworka.
+         */
+        const val REVEAL_TIME = 3.0f
 
         /**
          * Jak blisko hasla musi byc chybiona odpowiedz, zeby uznac ja za pomylke WLASNIE
@@ -241,12 +334,33 @@ class GameEngine(
         private set
     var bestStreak: Int = 0
         private set
+
+    /**
+     * Runda sie skonczyla: silnik nie przyjmuje juz ani czasu, ani odpowiedzi.
+     *
+     * Nazwa zostala z czasow, gdy jedynym koncem byla utrata ostatniego zycia. Runda skonczona
+     * ([GameConfig.finite]) zamyka sie takze sama i wtedy to pole TEZ jest prawda, zeby kazdy
+     * straznik pytajacy o koniec rundy (klawiatura, mikrofon, zapis wyniku) dzialal bez zmian.
+     * DLACZEGO runda sie skonczyla, mowi [completed].
+     */
     var gameOver: Boolean = false
+        private set
+
+    /**
+     * Runda skonczona zamknela sie sama, bo kazde slowo dostalo poprawna odpowiedz. Nigdy bez
+     * [gameOver]; samo [gameOver] znaczy, ze skonczyly sie zycia.
+     */
+    var completed: Boolean = false
         private set
     var elapsed: Float = 0f
         private set
 
-    val level: Int get() = 1 + kills / KILLS_PER_LEVEL
+    /**
+     * Poziom trudnosci. W rundzie spokojnej ([GameConfig.calm]) stoi na 1 przez cala gre.
+     * To jedno miejsce wystarcza, bo wszystko, co ma w niej nie rosnac, liczy sie z poziomu:
+     * predkosc potworkow, odstep fal, pancerze (od 3), skrzynie (od 2) i punkty za trafienie.
+     */
+    val level: Int get() = if (config.calm) 1 else 1 + kills / KILLS_PER_LEVEL
 
     /** Consecutive-kill bonus: x2 from 3 in a row, then x3, x4 and x5. */
     val multiplier: Int
@@ -269,6 +383,8 @@ class GameEngine(
         val direction: Direction,
         val prompt: String,
         val answers: List<String>,
+        /** Druga strona wiersza w pisowni zestawu, patrz [Monster.solution]. */
+        val solution: String,
     )
 
     private val playable: List<Playable> = buildPlayable()
@@ -287,12 +403,25 @@ class GameEngine(
                 else -> config.direction
             }
             val wprzod = kierunek == Direction.TERM_TO_DEF
+            val haslo = (if (wprzod) e.term else e.definition).trim()
+            val rozwiazanie = (if (wprzod) e.definition else e.term).trim()
+            // WSPOLNE HASLO, WSPOLNE ODPOWIEDZI. Napis nad potworkiem nie mowi, z ktorego wiersza
+            // powstal: "reka" to w jednym zestawie i arm, i hand, wiec kazde poprawne tlumaczenie
+            // tego hasla ma trafic, a nie tylko to z wlasnego wiersza. Bierzemy sume po wszystkich
+            // wierszach zestawu o tym samym hasle (ta sama regula co w pozostalych trybach gry),
+            // liczona dla kierunku TEGO wiersza. Proba i tak idzie do wpisu, z ktorego powstal
+            // potworek. Wlasne odpowiedzi stoja pierwsze i sa dodane osobno: haslo z samych znakow
+            // spoza liter i cyfr normalizuje sie do pustego, suma go nie widzi, a wiersz ma zostac
+            // grywalny.
+            val odpowiedzi = LinkedHashSet(Matching.acceptedAnswers(rozwiazanie))
+            odpowiedzi.addAll(Matching.answersForPrompt(set.entries, haslo, wprzod))
             out.add(
                 Playable(
                     entryId = e.id,
                     direction = kierunek,
-                    prompt = (if (wprzod) e.term else e.definition).trim(),
-                    answers = Matching.acceptedAnswers(if (wprzod) e.definition else e.term),
+                    prompt = haslo,
+                    answers = odpowiedzi.toList(),
+                    solution = rozwiazanie,
                 )
             )
         }
@@ -300,6 +429,41 @@ class GameEngine(
     }
 
     val isPlayable: Boolean get() = playable.isNotEmpty()
+
+    /**
+     * Tozsamosc slowa w obrebie rundy: wpis i kierunek, czyli to samo, pod czym harmonogram
+     * trzyma postep. Wpis bez identyfikatora (plansza testowa, zestaw sprzed wersjonowania)
+     * rozpoznajemy po hasle razem z rozwiazaniem. Samo haslo nie wystarcza w zadnym z tych
+     * przypadkow: "uprzejmy" to i kind, i polite, wiec klucz po tekscie hasla zlalby dwa wpisy
+     * w jeden wiersz listy do powtorki i w jedno slowo do zaliczenia.
+     */
+    private fun kluczSlowa(entryId: String, direction: Direction, prompt: String, solution: String): String =
+        if (entryId.isNotBlank()) entryId + '\u001F' + direction.name
+        else '\u0000' + prompt + '\u0000' + solution
+
+    private fun klucz(c: Playable) = kluczSlowa(c.entryId, c.direction, c.prompt, c.solution)
+    private fun klucz(m: Monster) = kluczSlowa(m.entryId, m.direction, m.prompt, m.solution)
+    private fun klucz(c: Crate) = kluczSlowa(c.entryId, c.direction, c.prompt, c.solution)
+
+    // ---- runda skonczona ---------------------------------------------------
+
+    /**
+     * Slowa, ktore w rundzie skonczonej ([GameConfig.finite]) czekaja jeszcze na pierwsza
+     * poprawna odpowiedz, jako klucze z [kluczSlowa]. W kazdej innej rundzie zbior jest pusty.
+     *
+     * Slowo schodzi stad w chwili ODPOWIEDZI, tak samo jak zapis POPRAWNA: o wiedzy rozstrzyga
+     * moment, w ktorym poprawne haslo trafilo na plansze, a nie lot pocisku. Potworek, ktory
+     * doszedl do dziala bez odpowiedzi, niczego stad nie zdejmuje, wiec jego slowo wraca.
+     */
+    private val pending: MutableSet<String> = LinkedHashSet<String>().apply {
+        if (config.finite) playable.forEach { add(klucz(it)) }
+    }
+
+    /** Ile slow ma do zaliczenia runda skonczona; zero w kazdej innej. */
+    val targetsTotal: Int = pending.size
+
+    /** Ile z nich dostalo juz poprawna odpowiedz. */
+    val targetsDone: Int get() = targetsTotal - pending.size
 
     // ---- plan rundy --------------------------------------------------------
 
@@ -340,10 +504,15 @@ class GameEngine(
         // slowa o tej samej pilnosci wychodza za kazdym razem w innej kolejnosci, a kolejnosc
         // miedzy roznymi pilnosciami zostaje nienaruszona.
         for (c in playable.shuffled(random)) {
-            val p = progressOf(c)
             when {
-                p.box == Srs.NO_BOX -> nowe.add(c)
-                Srs.isDue(p, config.today) -> zalegle.add(c)
+                // NOWE jest tylko slowo, o ktorym harmonogram nie wie nic. Pytanie o pudelko
+                // (box == NO_BOX) to za malo: po pomylce na swiezym slowie Srs zostawia je
+                // w pudelku 0, ale z policzona pomylka, dniem pomocy i terminem na dzis. Takie
+                // slowo ma wrocic jako pilna zaleglosc, a liczone jako nowe stawalo w losowym
+                // miejscu puli nowych i potrafilo wypasc poza ich limit, czyli nie wrocic
+                // w tej rundzie wcale. Ta sama regula co w Sesja.zaplanuj.
+                !maHistorie(c) -> nowe.add(c)
+                Srs.isDue(progressOf(c), config.today) -> zalegle.add(c)
                 else -> czekajace.add(c)
             }
         }
@@ -352,6 +521,10 @@ class GameEngine(
             czekajace.sortedBy { progressOf(it).dueDay } +
             nowe.drop(config.newWordsPerRound)
     }
+
+    /** Czy harmonogram ma o tym slowie jakikolwiek zapis. Wpis bez identyfikatora nie ma go nigdy. */
+    private fun maHistorie(cel: Playable): Boolean =
+        cel.entryId.isNotBlank() && config.progress.containsKey(Srs.key(cel.entryId, cel.direction))
 
     /** Stan nauki slowa. Wpis bez identyfikatora (sprzed wersjonowania) liczy sie jak nowy. */
     private fun progressOf(cel: Playable): WordProgress =
@@ -375,27 +548,107 @@ class GameEngine(
      * dwa te same napisy (strzal nie mialby jednoznacznego celu), pula mniejsza od planszy
      * musi dalej wystawiac cele (stad zgoda na powtorzenie, gdy nie ma juz czego wybrac),
      * a przegladanie planu ma STALA dlugosc - zadnego "losuj, dopoki nie trafisz wolnego".
+     *
+     * Runda skonczona ([GameConfig.finite]) zmienia druga z nich: wychodza tylko slowa, ktore
+     * czekaja jeszcze na odpowiedz, a gdy kazde takie stoi juz na planszy, nie wychodzi nic.
+     * Powtorzenie "zeby plansza nie stala pusta" wystawialoby tu slowo juz zaliczone albo
+     * drugi egzemplarz tego, nad ktorym uczen wlasnie mysli, i runda nie mialaby konca.
      */
     private fun nextTarget(): Playable? {
         if (playable.isEmpty()) return null
         val zajete = monsters.map { it.prompt }.toSet() + crates.map { it.prompt }.toSet()
-        val kolejka = plan ?: run {
-            // GRA O REKORD: dobor jednostajny, dokladnie jak przed harmonogramem.
-            val choices = playable.filter { it.prompt !in zajete }.ifEmpty { playable }
-            return choices[random.nextInt(choices.size)]
-        }
+        val kolejka = plan ?: return zWorka(zajete)
         for (k in kolejka.indices) {
             val i = (planIdx + k) % kolejka.size
-            if (kolejka[i].prompt !in zajete) {
+            if (doWystawienia(kolejka[i], zajete)) {
                 planIdx = (i + 1) % kolejka.size
                 return kolejka[i]
             }
         }
+        if (config.finite) return null
         // Cala pula stoi juz na planszy (pula mniejsza niz plansza). Powtarzamy biezace slowo
         // zamiast nie wystawic nic - tak samo, jak robil to dobor losowy.
         val cel = kolejka[planIdx]
         planIdx = (planIdx + 1) % kolejka.size
         return cel
+    }
+
+    /** Czy slowo moze teraz wyjsc: nie stoi na planszy, a w rundzie skonczonej jeszcze czeka. */
+    private fun doWystawienia(cel: Playable, zajete: Set<String>): Boolean =
+        cel.prompt !in zajete && (!config.finite || klucz(cel) in pending)
+
+    // ---- gra o rekord: worek -----------------------------------------------
+
+    /**
+     * Kolejka rundy BEZ planu: przetasowany zestaw, z ktorego slowa wychodza bez zwracania.
+     *
+     * Dobor jednostajny ze zwracaniem potrafil wystawic jedno haslo trzy razy, zanim inne
+     * wyszlo raz. A gra o rekord to pierwsza runda kazdego nowego gracza (nie ma jeszcze
+     * historii, wiec nie ma i planu), czyli ta, w ktorej kazde slowo powinno dostac swoja
+     * szanse. Worek daje kazdemu slowu jedno wyjscie na obieg i tasuje sie na nowo dopiero
+     * po wyczerpaniu: slowa dalej wracaja w trakcie rozgrywki, tylko rowno, po kolei.
+     */
+    private val worek = ArrayList<Playable>()
+
+    /** Haslo wystawione ostatnio w rundzie bez planu. Nowy worek nie moze sie od niego zaczac. */
+    private var ostatnieHaslo: String? = null
+
+    /** Z czego tasuje sie worek: caly zestaw, a w rundzie skonczonej tylko slowa, ktore czekaja. */
+    private fun pulaWorka(): List<Playable> =
+        if (config.finite) playable.filter { klucz(it) in pending } else playable
+
+    private fun zWorka(zajete: Set<String>): Playable? {
+        // W rundzie skonczonej slowo zaliczone juz nie wraca, wiec nie zalega tez w worku.
+        if (config.finite) worek.removeAll { klucz(it) !in pending }
+        // Haslo, ktorego napis stoi na planszy, idzie na KONIEC worka i tam czeka na swoja kolej.
+        // Dotyczy to takze wiersza o tym samym hasle co potworek, ktory wlasnie wyszedl ("reka"
+        // jako arm i jako hand): nie moze stanac obok niego, ale tez nie traci obiegu.
+        val stojace = worek.filter { it.prompt in zajete }
+        if (stojace.isNotEmpty()) {
+            worek.removeAll(stojace)
+            worek.addAll(stojace)
+        }
+        if (worek.isEmpty() || worek[0].prompt in zajete) {
+            // Worek sie WYCZERPAL: jest pusty albo zostaly w nim same hasla stojace na planszy.
+            // W drugim przypadku nie czekamy, az zejda: nowy obieg zaczyna sie od razu, a one
+            // niczego nie traca, bo nowy worek tez je zawiera (na koncu, patrz [nowyWorek]).
+            val pula = pulaWorka()
+            if (pula.all { it.prompt in zajete }) {
+                // Na planszy stoi juz wszystko, co mogloby wyjsc. Runda skonczona wtedy czeka,
+                // a runda bez konca godzi sie na drugi taki sam napis, bo zestaw mniejszy od
+                // planszy musi dalej wystawiac cele.
+                if (config.finite) return null
+                return pula[random.nextInt(pula.size)].also { ostatnieHaslo = it.prompt }
+            }
+            nowyWorek(pula, zajete)
+        }
+        val cel = worek.removeAt(0)
+        ostatnieHaslo = cel.prompt
+        return cel
+    }
+
+    /** Tasuje [pula] w nowy worek. Wolajacy sprawdzil, ze jest w niej haslo spoza planszy. */
+    private fun nowyWorek(pula: List<Playable>, zajete: Set<String>) {
+        // Hasla stojace na planszy ida na koniec nowego worka. Nowy obieg zaczyna sie zwykle
+        // wtedy, gdy ostatnie potworki poprzedniego jeszcze ida; gdyby ich slowa lezaly w losowym
+        // miejscu worka, wracalyby na plansze w chwili, w ktorej uczen dopiero co na nie
+        // odpowiedzial. Tak samo dziala kolejka planu: slowo pominiete czeka tam na nastepny obieg.
+        val (stojace, wolne) = pula.shuffled(random).partition { it.prompt in zajete }
+        val swiezy = wolne.toMutableList()
+        // Nowy worek nie zaczyna sie haslem, ktorym skonczyl sie poprzedni: na styku dwoch
+        // obiegow to samo slowo wyszloby dwa razy pod rzad.
+        if (swiezy[0].prompt == ostatnieHaslo) {
+            val inne = swiezy.indices.filter { swiezy[it].prompt != ostatnieHaslo }
+            if (inne.isNotEmpty()) {
+                val drugie = inne[random.nextInt(inne.size)]
+                val glowa = swiezy[0]
+                swiezy[0] = swiezy[drugie]
+                swiezy[drugie] = glowa
+            }
+        }
+        worek.clear()
+        worek.addAll(swiezy)
+        worek.addAll(stojace)
     }
 
     fun snapshot(): GameSnapshot = GameSnapshot(
@@ -418,6 +671,12 @@ class GameEngine(
         elapsed = elapsed,
         flash = flash,
         levelUpBanner = levelUpTtl,
+        missedWords = missedWords,
+        reveal = reveal,
+        completed = completed,
+        calm = config.calm,
+        targetsDone = targetsDone,
+        targetsTotal = targetsTotal,
     )
 
     // ---- input -------------------------------------------------------------
@@ -489,6 +748,7 @@ class GameEngine(
             // lot pocisku i to, czy potworek dozyje uderzenia, sa sprawa gry - o wiedzy ucznia
             // rozstrzyga sam moment, w ktorym poprawne haslo trafilo na plansze.
             note(target.entryId, target.direction, Outcome.POPRAWNA)
+            pending.remove(klucz(target))
             return SubmitResult.Fired(target.id, heavy)
         }
 
@@ -499,6 +759,7 @@ class GameEngine(
             setFlash(FlashKind.CRATE)
             // Skrzynia to takie samo pytanie jak potworek, tylko nagroda jest inna.
             note(crate.entryId, crate.direction, Outcome.POPRAWNA)
+            pending.remove(klucz(crate))
             return SubmitResult.CrateTaken(crate.amount)
         }
 
@@ -553,13 +814,47 @@ class GameEngine(
         val t = Matching.normalize(typed)
         if (t.isEmpty()) return null
         val plansza = (
-            monsters.map { Playable(it.entryId, it.direction, it.prompt, it.answers) } +
-                crates.map { Playable(it.entryId, it.direction, it.prompt, it.answers) }
+            monsters.map { Playable(it.entryId, it.direction, it.prompt, it.answers, it.solution) } +
+                crates.map { Playable(it.entryId, it.direction, it.prompt, it.answers, it.solution) }
             )
             .filter { it.entryId.isNotBlank() }
             .distinctBy { it.entryId }
         val bliskie = plansza.filter { c -> c.answers.any { VoiceMatch.sim(t, it) >= MISS_SIMILARITY } }
         return bliskie.singleOrNull()
+    }
+
+    // ---- slowa przepuszczone -----------------------------------------------
+
+    // Kolejnosc wstawiania to kolejnosc, w jakiej uczen przepuscil slowa po raz pierwszy;
+    // powtorne przepuszczenie podmienia wartosc pod tym samym kluczem i miejsca nie zmienia.
+    private val missed = LinkedHashMap<String, MissedWord>()
+
+    /**
+     * Slowa, ktore doszly do dziala bez odpowiedzi, od pierwszego przepuszczonego. To samo slowo
+     * przepuszczone ponownie podbija [MissedWord.times], zamiast dopisywac kolejny wiersz.
+     *
+     * Lista jest skladana na nowo tylko przy przepuszczeniu, a nie przy kazdym odczycie: migawka
+     * bierze ja co klatke, a zmienia sie kilka razy na runde.
+     */
+    var missedWords: List<MissedWord> = emptyList()
+        private set
+
+    /** Odpowiedz pokazywana teraz na planszy; nowsza zastepuje starsza. Wychodzi w migawce. */
+    private var reveal: Reveal? = null
+
+    /**
+     * Potworek doszedl do dziala, zanim uczen na niego odpowiedzial: slowo idzie na liste do
+     * powtorki, a jego tlumaczenie na plansze.
+     */
+    private fun przepuszczone(m: Monster) {
+        // Bez rozwiazania nie ma czego pokazac ani powtarzac (plansza testowa z pusta definicja).
+        if (m.solution.isBlank()) return
+        val klucz = klucz(m)
+        val bylo = missed[klucz]
+        missed[klucz] = bylo?.copy(times = bylo.times + 1)
+            ?: MissedWord(m.prompt, m.solution, m.entryId, m.direction, 1)
+        missedWords = missed.values.toList()
+        reveal = Reveal(m.prompt, m.solution, REVEAL_TIME)
     }
 
     // ---- simulation --------------------------------------------------------
@@ -579,12 +874,35 @@ class GameEngine(
         }
         for (c in corpses) c.ttl -= dt
         corpses.removeAll { it.ttl <= 0f }
+        // Odpowiedz gasnie PRZED ruchem potworkow, tak samo jak blysk: napis ustawiony w tej
+        // klatce ma przed soba pelne REVEAL_TIME, a nie czas pomniejszony o klatke.
+        reveal = reveal?.let { r ->
+            val zostalo = r.ttl - dt
+            if (zostalo > 0f) r.copy(ttl = zostalo) else null
+        }
 
         moveProjectiles(dt)
         moveMonsters(dt)
         ageCrates(dt)
         maybeSpawnMonster(dt)
         maybeSpawnCrate(dt)
+        maybeComplete()
+    }
+
+    /**
+     * Runda skonczona zamyka sie, gdy nie czeka juz zadne slowo, a z planszy zeszly potworki
+     * i pociski.
+     *
+     * Na pusta plansze czekamy, bo ostatnia odpowiedz to jeszcze nie koniec: pocisk ma doleciec,
+     * a trafienie, punkty i seria naleza do tej rundy. Zycia maja pierwszenstwo: jesli ostatnie
+     * przepadlo w tej samej klatce, runda konczy sie ich utrata (zostaje samo [gameOver]).
+     * Zestaw bez ani jednego grywalnego slowa niczego nie konczy, bo nic sie w nim nie odbylo.
+     */
+    private fun maybeComplete() {
+        if (!config.finite || gameOver || targetsTotal == 0) return
+        if (pending.isNotEmpty() || monsters.isNotEmpty() || projectiles.isNotEmpty()) return
+        completed = true
+        gameOver = true
     }
 
     private fun moveProjectiles(dt: Float) {
@@ -655,16 +973,26 @@ class GameEngine(
                 // spokojnego sprawdzenia zamiast awansowac z rozpedu.
                 // Gdy pocisk juz leci (incoming > 0), uczen odpowiedzial i ma to zapisane
                 // jako POPRAWNA - druga notatka o tym samym slowie byla by falszem.
-                if (m.incoming == 0) note(m.entryId, m.direction, Outcome.POKAZANA)
+                // Z tego samego powodu takie slowo nie jest ani pozycja na liscie do powtorki,
+                // ani odpowiedzia do pokazania: uczen wlasnie ja napisal.
+                if (m.incoming == 0) {
+                    note(m.entryId, m.direction, Outcome.POKAZANA)
+                    przepuszczone(m)
+                }
                 monsters.remove(m)
                 projectiles.removeAll { it.targetId == m.id }
             }
-            lives -= reached.size
             streak = 0
+            // Blysk zostaje takze w rundzie spokojnej: to jedyny sygnal dla ekranu (dzwiek,
+            // drgniecie planszy), ze potworek doszedl do dziala i ze jest odpowiedz do przeczytania.
             setFlash(FlashKind.LIFE_LOST)
-            if (lives <= 0) {
-                lives = 0
-                gameOver = true
+            // RUNDA SPOKOJNA nie odbiera zyc, wiec nie ma tez jak skonczyc sie przegrana.
+            if (!config.calm) {
+                lives -= reached.size
+                if (lives <= 0) {
+                    lives = 0
+                    gameOver = true
+                }
             }
         }
     }
@@ -720,6 +1048,7 @@ class GameEngine(
                 spawnLevel = level,
                 entryId = cel.entryId,
                 direction = cel.direction,
+                solution = cel.solution,
             )
         )
     }
@@ -744,6 +1073,7 @@ class GameEngine(
                 amount = CRATE_AMOUNT,
                 entryId = cel.entryId,
                 direction = cel.direction,
+                solution = cel.solution,
             )
         )
     }
@@ -780,6 +1110,7 @@ class GameEngine(
             variant = 0,
             entryId = entryId,
             direction = direction,
+            solution = definition.trim(),
         )
         monsters.add(m)
         return m
@@ -799,6 +1130,7 @@ class GameEngine(
             x = 0.3f, y = 0.3f, ttl = CRATE_TTL, amount = amount,
             entryId = entryId,
             direction = direction,
+            solution = definition.trim(),
         )
         crates.add(c)
         return c
