@@ -25,16 +25,70 @@ class BuiltInSetsTest {
         assertTrue("terms longer than two words: $offenders", offenders.isEmpty())
     }
 
+    /**
+     * Budzet WPISYWANIA, nie liczba spacji.
+     *
+     * Do 0.9.12 regula brzmiala "najwyzej dwa slowa" i mierzyla nie to, co trzeba: przepuszczala
+     * "pomieszczenie rekreacyjne" (25 znakow), a odrzucala "kolega ze szkoly" (16). Na klawiaturze
+     * pikselowej liczy sie liczba ZNAKOW do wystukania, a spacja jest jednym z najtanszych.
+     * Skutek uboczny starej reguly byl powazniejszy niz estetyczny: trzy hasla mialy blednie
+     * skrocone tlumaczenia (schoolmate -> "rowiesnik", boarding school -> "internat",
+     * single ticket -> "bilet jednorazowy") wlasnie dlatego, ze poprawne nie miescily sie w dwoch
+     * slowach. Regula wymuszala blad merytoryczny.
+     *
+     * Budzet to 25 znakow — dokladnie tyle, ile miala najdluzsza alternatywa PRZED zmiana, wiec
+     * zadne istniejace haslo nie stalo sie latwiejsze ani trudniejsze do wpisania.
+     */
     @Test
-    fun `every translation alternative is at most two words`() {
+    fun `every translation alternative fits the typing budget`() {
         val offenders = BuiltInSets.all().flatMap { set ->
             set.entries.flatMap { e ->
                 e.definition.split(',')
-                    .filter { wordCount(it) > 2 }
+                    .map { it.trim() }
+                    .filter { it.length > MAX_ANSWER_CHARS }
+                    .map { "${set.title}: '${e.term}' -> '$it' (${it.length} znakow)" }
+            }
+        }
+        assertTrue("translations over $MAX_ANSWER_CHARS chars: $offenders", offenders.isEmpty())
+    }
+
+    /**
+     * Gorna granica na wypadek, gdyby budzet znakow kusil do wpisywania calych zdan: tlumaczenie
+     * ma byc haslem slownikowym, a nie definicja. Cztery slowa mieszcza "bilet w jedna strone"
+     * i nie mieszcza objasnienia.
+     */
+    @Test
+    fun `no translation alternative is a sentence`() {
+        val offenders = BuiltInSets.all().flatMap { set ->
+            set.entries.flatMap { e ->
+                e.definition.split(',')
+                    .filter { wordCount(it) > MAX_ANSWER_WORDS }
                     .map { "${set.title}: '${e.term}' -> '${it.trim()}'" }
             }
         }
-        assertTrue("translations longer than two words: $offenders", offenders.isEmpty())
+        assertTrue("translations over $MAX_ANSWER_WORDS words: $offenders", offenders.isEmpty())
+    }
+
+    /**
+     * Regresja tresci: te trzy hasla mialy tlumaczenia znaczaco wezsze albo wprost inne niz
+     * angielski oryginal. Wracaja tu jako test, bo katalog jest GENEROWANY — bez tego kolejne
+     * przebudowanie pliku cicho przywrociloby stara wersje.
+     */
+    @Test
+    fun `known mistranslations stay corrected`() {
+        val wpisy = BuiltInSets.all().flatMap { it.entries }.associate { it.term to it.definition }
+        assertEquals(
+            "schoolmate to kolega ze szkoly, nie rowiesnik (peer)",
+            "kolega ze szkoły, koleżanka ze szkoły", wpisy["schoolmate"],
+        )
+        assertEquals(
+            "boarding school to szkola, nie sam internat",
+            "szkoła z internatem", wpisy["boarding school"],
+        )
+        assertEquals(
+            "single ticket mowi o kierunku, nie o liczbie przejazdow",
+            "bilet w jedną stronę", wpisy["single ticket"],
+        )
     }
 
     @Test
@@ -119,5 +173,11 @@ class BuiltInSetsTest {
         val total = BuiltInSets.all().sumOf { it.entries.size }
         assertTrue("only $total entries", total >= 2000)
         assertTrue("only ${BuiltInSets.all().size} sets", BuiltInSets.all().size >= 100)
+    }
+
+    private companion object {
+        /** Najdluzsza alternatywa w katalogu przed zmiana reguly — budzet bez regresji. */
+        const val MAX_ANSWER_CHARS = 25
+        const val MAX_ANSWER_WORDS = 4
     }
 }

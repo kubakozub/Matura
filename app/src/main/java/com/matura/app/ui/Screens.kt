@@ -3,11 +3,15 @@ package com.matura.app.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -17,7 +21,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.activity.compose.BackHandler
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -31,8 +38,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.matura.app.BuildConfig
 import com.matura.app.R
 import com.matura.app.model.Achievement
 import com.matura.app.model.Direction
@@ -40,9 +49,11 @@ import com.matura.app.model.Entry
 import com.matura.app.model.Options
 import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
+import com.matura.app.model.GameMode
 import com.matura.app.model.Speed
 import com.matura.app.model.Texture
 import com.matura.app.model.UiLanguage
+import com.matura.app.data.BuiltInSets
 import com.matura.app.model.WordSet
 
 // ---- shared input ----------------------------------------------------------
@@ -97,15 +108,13 @@ fun StartScreen(str: Str, profile: Profile, onPlayAnonymously: (String) -> Unit)
         Column(Modifier.fillMaxWidth()) {
             Text(str.yourName, color = Palette.Muted, fontSize = 12.sp)
             Spacer(Modifier.height(6.dp))
-            FieldInput(name, { name = it }, placeholder = "Gracz", modifier = Modifier.fillMaxWidth())
+            FieldInput(name, { name = it }, placeholder = str.defaultPlayerName, modifier = Modifier.fillMaxWidth())
         }
         Spacer(Modifier.height(20.dp))
 
         PrimaryButton(str.playAnonymously, modifier = Modifier.fillMaxWidth()) {
-            onPlayAnonymously(name.ifBlank { "Gracz" })
+            onPlayAnonymously(name.ifBlank { str.defaultPlayerName })
         }
-        Spacer(Modifier.height(10.dp))
-        MenuButton(str.signIn, enabled = false, trailingIcon = pixel(R.drawable.lock), trailing = str.soon) {}
         Spacer(Modifier.height(16.dp))
         InfoCard(str.offlineNote)
     }
@@ -117,6 +126,8 @@ fun StartScreen(str: Str, profile: Profile, onPlayAnonymously: (String) -> Unit)
 fun MenuScreen(
     str: Str,
     profile: Profile,
+    onDaily: () -> Unit,
+    onHardWords: () -> Unit,
     onPlay: () -> Unit,
     onSets: () -> Unit,
     onOptions: () -> Unit,
@@ -124,10 +135,14 @@ fun MenuScreen(
     onScores: () -> Unit,
     onExit: () -> Unit,
 ) {
+    // Menu bylo JEDYNYM ekranem listowym bez przewijania. Szesc przyciskow miescilo sie
+    // na typowym telefonie, ale osiem przy powiekszonej czcionce systemowej albo na niskim
+    // ekranie zostaje po prostu UCIETE — bez paska, bez sygnalu, ze cos jest nizej.
     Column(
         Modifier
             .fillMaxSize()
             .background(Palette.Background)
+            .verticalScroll(rememberScrollState())
             .padding(18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -138,6 +153,16 @@ fun MenuScreen(
         Spacer(Modifier.height(22.dp))
 
         // Icons follow the asset pack's own menu mapping.
+        // Nauka idzie PRZED gra o rekord: to sa wejscia "jednym dotknieciem do nauki",
+        // a uczen, ktory ma dzis zaplanowane powtorki, ma je zobaczyc od razu.
+        MenuButton(
+            str.dailyMenu, subtitle = str.dailyMenuDesc,
+            icon = pixel(R.drawable.icon_target), onClick = onDaily,
+        )
+        MenuButton(
+            str.hardWordsMenu, subtitle = str.hardWordsMenuDesc,
+            icon = pixel(R.drawable.medal_gold), onClick = onHardWords,
+        )
         MenuButton(str.play, icon = pixel(R.drawable.icon_target), onClick = onPlay)
         MenuButton(str.sets, icon = pixel(R.drawable.mode_classic), onClick = onSets)
         MenuButton(str.options, icon = pixel(R.drawable.icon_settings), onClick = onOptions)
@@ -149,6 +174,36 @@ fun MenuScreen(
 
 // ---- set picking -----------------------------------------------------------
 
+/**
+ * Ikona dzialu. Nazwy dzialow pochodza z tytulow zestawow (zakres tematyczny CKE),
+ * a ikony z projektu Claude Design - dlatego mapowanie jest jawne, a nie po slugu:
+ * "Miejsce zamieszkania" ma ikone domu, a nie "miejsca".
+ */
+@DrawableRes
+private fun topicIcon(category: String): Int = when (category) {
+    "Człowiek" -> R.drawable.topic_czlowiek
+    "Miejsce zamieszkania" -> R.drawable.topic_dom
+    "Edukacja" -> R.drawable.topic_edukacja
+    "Praca" -> R.drawable.topic_praca
+    "Życie prywatne" -> R.drawable.topic_zycie
+    "Żywienie" -> R.drawable.topic_zywienie
+    "Zakupy" -> R.drawable.topic_zakupy
+    "Podróże" -> R.drawable.topic_podroze
+    "Kultura" -> R.drawable.topic_kultura
+    "Sport" -> R.drawable.topic_sport
+    "Zdrowie" -> R.drawable.topic_zdrowie
+    "Nauka i technika" -> R.drawable.topic_nauka
+    "Przyroda" -> R.drawable.topic_przyroda
+    "Życie społeczne" -> R.drawable.topic_spoleczne
+    else -> R.drawable.icon_star          // zestawy wlasne
+}
+
+/**
+ * Wybor zestawu jest dwupoziomowy: najpierw temat (jak dzialy w repetytorium),
+ * dopiero w nim zestawy. Przy 102 zestawach plaska lista byla nie do przejrzenia.
+ * Poziom trzymamy w stanie ekranu, a nie na stosie nawigacji - dzieki temu
+ * systemowe "wstecz" zamyka najpierw folder, i dopiero potem caly ekran.
+ */
 @Composable
 fun SetPickScreen(
     str: Str,
@@ -156,21 +211,57 @@ fun SetPickScreen(
     onBack: () -> Unit,
     onPick: (WordSet) -> Unit,
 ) {
-    ScreenScaffold(str.chooseSet, onBack, str.back) {
-        val usable = sets.playable()
+    val usable = sets.playable()
+    var folder by remember { mutableStateOf<String?>(null) }
+    val groups = remember(usable, str.ownSets) {
+        usable.groupBy { it.category ?: str.ownSets }
+            .toList()
+            .sortedBy { (name, _) -> if (name == str.ownSets) 1 else 0 }   // wlasne na koncu
+    }
+    val open = folder?.let { name -> groups.firstOrNull { it.first == name }?.second }
+
+    BackHandler(enabled = folder != null) { folder = null }
+
+    ScreenScaffold(
+        title = folder ?: str.chooseTopic,
+        onBack = { if (folder != null) folder = null else onBack() },
+        backLabel = str.back,
+    ) {
         val star = pixel(R.drawable.icon_star)
         LazyColumn(Modifier.fillMaxSize()) {
-            items(usable, key = { it.id }) { set ->
-                MenuButton(
-                    label = set.title,
-                    subtitle = "${set.entries.size} ${str.entriesLabel} · ${set.termLanguage} > ${set.definitionLanguage}",
-                    icon = star,
-                    trailing = if (set.builtIn) str.builtIn else null,
-                    onClick = { onPick(set) },
-                )
-            }
             if (usable.isEmpty()) {
                 item { InfoCard(str.needTwoEntries) }
+            } else if (open == null) {
+                // Losowanie stoi PONAD folderami, bo nie nalezy do zadnego dzialu -
+                // to powtorka przekrojowa, najblizsza temu, co jest na maturze.
+                item {
+                    MenuButton(
+                        label = str.randomMix,
+                        subtitle = str.randomMixDesc,
+                        icon = star,
+                        onClick = { onPick(BuiltInSets.randomMix()) },
+                    )
+                }
+                // Numeracja jak w repetytorium: zakres tematyczny CKE ma ustalona
+                // kolejnosc, wiec numer niesie informacje. Wlasne zestawy go nie maja.
+                itemsIndexed(groups, key = { _, it -> it.first }) { i, (name, list) ->
+                    MenuButton(
+                        label = if (name == str.ownSets) name else "${i + 1}. $name",
+                        subtitle = "${str.setsCount(list.size)} · ${str.entriesCount(list.sumOf { it.entries.size })}",
+                        icon = pixel(topicIcon(name)),
+                        onClick = { folder = name },
+                    )
+                }
+            } else {
+                items(open, key = { it.id }) { set ->
+                    MenuButton(
+                        label = set.shortTitle,
+                        subtitle = "${str.entriesCount(set.entries.size)} · ${set.termLanguage} → ${set.definitionLanguage}",
+                        icon = star,
+                        trailing = if (set.builtIn) str.builtIn else null,
+                        onClick = { onPick(set) },
+                    )
+                }
             }
             item { Spacer(Modifier.height(20.dp)) }
         }
@@ -182,26 +273,22 @@ fun ModePickScreen(
     str: Str,
     set: WordSet?,
     onBack: () -> Unit,
-    onClassic: () -> Unit,
+    onPickMode: (GameMode) -> Unit,
 ) {
     ScreenScaffold(str.chooseMode, onBack, str.back) {
-        val lock = pixel(R.drawable.lock)
         Column(Modifier.fillMaxSize()) {
             if (set != null) {
                 PixelText(set.title, color = Palette.Bone, glyphHeight = 11.dp, maxWidthDp = 300.dp)
                 Spacer(Modifier.height(12.dp))
             }
-            MenuButton(
-                str.classic,
-                subtitle = str.classicDesc,
-                icon = pixel(R.drawable.mode_classic),
-                onClick = onClassic,
-            )
-            MenuButton("TRUE / FALSE", enabled = false, icon = pixel(R.drawable.mode_truefalse), trailingIcon = lock) {}
-            MenuButton("MULTIPLE CHOICE", enabled = false, icon = pixel(R.drawable.mode_multiple), trailingIcon = lock) {}
-            MenuButton("TIME ATTACK", enabled = false, icon = pixel(R.drawable.mode_timeattack), trailingIcon = lock) {}
-            Spacer(Modifier.height(12.dp))
-            InfoCard(str.modeLockedNote)
+            MenuButton(str.modeClassic, subtitle = str.classicDesc,
+                icon = pixel(R.drawable.mode_classic)) { onPickMode(GameMode.CLASSIC) }
+            MenuButton(str.modeTrueFalse, subtitle = str.modeTrueFalseDesc,
+                icon = pixel(R.drawable.mode_truefalse)) { onPickMode(GameMode.TRUE_FALSE) }
+            MenuButton(str.modeMultiple, subtitle = str.modeMultipleDesc,
+                icon = pixel(R.drawable.mode_multiple)) { onPickMode(GameMode.MULTIPLE_CHOICE) }
+            MenuButton(str.modeTimeAttack, subtitle = str.modeTimeAttackDesc,
+                icon = pixel(R.drawable.mode_timeattack)) { onPickMode(GameMode.TIME_ATTACK) }
         }
     }
 }
@@ -264,7 +351,7 @@ fun SetsScreen(
                             }
                             Spacer(Modifier.height(5.dp))
                             Text(
-                                "${set.entries.size} ${str.entriesLabel} · ${set.timesPlayed} ${str.playedLabel} · ${set.termLanguage} > ${set.definitionLanguage}",
+                                "${str.entriesCount(set.entries.size)} · ${str.playsCount(set.timesPlayed)} · ${set.termLanguage} → ${set.definitionLanguage}",
                                 color = Palette.Muted,
                                 fontSize = 11.sp,
                             )
@@ -369,7 +456,9 @@ fun SetEditorScreen(
                             }
                             .padding(horizontal = 9.dp, vertical = 9.dp)
                     ) {
-                        PixelText("<>", color = Palette.Bone, glyphHeight = 11.dp)
+                        // Zwykla czcionka: bitmapowa nie ma "<" ani ">" (podstawia "/"), wiec przycisk
+                        // zamiany stron czytal sie jako "//".
+                        Text("⇄", color = Palette.Bone, fontSize = 20.sp)
                     }
                     Column(Modifier.weight(1f)) {
                         PixelText(str.definitions, color = Palette.Accent, glyphHeight = 9.dp)
@@ -429,7 +518,7 @@ fun SetEditorScreen(
                         onSave(
                             WordSet(
                                 id = existing?.id ?: "user-${System.currentTimeMillis()}",
-                                title = title.ifBlank { "Bez tytułu" },
+                                title = title.ifBlank { str.untitledSet },
                                 termLanguage = termLang.ifBlank { "?" },
                                 definitionLanguage = defLang.ifBlank { "?" },
                                 entries = entries,
@@ -450,6 +539,9 @@ fun SetEditorScreen(
 
 @Composable
 fun OptionsScreen(
+    onPrivacy: () -> Unit = {},
+    onVoiceTest: () -> Unit = {},
+    onRawMic: () -> Unit = {},
     str: Str,
     options: Options,
     onBack: () -> Unit,
@@ -464,6 +556,9 @@ fun OptionsScreen(
                 ) {
                     Toggle(options.soundEnabled) { onChange(options.copy(soundEnabled = it)) }
                 }
+                OptionRow(str.systemKeyboard, icon = R.drawable.icon_settings) {
+                    Toggle(options.systemKeyboard) { onChange(options.copy(systemKeyboard = it)) }
+                }
                 OptionRow(str.lives, icon = R.drawable.heart) {
                     Stepper(options.lives, 1, 9) { onChange(options.copy(lives = it)) }
                 }
@@ -472,9 +567,9 @@ fun OptionsScreen(
                         Texture.entries.forEach { t ->
                             ChoiceChip(
                                 label = when (t) {
-                                    Texture.CLASSIC -> "GRASS"
-                                    Texture.NIGHT -> "NIGHT"
-                                    Texture.DESERT -> "SAND"
+                                    Texture.CLASSIC -> str.textureGrass
+                                    Texture.NIGHT -> str.textureNight
+                                    Texture.DESERT -> str.textureSand
                                 },
                                 selected = options.texture == t,
                             ) { onChange(options.copy(texture = t)) }
@@ -482,7 +577,7 @@ fun OptionsScreen(
                         }
                     }
                 }
-                OptionRow(str.speed, icon = R.drawable.icon_clock) {
+                OptionRow(str.speed, icon = R.drawable.icon_speed) {
                     Row {
                         Speed.entries.forEach { s ->
                             ChoiceChip(
@@ -522,6 +617,36 @@ fun OptionsScreen(
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+                OptionRow(str.privacy, icon = R.drawable.icon_settings) {
+                    GhostButton(str.privacyShow) { onPrivacy() }
+                }
+                // Test mowy stoi obok prywatnosci, a nie przy dzwieku: to nie jest ustawienie
+                // gry, tylko narzedzie do jednego pytania — czemu mikrofon milczy na tym telefonie.
+                // EKRANY DIAGNOSTYCZNE TYLKO W BUILDZIE DEBUG.
+                //
+                // Oba powstaly po to, zeby rozstrzygnac awarie mikrofonu na telefonie, ktorego
+                // nie mamy w reku, i do tego sluza dalej — ale ich jezyk jest jezykiem raportu
+                // (nazwy pakietow uslug, kody bledow SpeechRecognizer, dBFS, liczby probek),
+                // a nie jezykiem ucznia przygotowujacego sie do matury. W wersji ze sklepu
+                // OPCJE maja zawierac wylacznie to, czym uczen steruje.
+                //
+                // Kod ekranow zostaje w aplikacji i jest kompilowany w obu wariantach — znika
+                // sama DROGA do nich. Dzieki temu nastepne zgloszenie o mikrofonie zalatwia
+                // wyslanie buildu debug, a nie odtwarzanie skasowanych narzedzi.
+                if (BuildConfig.DEBUG) {
+                    OptionRow(str.voiceTest, icon = R.drawable.icon_target) {
+                        GhostButton(str.voiceTestOpen) { onVoiceTest() }
+                    }
+
+                    // Test surowego mikrofonu stoi TUZ POD testem mowy, bo odpowiada na pytanie,
+                    // ktore tamten zadaje dopiero wtedy, gdy zadna konfiguracja nic nie rozpoznala:
+                    // czy do aplikacji w ogole wchodzi dzwiek. Bez tej odpowiedzi raport z testu mowy
+                    // nie odroznia zepsutego silnika od mikrofonu oddajacego same zera.
+                    OptionRow(str.rawMic, icon = R.drawable.icon_target) {
+                        GhostButton(str.rawMicOpen) { onRawMic() }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
                 InfoCard(str.speedNote)
                 Spacer(Modifier.height(10.dp))
                 InfoCard(str.soundNote)
@@ -549,14 +674,25 @@ private fun OptionRow(label: String, icon: Int, control: @Composable () -> Unit)
     }
 }
 
+/**
+ * Najmniejszy cel dotyku w OPCJACH.
+ *
+ * 48 dp to prog z wytycznych dostepnosci (Material, WCAG 2.5.5). Audyt przed wydaniem
+ * 0.9.18 zmierzyl w OPCJACH 19 celow klikalnych i ZERO spelniajacych prog — najmniejszy
+ * mial 31 x 28 dp, czyli polowe opuszka palca, przy 5 dp odstepu od sasiada.
+ */
+private val MIN_CEL_DOTYKU = 48.dp
+
 @Composable
 private fun Toggle(on: Boolean, onChange: (Boolean) -> Unit) {
     Box(
         Modifier
+            .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
             .background(if (on) Palette.Accent else Palette.Surface)
             .border(2.dp, Palette.Ink)
             .clickable { onChange(!on) }
-            .padding(horizontal = 16.dp, vertical = 7.dp)
+            .padding(horizontal = 16.dp, vertical = 7.dp),
+        contentAlignment = Alignment.Center,
     ) {
         PixelText(if (on) "ON" else "OFF", color = if (on) Palette.Ink else Palette.Muted, outline = null, glyphHeight = 9.dp)
     }
@@ -575,10 +711,12 @@ private fun Stepper(value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
 private fun StepButton(label: String, onClick: () -> Unit) {
     Box(
         Modifier
+            .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
             .background(Palette.Surface)
             .border(2.dp, Palette.SurfaceHigh)
             .clickable { onClick() }
-            .padding(horizontal = 12.dp, vertical = 5.dp)
+            .padding(horizontal = 12.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
     ) {
         PixelText(label, color = Palette.Bone, glyphHeight = 13.dp)
     }
@@ -588,10 +726,12 @@ private fun StepButton(label: String, onClick: () -> Unit) {
 private fun ChoiceChip(label: String, selected: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
+            .defaultMinSize(minWidth = MIN_CEL_DOTYKU, minHeight = MIN_CEL_DOTYKU)
             .background(if (selected) Palette.Accent else Palette.Surface)
             .border(2.dp, if (selected) Palette.Ink else Palette.SurfaceHigh)
             .clickable { onClick() }
-            .padding(horizontal = 9.dp, vertical = 6.dp)
+            .padding(horizontal = 9.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
     ) {
         PixelText(label, color = if (selected) Palette.Ink else Palette.Muted, outline = null, glyphHeight = 8.dp)
     }
@@ -603,6 +743,10 @@ private fun DirectionRow(label: String, selected: Boolean, onClick: () -> Unit) 
         Modifier
             .fillMaxWidth()
             .padding(vertical = 3.dp)
+            // Prog liczy sie dla PROSTOKATA KLIKALNEGO, wiec minimum musi stac PO odsunieciu
+            // od sasiada: przed nim 3 dp marginesu wchodzilo w te 48 dp i klikalny wiersz
+            // mial tylko 42 dp (zmierzone audytem).
+            .defaultMinSize(minHeight = MIN_CEL_DOTYKU)
             .background(if (selected) Palette.Surface else Color.Transparent)
             .border(2.dp, if (selected) Palette.SurfaceHigh else Color.Transparent)
             .clickable { onClick() }
@@ -684,6 +828,8 @@ fun AchievementsScreen(str: Str, profile: Profile, onBack: () -> Unit) {
 
 @Composable
 fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
+    // Leaderboard lokalny — bez kont i logowania. Filtr po trybie gry.
+    var filter by remember { mutableStateOf<GameMode?>(null) }
     ScreenScaffold(str.scores, onBack, str.back) {
         val topSet = data.sets.maxByOrNull { it.timesPlayed }
         val medals = listOf(
@@ -691,6 +837,17 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
             pixel(R.drawable.medal_silver),
             pixel(R.drawable.medal_bronze),
         )
+        fun modeLabel(m: GameMode) = when (m) {
+            GameMode.CLASSIC -> str.modeClassic
+            GameMode.TRUE_FALSE -> str.modeTrueFalse
+            GameMode.MULTIPLE_CHOICE -> str.modeMultiple
+            GameMode.TIME_ATTACK -> str.modeTimeAttack
+        }
+        val visible = data.scores
+            .filter { filter == null || it.mode == filter }
+            .sortedByDescending { it.score }
+            .take(25)
+
         LazyColumn(Modifier.fillMaxSize()) {
             item {
                 Box(
@@ -707,17 +864,32 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                             str.topSet,
                             if (topSet != null && topSet.timesPlayed > 0) topSet.title else "-",
                             pixel(R.drawable.icon_trophy),
+                            stacked = true,
                         )
                     }
                 }
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ChoiceChip(str.filterAll, filter == null) { filter = null }
+                    Spacer(Modifier.width(5.dp))
+                    GameMode.entries.forEach { m ->
+                        ChoiceChip(modeLabel(m), filter == m) { filter = m }
+                        Spacer(Modifier.width(5.dp))
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
                 PixelText(str.bestRuns, color = Palette.Accent, glyphHeight = 10.dp)
                 Spacer(Modifier.height(7.dp))
             }
-            if (data.scores.isEmpty()) {
+            if (visible.isEmpty()) {
                 item { InfoCard(str.noScores) }
             }
-            itemsIndexed(data.scores.sortedByDescending { it.score }) { i, s ->
+            itemsIndexed(visible) { i, s ->
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -734,17 +906,55 @@ fun ScoresScreen(str: Str, data: SaveData, onBack: () -> Unit) {
                     }
                     Spacer(Modifier.width(10.dp))
                     Column(Modifier.weight(1f)) {
-                        Text(s.setTitle, color = Palette.Bone, fontSize = 13.sp)
+                        Text(s.setTitle, color = Palette.Bone, fontSize = 13.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
-                            "LVL ${s.level} · ${str.killsLabel} ${s.kills} · x${s.bestStreak}",
-                            color = Palette.Muted,
-                            fontSize = 10.sp,
+                            "${modeLabel(s.mode)} · LVL ${s.level} · ${str.killsLabel} ${s.kills} · x${s.bestStreak}",
+                            color = Palette.Muted, fontSize = 10.sp,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
                         )
                     }
+                    Spacer(Modifier.width(8.dp))
                     PixelText("${s.score}", color = Palette.Gold, glyphHeight = 13.dp)
                 }
             }
             item { Spacer(Modifier.height(24.dp)) }
+        }
+    }
+}
+
+/**
+ * Polityka prywatnosci w aplikacji. Google Play wymaga jej obecnosci takze POZA Konsola
+ * ("a privacy policy link or text within the app itself"), a bez uprawnienia INTERNET
+ * jedyna pewna droga jest tekst lokalny; przycisk otwiera pelna wersje w przegladarce
+ * (robi to system, wiec brak uprawnienia do sieci nie przeszkadza).
+ */
+@Composable
+fun PrivacyScreen(str: Str, onBack: () -> Unit) {
+    val context = LocalContext.current
+    ScreenScaffold(str.privacy, onBack, str.back) {
+        LazyColumn(Modifier.fillMaxSize()) {
+            item {
+                Text(
+                    str.privacyBody,
+                    color = Palette.Bone,
+                    fontSize = 13.sp,
+                    lineHeight = 19.sp,
+                    modifier = Modifier.padding(vertical = 10.dp),
+                )
+                Spacer(Modifier.height(14.dp))
+                GhostButton(str.privacyOpen) {
+                    runCatching {
+                        context.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse("https://matura.uk/polityka-prywatnosci"),
+                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    }
+                }
+                Spacer(Modifier.height(30.dp))
+            }
         }
     }
 }
