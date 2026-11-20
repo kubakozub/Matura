@@ -5,11 +5,16 @@ import com.matura.app.data.Repository
 import com.matura.app.game.Matching
 import com.matura.app.learn.Attempt
 import com.matura.app.learn.EntryId
+import com.matura.app.learn.Nagrody
 import com.matura.app.learn.Outcome
 import com.matura.app.learn.Srs
+import com.matura.app.model.Achievement
 import com.matura.app.model.Direction
+import com.matura.app.model.Dorobek
 import com.matura.app.model.Entry
+import com.matura.app.model.Profile
 import com.matura.app.model.SaveData
+import com.matura.app.model.ScoreRecord
 import com.matura.app.model.TaskKind
 import com.matura.app.model.Texture
 import com.matura.app.model.UiLanguage
@@ -277,7 +282,12 @@ class MigracjaTest {
         assertEquals(19_900, przeniesiony.dueDay)
         assertEquals(3, przeniesiony.mistakes)
         // Starego klucza nie kasujemy - mapy postepu nie sprzatamy nigdy (patrz SaveData).
-        assertEquals(WordProgress(box = 2, dueDay = 19_900, mistakes = 3), po.progress[klucz])
+        // Od schematu 4 kazdy wpis postepu, takze ten pod starym kluczem, ma szczyt rowny
+        // co najmniej pudelku, wiec stan wraca z jednym polem wiecej niz wszedl.
+        assertEquals(
+            WordProgress(box = 2, dueDay = 19_900, mistakes = 3, szczyt = 2),
+            po.progress[klucz],
+        )
     }
 
     @Test
@@ -486,5 +496,203 @@ class MigracjaTest {
         assertEquals(pies, po[0].id)
         assertNotEquals(pies, po[1].id)
         assertTrue(EntryId.isUser(po[1].id))
+    }
+
+    // --- krok 3 -> 4: szczyty pudelek i ksiega dorobku ----------------------------------------
+
+    @Test
+    fun `zapis ze sklepu dochodzi do schematu 4 z pusta ksiega i odznakami, ktore uczen juz ma`() {
+        zapiszStary()
+
+        val dane = Repository(katalog.root).load()
+
+        assertEquals(4, Repository.SCHEMA_VERSION)
+        assertEquals(4, dane.schemaVersion)
+        // Punkty za gry nie mowia nic o nauce: ksiega startuje od zera, tak samo jak postep.
+        val ksiega = dane.dorobek
+        assertEquals(0, ksiega.xp)
+        assertEquals("poza odznakami ksiega ma byc nietknieta", Dorobek(odznaki = ksiega.odznaki), ksiega)
+        // Profil z fikstury: 12 gier, 140 pokonanych, najlepszy wynik 1500, seria 9. Dzien zero
+        // znaczy "sprzed ksiegi": te odznaki uczen ma od dawna i nikt nie zapisal, od kiedy.
+        assertEquals(
+            mapOf(
+                "FIRST_BLOOD" to 0,
+                "ROOKIE" to 0,
+                "SHARPSHOOTER" to 0,
+                "COMBO_X3" to 0,
+                "COMBO_X5" to 0,
+                "SCORE_500" to 0,
+            ),
+            ksiega.odznaki,
+        )
+        // Czyli dokladnie to, co ekran OSIAGNIECIA pokazuje temu uczniowi jako zdobyte.
+        assertEquals(
+            Achievement.entries.filter { it.unlockedBy(dane.profile) }.map { it.name }.toSet(),
+            ksiega.odznaki.keys,
+        )
+    }
+
+    @Test
+    fun `nowe ustawienia dostaja wartosci domyslne w starym zapisie`() {
+        // celDnia, maturaDzien i odliczanie weszly razem z ksiega; w pliku ze sklepu ich nie ma.
+        zapiszStary()
+
+        val opcje = Repository(katalog.root).load().options
+
+        assertEquals(5, opcje.celDnia)
+        assertEquals(20944, opcje.maturaDzien)
+        assertTrue(opcje.odliczanie)
+        // A to, co uczen ustawil sam, zostaje.
+        assertEquals(5, opcje.lives)
+        assertEquals(Texture.NIGHT, opcje.texture)
+    }
+
+    @Test
+    fun `pierwsza gra po aktualizacji nie oglasza odznak, ktore uczen ma od miesiecy`() {
+        // Po to jest ciche przyznanie w migracji: bez niego ekran wyniku pierwszej rundy
+        // witalby ucznia szescioma "nowymi" odznakami za rzeczy zrobione dawno temu.
+        zapiszStary()
+        val repo = Repository(katalog.root)
+        val przed = repo.load()
+        val wynik = ScoreRecord("Stary", "Moje słówka", 100, 1, 2, 5, 1_800_000_000_000L)
+
+        assertTrue(repo.recordGame(wynik, "user-1", 19_875L * Srs.MS_PER_DAY))
+        val po = Repository(katalog.root).load()
+
+        assertTrue(Nagrody.roznica(przed, po, emptyList(), wynik, 19_875).odznaki.isEmpty())
+        assertEquals(przed.dorobek, po.dorobek)
+        assertEquals(13, po.profile.gamesPlayed)
+    }
+
+    /** Zapis ze schematu 3 z postepem w kazdym pudelku; komentarze podaja punkty na start. */
+    private fun zapisZPostepem(): SaveData {
+        val pierwszyZestaw = BuiltInSets.all().first().entries.map { it.id }
+        // Slowo, ktore lezy w wiecej niz jednym zestawie katalogu (wspolny identyfikator).
+        val wspolne = BuiltInSets.all()
+            .flatMap { set -> set.entries.map { it.id }.distinct() }
+            .groupingBy { it }.eachCount()
+            .entries.first { it.value > 1 && it.key !in pierwszyZestaw }.key
+        val wlasny = Entry("dog", "pies", "u0123456789ab")
+        fun klucz(id: String, kierunek: Direction = Direction.TERM_TO_DEF) = Srs.key(id, kierunek)
+        return SaveData(
+            schemaVersion = 3,
+            profile = Profile(name = "Ala"),
+            sets = BuiltInSets.all() + WordSet(id = "user-1", title = "Moje słówka", entries = listOf(wlasny)),
+            progress = mapOf(
+                klucz(pierwszyZestaw[0]) to WordProgress(box = 3, dueDay = 19_900),                 // 40
+                klucz(pierwszyZestaw[0], Direction.DEF_TO_TERM) to
+                    WordProgress(box = 1, dueDay = 19_880, lastTask = TaskKind.PRZYPOMNIENIE),      // 10
+                klucz(pierwszyZestaw[1]) to WordProgress(box = 2, dueDay = 19_890, mistakes = 2),   // 20
+                klucz(pierwszyZestaw[2]) to
+                    WordProgress(box = 1, dueDay = 19_880, lastTask = TaskKind.ROZPOZNANIE),        // 2
+                klucz(pierwszyZestaw[3]) to WordProgress(box = 0, dueDay = 19_875, mistakes = 1),   // 0
+                klucz(pierwszyZestaw[4]) to WordProgress(box = 1, dueDay = 19_880),                 // 10
+                klucz(wspolne) to WordProgress(box = 2, dueDay = 19_890),                           // 20, raz
+                klucz(wlasny.id) to WordProgress(box = 3, dueDay = 19_900),                         // 40
+                // Slowo spoza biezacych zestawow: postep zostaje w mapie, ale nie w ksiedze.
+                klucz("wdeadbeef0000") to WordProgress(box = 3, dueDay = 19_900),                   // 0
+            ),
+        )
+    }
+
+    @Test
+    fun `zapis ze schematu 3 dostaje szczyty i punkty dokladnie za pudelka, do ktorych uczen doszedl`() {
+        val dane = zapisZPostepem()
+        assertTrue(Repository(katalog.root).save(dane))
+
+        val po = Repository(katalog.root).load()
+
+        assertEquals(4, po.schemaVersion)
+        assertEquals(40 + 10 + 20 + 2 + 0 + 10 + 20 + 40, po.dorobek.xp)
+        // Dni nauki, seria i powtorki zaczynaja od zera: tego stary zapis nie notowal.
+        // Piec poznanych slow ze slownika gry to odznaka, ktora uczen ma juz dzis: wchodzi po
+        // cichu, z dniem zero. Wlasne slowo i slowo spoza zestawow do niej nie doliczaja.
+        assertEquals(Dorobek(xp = 142, odznaki = mapOf("SLOWA_5" to 0)), po.dorobek)
+
+        // Kazdy wpis postepu ma szczyt rowny pudelku, takze ten spoza zestawow; reszta bez zmian.
+        assertEquals(dane.progress.keys, po.progress.keys)
+        for ((klucz, stan) in dane.progress) {
+            assertEquals(stan.copy(szczyt = stan.box), po.progress[klucz])
+        }
+    }
+
+    @Test
+    fun `drugie wczytanie zapisu ze schematu 3 daje identyczna ksiege`() {
+        val dane = zapisZPostepem()
+        assertTrue(Repository(katalog.root).save(dane))
+
+        val pierwsze = Repository(katalog.root).load()
+        val drugie = Repository(katalog.root).load()
+
+        // load() nie pisze po dysku, wiec krok biegnie od nowa przy kazdym starcie.
+        assertEquals(pierwsze, drugie)
+        val repo = Repository(katalog.root)
+        assertEquals(pierwsze, repo.migrate(dane))
+        assertEquals(pierwsze, repo.migrate(pierwsze))
+
+        // Po pierwszym zapisie plik ma schemat 4 i ksiege: kolejny start niczego nie dolicza.
+        assertTrue(repo.save(pierwsze))
+        assertEquals(pierwsze, Repository(katalog.root).load())
+        assertEquals(142, Repository(katalog.root).load().dorobek.xp)
+    }
+
+    @Test
+    fun `ksiega, ktora ma juz punkty, nie jest zakladana drugi raz`() {
+        // Plik ze schematem ponizej 4, ale z ksiega: wyliczenie z pudelek nadpisaloby punkty
+        // zarobione nauka, a odznaki czekajace na prawdziwy dzien dostalyby stempel zero.
+        val slowo = BuiltInSets.all().first().entries.first()
+        val klucz = Srs.key(slowo.id, Direction.TERM_TO_DEF)
+        val ksiega = Dorobek(
+            xp = 7,
+            dzien = 19_870,
+            slowaDzis = 1,
+            xpDzis = 5,
+            seria = 2,
+            seriaDzien = 19_870,
+            rekordSerii = 4,
+            dniNauki = 9,
+            powtorki = 3,
+            odznaki = mapOf("DNI_1" to 19_800),
+        )
+        val dane = SaveData(
+            schemaVersion = 3,
+            // Profil spelnia wszystkie osiem dawnych osiagniec, a pudelko 3 daloby 40 punktow.
+            profile = Profile(gamesPlayed = 30, totalKills = 500, bestScore = 2500, bestStreak = 10),
+            sets = BuiltInSets.all(),
+            progress = mapOf(klucz to WordProgress(box = 3, dueDay = 19_900)),
+            dorobek = ksiega,
+        )
+        assertTrue(Repository(katalog.root).save(dane))
+
+        val po = Repository(katalog.root).load()
+
+        assertEquals(4, po.schemaVersion)
+        assertEquals(ksiega, po.dorobek)
+        // Szczyt jest wyrownywany zawsze: to nie ksiega, tylko stan slowa.
+        assertEquals(3, po.progress.getValue(klucz).szczyt)
+    }
+
+    @Test
+    fun `slowo przeprowadzone pod katalogowy identyfikator wchodzi do ksiegi raz`() {
+        // Po korekcie katalogu ten sam postep lezy pod starym i pod nowym kluczem (mapy nie
+        // sprzatamy). Ksiega liczona po mapie dalaby za jedno slowo podwojne punkty.
+        val zKatalogu = BuiltInSets.all().first { it.id == ZESTAW_Z_LITEROWKA }
+        val stareV026 = zKatalogu.copy(
+            entries = listOf(Entry("accomodation", "zakwaterowanie", ID_SPRZED_ALIASU)) +
+                zKatalogu.entries.drop(1),
+        )
+        val dane = SaveData(
+            schemaVersion = 2,
+            sets = BuiltInSets.all().map { if (it.id == ZESTAW_Z_LITEROWKA) stareV026 else it },
+            progress = mapOf(
+                Srs.key(ID_SPRZED_ALIASU, Direction.DEF_TO_TERM) to WordProgress(box = 2, dueDay = 19_900),
+            ),
+        )
+        assertTrue(Repository(katalog.root).save(dane))
+
+        val po = Repository(katalog.root).load()
+
+        assertEquals("postep lezy pod oboma kluczami", 2, po.progress.size)
+        assertEquals("ale slowo jest jedno", 20, po.dorobek.xp)
     }
 }
