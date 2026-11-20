@@ -343,6 +343,7 @@ class PostepIntegracjaTest {
             repo.recordGame(
                 ScoreRecord("Kuba", "Moje słówka", 800, 4, 6, 30, 1_700_000_000_000L),
                 WLASNY_ZESTAW,
+                poludnie(DZIS),
             ),
         )
 

@@ -159,6 +159,10 @@ object Srs {
      * odpowiedzi nie dowodzi ani samodzielnego przypomnienia, ani pisowni — przy czterech
      * opcjach nawet zgadywanie trafia co czwarty raz. Pudelka 2 i 3 sa zarezerwowane dla
      * zadan, w ktorych uczen produkuje odpowiedz sam.
+     *
+     * Sufit dziala w OBIE strony: slowu, ktore stoi juz w pudelku 2 albo 3, rozpoznanie nie
+     * przesuwa takze terminu. Takie slowo czeka na przypomnienie z pamieci i tylko ono moze
+     * je odhaczyc (patrz promote).
      */
     fun ceilingFor(task: TaskKind): Int =
         if (task == TaskKind.ROZPOZNANIE) RECOGNITION_CEILING else MAX_BOX
@@ -212,6 +216,10 @@ object Srs {
      * "Utrwalone" wychodzi z tego samo: pudelko 3 wymaga awansu 0->1, potem 1->2 i 2->3, a
      * kazdy awans ustawia termin co najmniej na jutro. Seria klikniec jednego dnia nie ma jak
      * tego przejsc — potrzebne sa trzy rozne dni i dwa PRZYPOMNIENIA.
+     *
+     * Kazda przetworzona proba podnosi tez [WordProgress.szczyt] do najwyzszego pudelka, jakie
+     * slowo kiedykolwiek mialo. To jedyne miejsce, ktore to pole rusza: z niego licza sie
+     * odznaki i punkty nauki ([Nagrody]), wiec nie moze sie cofnac razem z pudelkiem po bledzie.
      */
     fun apply(before: WordProgress, attempt: Attempt, today: Int): WordProgress {
         // Ta sama proba przetworzona dwa razy nie moze dac dwoch awansow.
@@ -237,7 +245,13 @@ object Srs {
 
             Outcome.POPRAWNA -> promote(before, attempt.task, today)
         }
-        return po.copy(lastTask = attempt.task, lastAttemptId = attempt.id)
+        return po.copy(
+            lastTask = attempt.task,
+            lastAttemptId = attempt.id,
+            // before.box tez wchodzi do maksimum: stan sprzed migracji (albo zlozony recznie w
+            // tescie) moze miec pudelko wyzej niz szczyt, a blad wlasnie by to pudelko skasowal.
+            szczyt = maxOf(before.szczyt, before.box, po.box),
+        )
     }
 
     /** [apply] na calej mapie postepu; klucz sklada [key]. */
@@ -259,10 +273,18 @@ object Srs {
         val pierwszyAwansDzis = before.lastPromotionDay != today
         if (!wTerminie || !bezPomocyDzis || !pierwszyAwansDzis) return before
 
+        // Slowo stoi WYZEJ, niz rozpoznanie potrafi je zaniesc (pudelko 2 albo 3). Trafiony
+        // kafel nie jest wtedy sprawdzeniem tego, co slowo ma udowodnic, wiec nie rusza
+        // niczego. Przedtem przesuwal termin o 3 albo 7 dni: jedno klikniecie, w prawda/falsz
+        // trafne co drugi raz z samego zgadywania, kasowalo sprawdzenie Z PAMIECI, na ktore
+        // slowo czekalo, i tego dnia gra juz go do wpisania nie podawala.
+        if (task == TaskKind.ROZPOZNANIE && before.box > RECOGNITION_CEILING) return before
+
         val nowe = minOf(before.box + 1, ceilingFor(task))
         if (nowe <= before.box) {
-            // Sufit rodzaju zadania albo pudelko 3: pudelka nie podnosimy, ale slowo bylo
-            // zalegle i zostalo sprawdzone, wiec nie moze zostac zalegle na zawsze.
+            // Wlasny sufit rodzaju zadania (rozpoznanie w pudelku 1, przypomnienie w pudelku 3):
+            // pudelka nie podnosimy, ale slowo bylo zalegle i zostalo sprawdzone tym, czym
+            // dalo sie je sprawdzic, wiec nie moze zostac zalegle na zawsze.
             return before.copy(dueDay = today + intervalDays(before.box))
         }
         return before.copy(

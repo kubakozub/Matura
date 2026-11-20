@@ -4,8 +4,11 @@ import android.content.Context
 import android.util.Log
 import com.matura.app.learn.Attempt
 import com.matura.app.learn.EntryId
+import com.matura.app.learn.Nagrody
+import com.matura.app.learn.Odznaki
 import com.matura.app.learn.Srs
 import com.matura.app.model.Direction
+import com.matura.app.model.Dorobek
 import com.matura.app.model.Entry
 import com.matura.app.model.Profile
 import com.matura.app.model.Options
@@ -156,6 +159,13 @@ class Repository(private val dir: File) {
      *   wywolanie [setSesja] podwajaloby liczbe zapisow calego dokumentu po kazdej odpowiedzi.
      *   Regula, co sie liczy, zostaje w [com.matura.app.learn.Sesja] — tutaj wchodzi wynikiem.
      *
+     * To jest tez JEDYNE miejsce, w ktorym rosnie dorobek ucznia ([SaveData.dorobek]): punkty
+     * nauki, cel dnia i seria. Dorobek idzie tym samym zapisem co postep, z dwoch powodow.
+     * Pierwszy jest ten sam, co przy sladzie sesji: jeden zapis calego dokumentu na odpowiedz.
+     * Drugi: przy dwoch zapisach przerwanie miedzy nimi zostawialoby awans bez punktow albo
+     * punkty bez awansu, a dorobek ma sie zgadzac z harmonogramem co do slowa. Nieudany zapis
+     * nie zostawia punktow takze w pamieci, bo [save] rusza cache dopiero po sukcesie.
+     *
      * @return to, co [save]; true takze wtedy, gdy proba niczego nie zmienila (przerwana proba,
      *   kolejne trafienie tego samego dnia) — wtedy nie ma po co ruszac dysku.
      */
@@ -166,15 +176,51 @@ class Repository(private val dir: File) {
         sladWSesji: ((com.matura.app.learn.StanSesji) -> com.matura.app.learn.StanSesji)? = null,
     ): Boolean {
         val przed = load()
-        val po = Srs.applyTo(przed.progress, attempt, Srs.dayOf(nowMs))
+        val dzien = Srs.dayOf(nowMs)
+        val po = Srs.applyTo(przed.progress, attempt, dzien)
         val sesjaPrzed = przed.sesja
         val sesjaPo =
             if (sesjaPrzed != null && sladWSesji != null) sladWSesji(sesjaPrzed) else sesjaPrzed
         // StanSesji porownujemy WARTOSCIA, bo Sesja oddaje kopie takze wtedy, gdy nic sie nie
         // zmienilo (data class copy zawsze tworzy nowy obiekt) - tozsamosc dawalaby tu zapis
         // po kazdej odpowiedzi.
+        //
+        // Dorobek liczy sie dopiero ZA tym warunkiem. Proba, ktora nie ruszyla harmonogramu,
+        // nie ma jak niczego zarobic (zaliczenie to przejscie w harmonogramie), wiec nie moze
+        // tez byc powodem, zeby przepisywac caly dokument.
         if (bezZmianyPozaKsiegowa(przed.progress, po, attempt) && sesjaPo == sesjaPrzed) return true
-        return save(przed.copy(progress = po, sesja = sesjaPo))
+        val zPostepem = przed.copy(progress = po, sesja = sesjaPo)
+        return save(zPostepem.copy(dorobek = dorobekPoProbie(przed, zPostepem, attempt, dzien)))
+    }
+
+    /**
+     * Dorobek po jednej probie: zaliczenie, a po nim odznaki.
+     *
+     * Reguly mieszkaja w [Nagrody] i [Odznaki]; tutaj jest tylko kolejnosc. Odznaki licza sie
+     * z zapisu JUZ PO doliczeniu, bo czesc z nich patrzy na liczniki samego dorobku (dni
+     * nauki, seria, powtorki). Dzien proby jest dniem i zaliczenia, i odznaki.
+     *
+     * Proba bez zaliczenia (pomylka, podpowiedz, sam slad sesji) oddaje dorobek NIETKNIETY
+     * i odznak nie przelicza. To nie jest skrot kosztem poprawnosci: liczniki odznak zaleza od
+     * szczytow pudelek i od dorobku, a jedno i drugie rosnie tylko razem z zaliczeniem, wiec
+     * nie ma czego szukac. Oszczedza za to przejscie po calym katalogu (ponad dwa tysiace
+     * hasel w obu kierunkach) po kazdej blednej odpowiedzi w rundzie.
+     */
+    private fun dorobekPoProbie(
+        przed: SaveData,
+        po: SaveData,
+        attempt: Attempt,
+        dzien: Int,
+    ): Dorobek {
+        val klucz = Srs.key(attempt.entryId, attempt.direction)
+        val zaliczenie = Nagrody.zaliczenie(
+            przed.progress[klucz] ?: WordProgress(),
+            po.progress[klucz] ?: WordProgress(),
+            attempt,
+        ) ?: return po.dorobek
+        val doliczony =
+            Nagrody.dolicz(po.dorobek, zaliczenie, dzien, Nagrody.celDnia(po.options.celDnia))
+        return Odznaki.odblokuj(doliczony, Odznaki.liczniki(po.copy(dorobek = doliczony)), dzien)
     }
 
     /**
@@ -192,6 +238,12 @@ class Repository(private val dir: File) {
      * zmienila, przetworzona drugi raz znowu niczego nie zmieni.
      *
      * [Srs.applyTo] rusza wylacznie klucz tej jednej proby, wiec wystarczy porownac ten klucz.
+     *
+     * Trzecie pole pomijane w porownaniu to [WordProgress.szczyt]. Gdy pudelko stoi w miejscu,
+     * szczyt moze sie zmienic tylko w jeden sposob: stan zlozony poza [Srs] mial go nizej niz
+     * pudelko i [Srs.apply] wlasnie go wyrownal. To nie jest zmiana w harmonogramie, a
+     * wyrownanie liczy sie od nowa przy kazdej probie, wiec nieutrwalone niczego nie gubi.
+     * Awans podnosi szczyt zawsze razem z pudelkiem i tego ten warunek nie przepusci.
      */
     private fun bezZmianyPozaKsiegowa(
         przed: Map<String, WordProgress>,
@@ -203,7 +255,11 @@ class Repository(private val dir: File) {
         val klucz = Srs.key(attempt.entryId, attempt.direction)
         val stary = przed[klucz] ?: WordProgress()
         val nowy = po[klucz] ?: WordProgress()
-        return nowy.copy(lastTask = stary.lastTask, lastAttemptId = stary.lastAttemptId) == stary
+        return nowy.copy(
+            lastTask = stary.lastTask,
+            lastAttemptId = stary.lastAttemptId,
+            szczyt = stary.szczyt,
+        ) == stary
     }
 
     fun deleteSet(id: String) = update { d -> d.copy(sets = d.sets.filterNot { it.id == id && !it.builtIn }) }
@@ -212,10 +268,18 @@ class Repository(private val dir: File) {
 
     fun setProfile(profile: Profile) = update { it.copy(profile = profile) }
 
-    /** Records the outcome of a finished run and rolls the profile counters forward. */
-    fun recordGame(record: ScoreRecord, setId: String) = update { d ->
+    /**
+     * Records the outcome of a finished run and rolls the profile counters forward.
+     *
+     * Po grze stempluja sie odznaki, ktore licza sie z profilu i z listy wynikow (rozegrane
+     * gry, najlepszy wynik, liczba trybow). [nowMs] daje im dzien zdobycia i wchodzi
+     * parametrem, jak kazdy czas w tej klasie. PUNKTOW NAUKI gra nie dopisuje: wynik rundy
+     * placi takze za szybkosc i za trafienie potworka, a ksiega dorobku rosnie wylacznie
+     * z prob ([recordAttempt]).
+     */
+    fun recordGame(record: ScoreRecord, setId: String, nowMs: Long) = update { d ->
         val p = d.profile
-        d.copy(
+        val poGrze = d.copy(
             profile = p.copy(
                 gamesPlayed = p.gamesPlayed + 1,
                 totalKills = p.totalKills + record.kills,
@@ -229,6 +293,9 @@ class Repository(private val dir: File) {
                 .flatMap { (_, list) -> list.sortedByDescending { it.score }.take(50) }
                 .sortedByDescending { it.score },
             sets = d.sets.map { if (it.id == setId) it.copy(timesPlayed = it.timesPlayed + 1) else it },
+        )
+        poGrze.copy(
+            dorobek = Odznaki.odblokuj(poGrze.dorobek, Odznaki.liczniki(poGrze), Srs.dayOf(nowMs)),
         )
     }
 
@@ -250,7 +317,67 @@ class Repository(private val dir: File) {
         var out = data
         if (out.schemaVersion < 2) out = nadajIdentyfikatoryWpisom(out)
         if (out.schemaVersion < 3) out = odswiezZestawyWbudowane(out)
+        if (out.schemaVersion < 4) out = zalozKsiegeDorobku(out)
         return out.copy(schemaVersion = SCHEMA_VERSION)
+    }
+
+    /**
+     * Krok 3 -> 4: zapis dostaje szczyty pudelek ([WordProgress.szczyt]) i ksiege dorobku
+     * ([SaveData.dorobek]).
+     *
+     * Wszystko jest WYLICZALNE z samego zapisu, bez zegara i bez losowosci, bo krok biegnie
+     * od nowa przy kazdym starcie az do pierwszego udanego zapisu. Stoi ZA odswiezeniem
+     * katalogu (krok 2 -> 3) celowo: liczy po identyfikatorach wpisow, a te musza byc juz
+     * biezace i miec przeprowadzony postep.
+     *
+     *  (a) Kazdy wpis postepu dostaje szczyt nie nizszy niz biezace pudelko. Czy slowo stalo
+     *      kiedys wyzej, tego stary zapis nie pamieta, wiec przyjmujemy to, co w nim widac.
+     *
+     *  (b) Ksiega zaczyna z punktami za pudelka, do ktorych uczen NAPRAWDE doszedl
+     *      ([Nagrody.punktyNaStart]). Liczymy po roznych identyfikatorach wpisow biezacych
+     *      zestawow, takze wlasnych, w obu kierunkach, a nie po mapie postepu: po korekcie
+     *      katalogu to samo slowo lezy w niej pod starym i pod nowym kluczem (patrz
+     *      [przeniesPostep]) i liczyloby sie dwa razy. Z punktow za gry nie bierzemy nic,
+     *      z tego samego powodu, dla ktorego krok 1 -> 2 nie wymysla z nich postepu. Dni
+     *      nauki, seria i powtorki zaczynaja od zera: stary zapis ich nie notowal, wiec
+     *      liczymy od tej wersji i niczego nie zgadujemy.
+     *
+     *  (c) Odznaki, ktorych prog jest juz spelniony, wchodza do ksiegi PO CICHU, z dniem
+     *      [Odznaki.DZIEN_SPRZED_KSIEGI]. Inaczej pierwsza runda po aktualizacji oglaszalaby
+     *      jako nowosc odznaki, ktore uczen ma od miesiecy (osiem z nich to dawne osiagniecia).
+     *
+     * Ksiegi, ktora MA JUZ PUNKTY, krok nie zaklada drugi raz i robi samo (a). Wyliczenie
+     * z pudelek nadpisaloby wtedy punkty zarobione nauka (powtorek w terminie z pudelek nie
+     * widac), a odznaki czekajace na prawdziwy dzien dostalyby stempel "sprzed ksiegi".
+     */
+    private fun zalozKsiegeDorobku(data: SaveData): SaveData {
+        val zeSzczytami = data.copy(
+            progress = data.progress.mapValues { (_, stan) ->
+                if (stan.szczyt < stan.box) stan.copy(szczyt = stan.box) else stan
+            },
+        )
+        if (data.dorobek.xp > 0) return zeSzczytami
+
+        val wpisy = LinkedHashSet<String>()
+        for (set in zeSzczytami.sets) {
+            for (e in set.entries) if (e.id.isNotBlank()) wpisy += e.id
+        }
+        var punkty = 0
+        for (id in wpisy) {
+            // RANDOM to ustawienie, nie kierunek: Srs.key by go odrzucil.
+            for (kierunek in listOf(Direction.TERM_TO_DEF, Direction.DEF_TO_TERM)) {
+                val stan = zeSzczytami.progress[Srs.key(id, kierunek)] ?: continue
+                punkty += Nagrody.punktyNaStart(stan)
+            }
+        }
+        val zPunktami = zeSzczytami.copy(dorobek = zeSzczytami.dorobek.copy(xp = punkty))
+        return zPunktami.copy(
+            dorobek = Odznaki.odblokuj(
+                zPunktami.dorobek,
+                Odznaki.liczniki(zPunktami),
+                Odznaki.DZIEN_SPRZED_KSIEGI,
+            ),
+        )
     }
 
     /**
@@ -270,7 +397,7 @@ class Repository(private val dir: File) {
      * wbudowanego o identyfikatorze, ktorego w dzisiejszym katalogu nie ma — usuniecie jest
      * nieodwracalne, a nadmiarowy zestaw nikomu nie szkodzi.
      *
-     * Kazda przyszla korekta katalogu wymaga NASTEPNEGO kroku (4, 5, ...): numer schematu jest
+     * Kazda przyszla korekta katalogu wymaga NASTEPNEGO kroku (5, 6, ...): numer schematu jest
      * jedynym stemplem, po ktorym widac, ze zapis nie widzial jeszcze nowego slownictwa.
      *
      * SWIADOMY KOSZT: ekran ZESTAWY pozwala otworzyc w edytorze takze zestaw wbudowany, wiec
@@ -514,8 +641,13 @@ class Repository(private val dir: File) {
          * pod identyfikatorem sprzed korekty przeprowadza sie pod katalogowy. Numer podnosi
          * KAZDA korekta slownictwa, bo inaczej poprawka nie ma jak dotrzec do telefonu, ktory
          * ma juz wlasna kopie katalogu na dysku.
+         *
+         * 3 -> 4: kazdy wpis postepu ma szczyt (WordProgress.szczyt), a zapis ma ksiege dorobku
+         * (SaveData.dorobek), zalozona z pudelek, do ktorych uczen doszedl, i z odznak, ktore
+         * juz spelnia. Ten krok nie dotyka slownictwa: nastepna korekta katalogu bierze numer 5
+         * i ponawia odswiezenie zestawow, a ksiega zostaje, jak jest.
          */
-        const val SCHEMA_VERSION = 3
+        const val SCHEMA_VERSION = 4
     }
 }
 

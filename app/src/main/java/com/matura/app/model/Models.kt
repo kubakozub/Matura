@@ -56,9 +56,10 @@ enum class TaskKind {
  * widziec, a pakiet learn juz zalezy od modelu ([Direction]). Trzymanie jej w learn zrobiloby
  * cykl zaleznosci miedzy pakietami. Reguly zostaja w jednym miejscu (Srs.kt), tutaj sa dane.
  *
- * Zapisujemy MINIMUM: pudelko, termin, dzien ostatniego awansu, dzien ostatniej pomocy oraz
- * dwa liczniki. Celowo NIE ma tu historii odpowiedzi, nagran ani transkrypcji — do niczego
- * w aplikacji nie sa potrzebne, a byloby to gromadzenie danych o uczniu na zapas.
+ * Zapisujemy MINIMUM: pudelko, termin, dzien ostatniego awansu, dzien ostatniej pomocy, dwa
+ * liczniki oraz najwyzsze osiagniete pudelko. Celowo NIE ma tu historii odpowiedzi, nagran ani
+ * transkrypcji: do niczego w aplikacji nie sa potrzebne, a byloby to gromadzenie danych
+ * o uczniu na zapas.
  *
  * Dni licza sie od epoki UTC (patrz Srs.dayOf), a nie od lokalnej polnocy.
  */
@@ -99,12 +100,87 @@ data class WordProgress(
      * a dwa razy zaliczony awans to nieprawda o uczniu. Pusty znacznik wylacza ten straznik.
      */
     val lastAttemptId: String = "",
+
+    /**
+     * Najwyzsze pudelko, do jakiego to slowo w tym kierunku KIEDYKOLWIEK doszlo. Nigdy nie
+     * maleje i nigdy nie jest mniejsze od [box]; pilnuje tego wylacznie Srs.apply.
+     *
+     * Po co osobne pole, skoro jest [box]: pomylka cofa pudelko do pierwszego, a liczniki
+     * i odznaki nie moga wtedy spadac (uczniowi niczego nie odbieramy). Druga rzecz to punkty:
+     * wejscie drugi raz na ten sam szczebel nie moze byc platne jak pierwsze, inaczej oplacaloby
+     * sie mylic. Jedna liczba zalatwia obie sprawy bez trzymania historii odpowiedzi.
+     *
+     * Zero w starym pliku znaczy "pola jeszcze nie bylo" i jest podnoszone do [box] w migracji
+     * zapisu (Repository.migrate, krok 3 -> 4).
+     */
+    val szczyt: Int = 0,
 ) {
     companion object {
         /** "Nigdy" dla pol dniowych. Uzywane WYLACZNIE do porownan rownosciowych — bez arytmetyki. */
         const val NO_DAY: Int = Int.MIN_VALUE
     }
 }
+
+/**
+ * Dorobek ucznia: mala ksiega tego, co nauka przyniosla. Reguly mieszkaja w
+ * com.matura.app.learn.Nagrody i com.matura.app.learn.Odznaki, tutaj jest wylacznie to, co musi
+ * przetrwac restart (z tego samego powodu, dla ktorego [WordProgress] mieszka w modelu).
+ *
+ * Punkty, cel dnia i serie dopisuje JEDNO miejsce: Repository.recordAttempt, tym samym zapisem
+ * co postep slowa. Kazdy wpis bierze sie z przejscia, ktore policzyl harmonogram (Srs), wiec
+ * punktow nie da sie nabic graniem w kolko latwego zestawu: slowo awansuje najwyzej raz
+ * dziennie. Repository.recordGame dopisuje tu wylacznie odznaki za gre, nigdy punkty.
+ *
+ * Trzy zasady, ktorych te pola pilnuja:
+ *  - to sa LICZBY PRAWDZIWYCH RZECZY (zaliczenia, dni, powtorki), nie procent gotowosci i nie
+ *    prognoza wyniku matury;
+ *  - punkty nauki ([xp]) nie maja nic wspolnego z punktami za gre (Profile.bestScore): tamte
+ *    daje sie takze za szybkosc i za trafienie potworka;
+ *  - nic tu nie maleje poza licznikami "na dzis", ktore z definicji zaczynaja kazdy dzien od
+ *    zera, i biezaca seria, ktora po dluzszej przerwie zaczyna sie od nowa (rekord zostaje).
+ *
+ * Dni to dni harmonogramu (Srs.dayOf, UTC), te same, ktorymi liczy sie termin powtorki:
+ * jeden zegar na cala nauke. [WordProgress.NO_DAY] znaczy "nigdy" i sluzy wylacznie do porownan.
+ */
+@Serializable
+data class Dorobek(
+    /** Suma punktow nauki. Nigdy nie maleje. */
+    val xp: Int = 0,
+
+    /** Dzien, ktorego dotycza [slowaDzis] i [xpDzis]. */
+    val dzien: Int = WordProgress.NO_DAY,
+
+    /** Zaliczenia Z PAMIECI w dniu [dzien]. To one, a nie punkty, wypelniaja cel dnia. */
+    val slowaDzis: Int = 0,
+
+    /** Punkty nauki zdobyte w dniu [dzien]. */
+    val xpDzis: Int = 0,
+
+    /**
+     * Dlugosc ostatniego lancucha dni z zaliczonym celem. Zostaje w zapisie takze wtedy, gdy
+     * lancuch juz sie urwal, wiec ekran ma czytac com.matura.app.learn.Nagrody.seriaNaDzis.
+     */
+    val seria: Int = 0,
+
+    /** Ostatni dzien, w ktorym cel dnia zostal zaliczony. */
+    val seriaDzien: Int = WordProgress.NO_DAY,
+
+    /** Najdluzszy lancuch w historii. */
+    val rekordSerii: Int = 0,
+
+    /** Ile bylo dni z zaliczonym celem, lacznie; nie musza isc po kolei. */
+    val dniNauki: Int = 0,
+
+    /** Ile bylo powtorek w terminie zaliczonych z pamieci, lacznie. */
+    val powtorki: Int = 0,
+
+    /**
+     * Zdobyte odznaki: nazwa stalej com.matura.app.learn.Odznaka -> dzien zdobycia. Zero znaczy
+     * "zanim powstala ksiega" (odznaka przyznana po cichu w migracji zapisu). Nazwy sa przez to
+     * czescia zapisu, tak jak nazwy stalych [Achievement].
+     */
+    val odznaki: Map<String, Int> = emptyMap(),
+)
 
 @Serializable
 data class WordSet(
@@ -153,6 +229,24 @@ data class Options(
      * wprowadzanie tekstu. Wlaczenie tej opcji daje wiec glos tam, gdzie tryb glosowy zawodzi.
      */
     val systemKeyboard: Boolean = false,
+
+    /**
+     * Cel dnia: ile zaliczen Z PAMIECI ma przyniesc jeden dzien nauki. Dozwolone wartosci to
+     * 5, 10 i 20 (com.matura.app.learn.Nagrody.CELE_DNIA); inna liczba w pliku jest czytana
+     * jak domyslna. Piec to tyle, ile nowych slow wprowadza jedna sesja "Dzisiejsze 5 minut".
+     */
+    val celDnia: Int = 5,
+
+    /**
+     * Dzien egzaminu jako KALENDARZOWY dzien epoki (dni od 1970-01-01), a nie dzien
+     * harmonogramu: sluzy wylacznie do odliczania, ktore ma sie zgadzac z kalendarzem na
+     * scianie (com.matura.app.learn.Kalendarz). Domyslne 20944 to 6 maja 2027, pisemny
+     * angielski na poziomie podstawowym; uczen z innym terminem ustawia wlasny.
+     */
+    val maturaDzien: Int = 20944,
+
+    /** Czy pokazywac odliczanie do matury. Nie kazdy chce codziennie widziec te liczbe. */
+    val odliczanie: Boolean = true,
 )
 
 /**
@@ -273,4 +367,13 @@ data class SaveData(
      * na slowo, ktore uczen naprawde cwiczyl.
      */
     val progress: Map<String, WordProgress> = emptyMap(),
+
+    /**
+     * Ksiega dorobku: punkty nauki, cel dnia, seria i odznaki. Wypelnia ja wylacznie
+     * Repository.recordAttempt (tym samym zapisem co [progress]) oraz Repository.recordGame
+     * (same odznaki). Stary plik tego pola nie ma: migracja zapisu (Repository.migrate,
+     * krok 3 -> 4) zaklada wtedy ksiege z pudelek, do ktorych uczen naprawde doszedl, a nie
+     * z punktow za gry.
+     */
+    val dorobek: Dorobek = Dorobek(),
 )

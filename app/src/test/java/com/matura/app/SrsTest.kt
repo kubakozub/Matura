@@ -15,6 +15,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.TimeZone
+import kotlin.random.Random
 
 /**
  * Harmonogram powtorek. Kazdy test odpowiada jednej regule z zalozen — nie chodzi o pokrycie
@@ -235,13 +236,163 @@ class SrsTest {
     }
 
     @Test
-    fun `rozpoznanie nie cofa slowa, ktore juz jest utrwalone`() {
+    fun `rozpoznanie nie cofa slowa, ktore juz jest utrwalone, ale tez go nie odhacza`() {
         val utrwalone = WordProgress(box = 3, dueDay = DZIS, lastPromotionDay = DZIS - 7)
 
         val po = Srs.apply(utrwalone, proba(Outcome.POPRAWNA, TaskKind.ROZPOZNANIE), DZIS)
 
         assertEquals(3, po.box)
+        // Do tej zmiany test wymagal tu terminu DZIS + 7: trafiony kafel odsuwal o tydzien
+        // sprawdzenie z pamieci, na ktore slowo czekalo. Teraz termin zostaje tam, gdzie byl.
+        assertEquals(DZIS, po.dueDay)
+        assertTrue(Srs.isDue(po, DZIS))
+    }
+
+    @Test
+    fun `rozpoznanie nie rusza terminu slowa z pudelka drugiego`() {
+        val powtarzane = WordProgress(box = 2, dueDay = DZIS - 1, lastPromotionDay = DZIS - 4)
+
+        val po = Srs.apply(powtarzane, proba(Outcome.POPRAWNA, TaskKind.ROZPOZNANIE), DZIS)
+
+        assertEquals(2, po.box)
+        assertEquals(DZIS - 1, po.dueDay)
+        assertEquals("trafiony kafel to nie awans", DZIS - 4, po.lastPromotionDay)
+    }
+
+    @Test
+    fun `po trafionym kaflu slowo dalej czeka na wpisanie i tego samego dnia awansuje`() {
+        // Cala stawka poprawki: prawda-falsz trafia sie co drugi raz z samego zgadywania, a
+        // jedno takie klikniecie zdejmowalo slowo z kolejki do wpisania az do nastepnego terminu.
+        val powtarzane = WordProgress(box = 2, dueDay = DZIS, lastPromotionDay = DZIS - 3)
+
+        val poKaflu = Srs.apply(powtarzane, proba(Outcome.POPRAWNA, TaskKind.ROZPOZNANIE, "kafel"), DZIS)
+        assertTrue("slowo zniknelo z kolejki do wpisania", Srs.isDue(poKaflu, DZIS))
+
+        val poWpisaniu = Srs.apply(poKaflu, proba(Outcome.POPRAWNA, id = "wpisane"), DZIS)
+        assertEquals(3, poWpisaniu.box)
+        assertEquals(DZIS + 7, poWpisaniu.dueDay)
+        assertEquals(DZIS, poWpisaniu.lastPromotionDay)
+    }
+
+    @Test
+    fun `utrwalone slowo po trafionym kaflu mozna tego samego dnia potwierdzic z pamieci`() {
+        val utrwalone = WordProgress(box = 3, dueDay = DZIS, lastPromotionDay = DZIS - 7)
+
+        val poKaflu = Srs.apply(utrwalone, proba(Outcome.POPRAWNA, TaskKind.ROZPOZNANIE, "kafel"), DZIS)
+        assertTrue("slowo zniknelo z kolejki do wpisania", Srs.isDue(poKaflu, DZIS))
+        val poWpisaniu = Srs.apply(poKaflu, proba(Outcome.POPRAWNA, id = "wpisane"), DZIS)
+
+        assertEquals(3, poWpisaniu.box)
+        assertEquals(DZIS + 7, poWpisaniu.dueDay)
+    }
+
+    @Test
+    fun `bledny kafel dalej jest pomylka, takze przy slowie utrwalonym`() {
+        // Poprawka dotyczy wylacznie TRAFIONEGO rozpoznania. Kto wybral zla odpowiedz sposrod
+        // podanych, ten slowa nie zna, i ta regula zostaje dokladnie taka, jaka byla.
+        val utrwalone = WordProgress(box = 3, dueDay = DZIS + 5, lastPromotionDay = DZIS - 2)
+
+        val po = Srs.apply(utrwalone, proba(Outcome.BLEDNA, TaskKind.ROZPOZNANIE), DZIS)
+
+        assertEquals(1, po.box)
+        assertEquals(DZIS, po.dueDay)
+        assertEquals(1, po.mistakes)
+    }
+
+    @Test
+    fun `przypomnienie na wlasnym suficie dziala jak dotad`() {
+        // Pudelko 3 to sufit przypomnienia: termin idzie o tydzien, pudelko stoi, a dzien
+        // awansu zostaje, bo awansu nie bylo.
+        val utrwalone = WordProgress(box = 3, dueDay = DZIS, lastPromotionDay = DZIS - 7)
+
+        val po = Srs.apply(utrwalone, proba(Outcome.POPRAWNA), DZIS)
+
+        assertEquals(3, po.box)
         assertEquals(DZIS + 7, po.dueDay)
+        assertEquals(DZIS - 7, po.lastPromotionDay)
+    }
+
+    // --- szczyt: najwyzsze pudelko w historii slowa ---------------------------------------
+
+    @Test
+    fun `szczyt rosnie razem z pudelkiem`() {
+        var stan = WordProgress()
+        assertEquals(0, stan.szczyt)
+
+        val szczyty = mutableListOf<Int>()
+        repeat(3) {
+            stan = Srs.apply(stan, proba(Outcome.POPRAWNA), stan.dueDay.coerceAtLeast(DZIS))
+            szczyty += stan.szczyt
+        }
+
+        assertEquals(listOf(1, 2, 3), szczyty)
+        assertEquals(stan.box, stan.szczyt)
+    }
+
+    @Test
+    fun `pomylka cofa pudelko, ale szczyt zostaje`() {
+        var stan = WordProgress()
+        repeat(3) { stan = Srs.apply(stan, proba(Outcome.POPRAWNA), stan.dueDay.coerceAtLeast(DZIS)) }
+        val dzien = stan.dueDay
+
+        val poBledzie = Srs.apply(stan, proba(Outcome.BLEDNA), dzien)
+        assertEquals(1, poBledzie.box)
+        assertEquals("pomylka nie moze odebrac tego, co slowo juz kiedys pokazalo", 3, poBledzie.szczyt)
+
+        // Wspinaczka od nowa nie podbija szczytu ponad to, co juz bylo.
+        val poPowrocie = Srs.apply(poBledzie, proba(Outcome.POPRAWNA), dzien + 1)
+        assertEquals(2, poPowrocie.box)
+        assertEquals(3, poPowrocie.szczyt)
+    }
+
+    @Test
+    fun `stan sprzed migracji wyrownuje szczyt przy pierwszej przetworzonej probie`() {
+        // Stary zapis nie mial tego pola, wiec szczyt bywa nizszy niz pudelko. Gdyby do maksimum
+        // nie wchodzilo pudelko SPRZED proby, pomylka skasowalaby jedyny slad, ze slowo stalo
+        // w pudelku 3.
+        val stary = WordProgress(box = 3, dueDay = DZIS, lastPromotionDay = DZIS - 7)
+        assertEquals(0, stary.szczyt)
+
+        for (wynik in listOf(Outcome.BLEDNA, Outcome.PODPOWIEDZ, Outcome.POKAZANA, Outcome.POPRAWNA)) {
+            assertEquals("po wyniku $wynik", 3, Srs.apply(stary, proba(wynik), DZIS).szczyt)
+        }
+    }
+
+    @Test
+    fun `proba przerwana i proba powtorzona nie ruszaja szczytu`() {
+        val stary = WordProgress(box = 2, dueDay = DZIS, lastAttemptId = "byla")
+
+        assertSame(stary, Srs.apply(stary, proba(Outcome.PRZERWANA, id = "nowa"), DZIS))
+        assertSame(stary, Srs.apply(stary, proba(Outcome.POPRAWNA, id = "byla"), DZIS))
+    }
+
+    @Test
+    fun `szczyt nigdy nie maleje i nigdy nie jest nizszy niz pudelko`() {
+        // Dowolne ciagi prob, takze z cofajacym sie zegarem: niezmiennik ma sie trzymac zawsze,
+        // bo z tego pola licza sie odznaki i punkty nauki.
+        val wyniki = Outcome.entries
+        val zadania = TaskKind.entries
+        for (ziarno in 1..300) {
+            val los = Random(ziarno)
+            var stan = WordProgress()
+            var dzien = DZIS
+            var najwyzsze = 0
+            repeat(60) { nr ->
+                dzien += los.nextInt(-1, 4)
+                val przed = stan
+                stan = Srs.apply(
+                    stan,
+                    proba(wyniki[los.nextInt(wyniki.size)], zadania[los.nextInt(zadania.size)], "z$ziarno-$nr"),
+                    dzien,
+                )
+                najwyzsze = maxOf(najwyzsze, stan.box)
+
+                assertTrue("ziarno $ziarno, proba $nr: szczyt zmalal", stan.szczyt >= przed.szczyt)
+                assertTrue("ziarno $ziarno, proba $nr: szczyt ponizej pudelka", stan.szczyt >= stan.box)
+                assertEquals("ziarno $ziarno, proba $nr", najwyzsze, stan.szczyt)
+                assertTrue(stan.box in Srs.NO_BOX..Srs.MAX_BOX)
+            }
+        }
     }
 
     // --- utrwalenie -----------------------------------------------------------------------
