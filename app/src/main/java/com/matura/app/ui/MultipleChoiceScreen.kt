@@ -189,11 +189,11 @@ private fun buildRound(entries: List<Entry>, direction: Direction, rng: Random):
         }
         val prompt = (if (termToDef) entry.term else entry.definition).trim()
         val correct = (if (termToDef) entry.definition else entry.term).trim()
-        val promptKey = Matching.normalize(prompt)
 
-        // Wszystkie poprawne warianty dla TEGO pytania — łącznie z odpowiedziami innych wierszy
-        // o tak samo normalizującym się pytaniu (hasła wieloznaczne: "ręka" -> arm/hand). Żaden
-        // dystraktor nie może wpaść w ten zbiór, inaczej "zła" odpowiedź byłaby faktycznie dobra.
+        // Wszystkie poprawne warianty dla TEGO pytania, łącznie z odpowiedziami innych wierszy
+        // o tym samym pytaniu (hasła wieloznaczne: "ręka" -> arm/hand; wystarczy jedno wspólne
+        // znaczenie, patrz Matching.samePrompt). Żaden dystraktor nie może wpaść w ten zbiór,
+        // inaczej "zła" odpowiedź byłaby faktycznie dobra.
         val correctAnswers = Matching.answersForPrompt(entries, prompt, termToDef)
 
         // Zbiory acceptedAnswers już użytych kafli (poprawna + dobrane dystraktory). Równoważność
@@ -205,10 +205,12 @@ private fun buildRound(entries: List<Entry>, direction: Direction, rng: Random):
         for (other in entries.shuffled(rng)) {
             if (distractors.size == CHOICE_COUNT - 1) break
             if (other === entry) continue
-            // Odrzuć kandydata, którego STRONA PYTANIA normalizuje się jak prompt — inaczej przy
-            // "ręka" dystraktorem stałby się wiersz "ręka/hand", a "hand" to poprawna odpowiedź.
+            // Odrzuć kandydata, którego STRONA PYTANIA jest tym samym pytaniem co prompt: inaczej
+            // przy "ręka" dystraktorem stałby się wiersz "ręka/hand", a "hand" to poprawna
+            // odpowiedź. To samo przy częściowym pokryciu: "sweter" (sweater) nie dostanie kafla
+            // "jumper", skoro zestaw podaje "jumper" jako "sweter, bluza".
             val candidatePromptSide = if (termToDef) other.term else other.definition
-            if (Matching.normalize(candidatePromptSide) == promptKey) continue
+            if (Matching.samePrompt(candidatePromptSide, prompt)) continue
             val candidate = (if (termToDef) other.definition else other.term).trim()
             val candidateAnswers = Matching.acceptedAnswers(candidate).toSet()
             if (candidateAnswers.isEmpty()) continue

@@ -212,14 +212,15 @@ private fun buildQuestion(
     // Bierzemy sumę odpowiedzi WSZYSTKICH wierszy o tym samym pytaniu (hasła wieloznaczne
     // typu "ręka" -> arm/hand), a nie tylko odpowiedź z wylosowanego wiersza.
     val correctAnswers = Matching.answersForPrompt(entries, prompt, termToDef)
-    val promptKey = Matching.normalize(prompt)
     for (j in entries.indices.shuffled(rnd)) {
         if (j == idx) continue
-        // Wiersz, którego strona PYTANIA normalizuje się jak prompt, to inny wariant tego
-        // samego hasła — jego odpowiedź jest de facto poprawna, więc nie może być fałszem
-        // (inaczej "ręka"(arm) dostałaby "hand" jako rzekomy fałsz).
+        // Wiersz, którego strona PYTANIA jest tym samym pytaniem co prompt, to inny wariant
+        // tego samego hasła: jego odpowiedź jest de facto poprawna, więc nie może być fałszem
+        // (inaczej "ręka"(arm) dostałaby "hand" jako rzekomy fałsz). Wystarczy jedno wspólne
+        // znaczenie, komórki nie muszą być identyczne: przy "uczeń" (pupil) wypada też wiersz
+        // "uczeń, student" (student).
         val candPrompt = (if (termToDef) entries[j].term else entries[j].definition).trim()
-        if (Matching.normalize(candPrompt) == promptKey) continue
+        if (Matching.samePrompt(candPrompt, prompt)) continue
         val cand = (if (termToDef) entries[j].definition else entries[j].term).trim()
         if (cand.isEmpty()) continue
         val candAnswers = Matching.acceptedAnswers(cand)
@@ -243,11 +244,10 @@ private fun hasFalseCandidate(entries: List<Entry>, entry: Entry, termToDef: Boo
     val correct = (if (termToDef) entry.definition else entry.term).trim()
     if (prompt.isEmpty() || correct.isEmpty()) return false
     val correctAnswers = Matching.answersForPrompt(entries, prompt, termToDef)
-    val promptKey = Matching.normalize(prompt)
     for (other in entries) {
         if (other === entry) continue
         val candPrompt = (if (termToDef) other.term else other.definition).trim()
-        if (Matching.normalize(candPrompt) == promptKey) continue
+        if (Matching.samePrompt(candPrompt, prompt)) continue
         val cand = (if (termToDef) other.definition else other.term).trim()
         if (cand.isEmpty()) continue
         val candAnswers = Matching.acceptedAnswers(cand)
