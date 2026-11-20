@@ -1,0 +1,2857 @@
+diff --git a/app/src/main/java/com/matura/app/data/Repository.kt b/app/src/main/java/com/matura/app/data/Repository.kt
+index 690d3d3..4116324 100644
+--- a/app/src/main/java/com/matura/app/data/Repository.kt
++++ b/app/src/main/java/com/matura/app/data/Repository.kt
+@@ -212,19 +212,27 @@ class Repository(private val dir: File) {
+ 
+     fun setProfile(profile: Profile) = update { it.copy(profile = profile) }
+ 
+-    /** Records the outcome of a finished run and rolls the profile counters forward. */
+-    fun recordGame(record: ScoreRecord, setId: String) = update { d ->
++    /**
++     * Records the outcome of a finished run and rolls the profile counters forward.
++     *
++     * @param doRankingu false for a calm round (GameConfig.calm). Such a round cannot be lost,
++     *   so its score and streak must not stand next to real runs or unlock the score and
++     *   streak badges: the record stays out of [SaveData.scores] and bestScore / bestStreak
++     *   are not raised. The round still happened, so games, defeated monsters and the set's
++     *   play count grow as usual.
++     */
++    fun recordGame(record: ScoreRecord, setId: String, doRankingu: Boolean = true) = update { d ->
+         val p = d.profile
+         d.copy(
+             profile = p.copy(
+                 gamesPlayed = p.gamesPlayed + 1,
+                 totalKills = p.totalKills + record.kills,
+-                bestScore = maxOf(p.bestScore, record.score),
+-                bestStreak = maxOf(p.bestStreak, record.bestStreak),
++                bestScore = if (doRankingu) maxOf(p.bestScore, record.score) else p.bestScore,
++                bestStreak = if (doRankingu) maxOf(p.bestStreak, record.bestStreak) else p.bestStreak,
+             ),
+             // Leaderboard lokalny: top 50 osobno dla kazdego trybu, zeby wyniki
+             // z jednego trybu nie wypychaly pozostalych.
+-            scores = (d.scores + record)
++            scores = if (!doRankingu) d.scores else (d.scores + record)
+                 .groupBy { it.mode }
+                 .flatMap { (_, list) -> list.sortedByDescending { it.score }.take(50) }
+                 .sortedByDescending { it.score },
+diff --git a/app/src/main/java/com/matura/app/learn/Sesja.kt b/app/src/main/java/com/matura/app/learn/Sesja.kt
+index 7403854..022c2b0 100644
+--- a/app/src/main/java/com/matura/app/learn/Sesja.kt
++++ b/app/src/main/java/com/matura/app/learn/Sesja.kt
+@@ -108,9 +108,10 @@ data class PlanSesji(
+  * Gdzie uczen jest w trasie. Same wartosci proste i listy tekstow, zeby stan dalo sie zapisac
+  * i wznowic bez zadnej konwersji.
+  *
+- * Klasa CELOWO nie jest jeszcze czescia SaveData: pole w zapisie nalezy do warstwy danych i
+- * musialoby mieszkac w pakiecie model (tak jak [WordProgress], bo model nie widzi learn).
+- * Do tego czasu stan zyje tyle, co ekran — a nauka i tak nie ginie, bo nie jest w nim trzymana.
++ * Stan JEST czescia zapisu (SaveData.sesja), wiec kazde pole dodane po pierwszym wydaniu musi
++ * miec wartosc domyslna: plik zapisany starsza wersja tego pola nie ma i dalej ma sie wczytac.
++ * Nauki tu nie ma: odpowiedzi ida do harmonogramu od razu, a stan pamieta tylko trase i miejsce
++ * na niej.
+  */
+ @Serializable
+ data class StanSesji(
+@@ -136,6 +137,23 @@ data class StanSesji(
+     val odpowiedzWToku: Boolean = false,
+ 
+     val zakonczona: Boolean = false,
++
++    /**
++     * TRASA DNIA: powtorki ulozone w chwili startu sesji, w kolejnosci planu. Razem z
++     * [trasaNowe] zapada raz, w [Sesja.rozpocznij], i do konca dnia sie nie zmienia, bo to
++     * z niej, a nie z biezacego harmonogramu, sklada sie plan (patrz [Sesja.planNaDzis]).
++     * Obie listy puste znacza "stan bez trasy": zapisala go wersja sprzed tego pola.
++     */
++    val trasaPowtorki: List<String> = emptyList(),
++
++    /** Nowe slowa trasy dnia, w kolejnosci planu. Patrz [trasaPowtorki]. */
++    val trasaNowe: List<String> = emptyList(),
++
++    /**
++     * Kierunek, dla ktorego ulozono trase. Znaczy cokolwiek tylko razem z niepusta trasa:
++     * wartosc domyslna jest tu wylacznie po to, zeby starszy zapis dalo sie wczytac.
++     */
++    val trasaKierunek: Direction = Direction.TERM_TO_DEF,
+ ) {
+     val zrobione: List<String> get() = zrobionePowtorki + zrobioneNowe
+ }
+@@ -278,8 +296,28 @@ object Sesja {
+ 
+         val wolne = (MAKS_SLOW - powtorki.size).coerceAtLeast(0)
+         val wybraneNowe = nowe.take(minOf(MAKS_NOWYCH, wolne))
+-        val slownictwo = powtorki + wybraneNowe
+ 
++        return PlanSesji(
++            dzien = dzien,
++            kierunek = kierunek,
++            powtorki = powtorki,
++            nowe = wybraneNowe,
++            kroki = krokiTrasy(powtorki, wybraneNowe, zadaniaWKontekscie),
++            bezHistorii = bezHistorii,
++        )
++    }
++
++    /**
++     * Kroki dla trasy z podanych slow. Jedna funkcja dla planu ulozonego na swiezo ([zaplanuj])
++     * i dla odtworzonego z zapisu ([planNaDzis]): gdyby kazdy skladal kroki sam, trasa po
++     * powrocie z rundy moglaby miec inny ksztalt niz ta, ktora uczen zaczal.
++     */
++    private fun krokiTrasy(
++        powtorki: List<String>,
++        nowe: List<String>,
++        zadaniaWKontekscie: List<String>,
++    ): List<KrokSesji> {
++        val slownictwo = powtorki + nowe
+         val kroki = ArrayList<KrokSesji>(4)
+         if (slownictwo.isNotEmpty()) {
+             kroki.add(
+@@ -298,7 +336,7 @@ object Sesja {
+                     // jeszcze niczyje. Runda gry sprawdza je pod presja czasu, po spokojnym
+                     // przejsciu tych samych hasel.
+                     cele = slownictwo,
+-                    spokojny = wybraneNowe.isNotEmpty(),
++                    spokojny = nowe.isNotEmpty(),
+                     orientacyjneSekundy = slownictwo.size * SEKUND_NA_ODPOWIEDZ,
+                 )
+             )
+@@ -316,19 +354,84 @@ object Sesja {
+             )
+         }
+         kroki.add(KrokSesji(rodzaj = RodzajKroku.PODSUMOWANIE))
++        return kroki
++    }
+ 
++    /**
++     * Plan, z ktorym dzis pracuje ekran sesji i kod uruchamiany po rundzie.
++     *
++     * TRASA DNIA JEST ZAMROZONA. Wczesniej plan powstawal od nowa z biezacego harmonogramu przy
++     * kazdym wejsciu na ekran sesji, a stan pamietal tylko numer kroku i listy zrobionych slow.
++     * Slowo odpowiedziane poprawnie przestaje byc zalegle, wiec wypadalo z nowego planu, a w
++     * zwolnione miejsca wchodzilo piec KOLEJNYCH nigdy nieprobowanych slow. Na swiezej instalacji
++     * uczen odpowiadal na slowa 1..5, wracal i w kroku pierwszym znajdowal slowa 6..10; krok
++     * "to samo slownictwo jeszcze raz" nigdy nie powtarzal kroku pierwszego, licznik szedl
++     * 5 / 10, potem 10 / 15 i nie mial jak sie domknac, a podsumowanie liczylo slowa, ktorych
++     * nikt uczniowi nie pokazal.
++     *
++     * Dlatego trasa zapada raz, w [rozpocznij], i jedzie w [StanSesji]. Dopoki zapisany stan
++     * jest z dzisiaj, nie jest zakonczony i ma trase, plan sklada sie Z NIEJ i w kierunku,
++     * w ktorym ja ulozono (takze wtedy, gdy uczen zmienil w miedzyczasie ustawienie kierunku:
++     * liczniki i podsumowanie maja mowic o tych samych slowach co runda). W kazdym innym
++     * przypadku plan powstaje na swiezo z [zaplanuj]: stanu nie ma, sesja jest zakonczona, stan
++     * jest z innego dnia (dzien bez nauki niczego nie odbiera, po prostu zaczyna sie nowa trasa)
++     * albo zapisala go wersja, ktora trasy jeszcze nie znala. Taki stan dostaje trase w [wznow].
++     *
++     * Drugiego harmonogramu tu nie ma. O tym, CO trafilo na trase, zdecydowal [Srs] w chwili
++     * startu, a o awansach dalej decyduje tylko on: zamrozona jest kolejnosc pracy, nie wiedza.
++     *
++     * @param kierunek kierunek dla planu ukladanego na swiezo; trasa z zapisu ma wlasny.
++     * @param entryIds dzisiejszy slownik. Slowo trasy, ktorego juz w nim nie ma (uczen usunal
++     *   wlasny zestaw), wypada z planu, bo zadna runda nie umialaby go pokazac i licznik
++     *   czekalby na nie do konca dnia.
++     */
++    fun planNaDzis(
++        zapisany: StanSesji?,
++        progress: Map<String, WordProgress>,
++        entryIds: List<String>,
++        kierunek: Direction,
++        dzien: Int,
++        zadaniaWKontekscie: List<String> = emptyList(),
++    ): PlanSesji {
++        if (zapisany == null || zapisany.zakonczona || zapisany.dzien != dzien ||
++            // RANDOM to ustawienie, nie kierunek. W zapisie moglby sie wziac tylko z uszkodzonego
++            // pliku, a Srs.key rzucilby na nim wyjatkiem w srodku rysowania ekranu.
++            zapisany.trasaKierunek == Direction.RANDOM
++        ) {
++            return zaplanuj(progress, entryIds, kierunek, dzien, zadaniaWKontekscie)
++        }
++        val slownik = entryIds.filter { it.isNotBlank() }.toSet()
++        val powtorki = zapisany.trasaPowtorki.filter { it in slownik }.distinct()
++        val nowe = zapisany.trasaNowe.filter { it in slownik && it !in powtorki }.distinct()
++        if (powtorki.isEmpty() && nowe.isEmpty()) {
++            return zaplanuj(progress, entryIds, kierunek, dzien, zadaniaWKontekscie)
++        }
++        val trasa = (powtorki + nowe).toSet()
+         return PlanSesji(
+             dzien = dzien,
+-            kierunek = kierunek,
++            kierunek = zapisany.trasaKierunek,
+             powtorki = powtorki,
+-            nowe = wybraneNowe,
+-            kroki = kroki,
+-            bezHistorii = bezHistorii,
++            nowe = nowe,
++            kroki = krokiTrasy(powtorki, nowe, zadaniaWKontekscie),
++            // "Pierwszy dzien" ma zostac prawda takze po pierwszej rundzie, a wtedy slowa trasy
++            // maja juz historie, bo uczen wlasnie na nie odpowiedzial. Pytamy wiec o reszte
++            // slownika: sama trasa nowych slow i nic poza nia to dalej pierwszy dzien.
++            bezHistorii = powtorki.isEmpty() && slownik.none {
++                it !in trasa && progress.containsKey(Srs.key(it, zapisany.trasaKierunek))
++            },
+         )
+     }
+ 
++    /** Nowa sesja: zerowy krok, puste listy i trasa wzieta z [plan], zamrozona do konca dnia. */
+     fun rozpocznij(plan: PlanSesji, clock: Clock): StanSesji =
+-        StanSesji(dzien = plan.dzien, startMs = clock.nowMs())
++        zTrasa(StanSesji(dzien = plan.dzien, startMs = clock.nowMs()), plan)
++
++    /** [stan] z trasa i kierunkiem przepisanymi z [plan]. */
++    private fun zTrasa(stan: StanSesji, plan: PlanSesji): StanSesji = stan.copy(
++        trasaPowtorki = plan.powtorki,
++        trasaNowe = plan.nowe,
++        trasaKierunek = plan.kierunek,
++    )
+ 
+     /**
+      * Stan gotowy do dalszej pracy z [plan].
+@@ -337,25 +440,39 @@ object Sesja {
+      * wczoraj nie jest bledem i nie odbiera niczego: dzien bez nauki zmienia wylacznie to, ze
+      * slowa sa zalegle, wiec dzis powstaje po prostu nowa trasa, a pudelka zostaja nietkniete.
+      *
+-     * Indeks kroku jest przycinany do planu, bo plan powstaje na nowo z aktualnego
+-     * harmonogramu i po drodze mogl sie SKROCIC — slowo odpowiedziane przed przerwa nie jest
+-     * juz zalegle i nie wraca do trasy. Gdy nie zostalo nic, przyciecie laduje na podsumowaniu
+-     * (jest zawsze ostatnie), czyli dokladnie tam, gdzie uczen ma zobaczyc, co zrobil.
++     * Wynik niesie trase z [plan]. Gdy plan pochodzi z [planNaDzis], dla stanu z trasa nic sie
++     * przez to nie zmienia (plan powstal wlasnie z niej), a stan sprzed wprowadzenia trasy
++     * dostaje ja w tym miejscu: od najblizszego zapisu jest zamrozona jak kazda inna.
++     *
++     * Indeks kroku jest przycinany do planu na wypadek takiego starszego stanu: jego plan
++     * powstal na swiezo i mogl wyjsc krotszy niz ten, w ktorym uczen przerwal. Przyciecie
++     * laduje wtedy na podsumowaniu (jest zawsze ostatnie), czyli tam, gdzie widac, co zrobil.
+      */
+     fun wznow(zapisany: StanSesji?, plan: PlanSesji, clock: Clock): StanSesji {
+         if (zapisany == null || zapisany.zakonczona || zapisany.dzien != plan.dzien) {
+             return rozpocznij(plan, clock)
+         }
+-        return zapisany.copy(
++        return zTrasa(zapisany, plan).copy(
+             krok = zapisany.krok.coerceIn(0, plan.kroki.lastIndex.coerceAtLeast(0)),
+             // Odpowiedz przerwana wyjsciem z ekranu nie odbyla sie — patrz [przerwij].
+             odpowiedzWToku = false,
+         )
+     }
+ 
+-    /** Czy jest co wznawiac; ekran pyta o to, zanim zaproponuje "WZNÓW" zamiast "ZACZNIJ". */
++    /**
++     * Czy w sesji cokolwiek sie juz wydarzylo: uczen przeszedl choc jeden krok albo odpowiedzial
++     * na choc jedno slowo. Sesja tylko otwarta i zamknieta nie jest jeszcze niczym, co warto
++     * zapisywac albo nazywac wznowiona.
++     */
++    fun czyRuszona(stan: StanSesji): Boolean = stan.krok > 0 || stan.zrobione.isNotEmpty()
++
++    /**
++     * Czy jest co wznawiac: zapisana sesja jest z dzisiaj, nie jest zakonczona i uczen cos juz
++     * w niej zrobil ([czyRuszona]). Ekran pokazuje po tym plakietke WZNOWIONA; bez ostatniego
++     * warunku wisiala ona takze nad sesja, ktora uczen tylko obejrzal i z ktorej wyszedl.
++     */
+     fun czyWznawialna(zapisany: StanSesji?, dzien: Int): Boolean =
+-        zapisany != null && !zapisany.zakonczona && zapisany.dzien == dzien
++        zapisany != null && !zapisany.zakonczona && zapisany.dzien == dzien && czyRuszona(zapisany)
+ 
+     /** Uczen zaczyna odpowiadac. Od tej chwili sesja nie zaproponuje zakonczenia. */
+     fun zacznijOdpowiedz(stan: StanSesji): StanSesji =
+@@ -408,17 +525,48 @@ object Sesja {
+         zakonczona = true,
+     )
+ 
++    /**
++     * Uczen wlasnie UKONCZYL runde, ktora nalezala do kroku [krokRundy] tego planu: trasa
++     * przechodzi do nastepnego kroku sama.
++     *
++     * Wczesniej runda z sesji konczyla sie w MENU, a uczen musial wrocic na ekran sesji i
++     * nacisnac DALEJ recznie. Kto tego nie zrobil, zastawal ten sam krok jako biezacy i
++     * przerabial go drugi raz.
++     *
++     * Numer kroku wchodzi parametrem, bo ukonczona runde mozna zagrac JESZCZE RAZ, a druga
++     * ukonczona runda tego samego kroku nie moze przesunac trasy drugi raz. Stan rusza sie wiec
++     * tylko wtedy, gdy dalej stoi na [krokRundy] i ten krok jest runda ([RodzajKroku.POWTORKA]
++     * albo [RodzajKroku.GRA]). W kazdym innym przypadku wraca bez zmian: uczen poszedl juz dalej
++     * sam, stan jest z innego dnia niz plan albo sesja jest zakonczona.
++     *
++     * Funkcja NIGDY nie konczy sesji. Za ostatnia runda stoi podsumowanie i to uczen zamyka je
++     * przyciskiem, a listy zrobionych slow zostaja takie, jakie byly.
++     *
++     * Rundy przegranej (koniec zyc) ani porzuconej wolajacy tu nie zglasza: o tym, czy runda
++     * zostala ukonczona, mowi silnik gry, a nie to, ze ekran gry zniknal.
++     */
++    fun poUkonczonejRundzie(stan: StanSesji, plan: PlanSesji, krokRundy: Int): StanSesji {
++        if (stan.zakonczona || stan.dzien != plan.dzien || stan.krok != krokRundy) return stan
++        val krok = plan.kroki.getOrNull(krokRundy) ?: return stan
++        if (krok.rodzaj != RodzajKroku.POWTORKA && krok.rodzaj != RodzajKroku.GRA) return stan
++        // Plan z [zaplanuj] i z [planNaDzis] zawsze konczy sie podsumowaniem, wiec runda nie
++        // bywa ostatnim krokiem. Gdyby byla, [dalej] zamknelaby sesje za plecami ucznia.
++        if (krokRundy >= plan.kroki.lastIndex) return stan
++        return dalej(stan, plan)
++    }
++
+     fun biezacy(stan: StanSesji, plan: PlanSesji): KrokSesji? =
+         if (stan.zakonczona) null else plan.kroki.getOrNull(stan.krok)
+ 
+     /**
+      * Slownictwo CALEJ dzisiejszej trasy: to, co jeszcze przed uczniem, PLUS to, co juz zrobil.
+      *
+-     * Suma, a nie sam plan, bo plan powstaje na nowo z harmonogramu przy kazdym wejsciu na ekran
+-     * sesji, a slowo odpowiedziane poprawnie nie jest juz zalegle i z planu wypada. Licznik
+-     * liczony z samego planu pokazywalby po przerobieniu calej trasy "5 / 0", a podsumowanie
+-     * nie mialoby z czego wziac terminu nastepnej powtorki — mimo ze to wlasnie odpowiedzi
+-     * ucznia ten termin ustawily.
++     * Przy trasie zamrozonej ([planNaDzis]) plan niesie ja cala i zrobione slowa sa jej czescia,
++     * wiec suma niczego nie dodaje, a licznik domyka sie na dlugosci trasy. Zostaje dla planu
++     * ulozonego na swiezo przy stanie, ktory ma juz zrobione slowa (zapis sprzed wprowadzenia
++     * trasy): slowo odpowiedziane poprawnie nie jest juz zalegle i w takim planie go nie ma,
++     * wiec licznik liczony z samego planu pokazywalby "5 / 0", a podsumowanie nie mialoby
++     * z czego wziac terminu nastepnej powtorki.
+      */
+     private fun slownictwoTrasy(plan: PlanSesji, stan: StanSesji): List<String> =
+         (plan.slownictwo + stan.zrobione).distinct()
+@@ -443,9 +591,14 @@ object Sesja {
+      * Dwa warunki naraz i drugi jest wazniejszy od pierwszego: orientacyjny czas minal ORAZ
+      * uczen nie jest w polowie odpowiedzi. Funkcja niczego nie konczy — decyzje podejmuje
+      * uczen, a ekran ma z tego zrobic najwyzej podpowiedz "to dobry moment, zeby skonczyc".
++     *
++     * Pusty plan nie ma szacunku (zero sekund), wiec nie ma tez czasu, ktory moglby minac:
++     * bez tego warunku podpowiedz wisiala nad trasa, na ktorej nic nie zalega, od pierwszej
++     * sekundy.
+      */
+     fun czasNaKoniec(stan: StanSesji, plan: PlanSesji, clock: Clock): Boolean =
+-        !stan.odpowiedzWToku &&
++        !plan.pusty &&
++            !stan.odpowiedzWToku &&
+             !stan.zakonczona &&
+             uplyneloSekund(stan, clock) >= plan.orientacyjneSekundy
+ 
+diff --git a/app/src/main/java/com/matura/app/ui/App.kt b/app/src/main/java/com/matura/app/ui/App.kt
+index 2a098a7..beb01c4 100644
+--- a/app/src/main/java/com/matura/app/ui/App.kt
++++ b/app/src/main/java/com/matura/app/ui/App.kt
+@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.padding
+ import androidx.compose.foundation.layout.safeDrawingPadding
+ import androidx.compose.runtime.Composable
+ import androidx.compose.runtime.getValue
++import androidx.compose.runtime.mutableIntStateOf
+ import androidx.compose.runtime.mutableStateOf
+ import androidx.compose.runtime.remember
+ import androidx.compose.runtime.setValue
+@@ -29,7 +30,11 @@ import com.matura.app.audio.Pronunciation
+ import com.matura.app.learn.Clock
+ import com.matura.app.learn.RodzajKroku
+ import com.matura.app.learn.Sesja
++import com.matura.app.learn.Trudne
+ import com.matura.app.model.Direction
++import androidx.lifecycle.Lifecycle
++import androidx.lifecycle.LifecycleEventObserver
++import androidx.lifecycle.compose.LocalLifecycleOwner
+ 
+ sealed interface Screen {
+     data object Start : Screen
+@@ -57,8 +62,32 @@ sealed interface Screen {
+     data object DzisiejszaSesja : Screen
+ }
+ 
++/**
++ * Dokad wraca runda, gdy uczen z niej wyjdzie albo nacisnie DALEJ na ekranie wyniku.
++ *
++ * Runda uruchomiona z dziennej sesji albo z trudnych slow konczyla sie dotad w MENU: uczen
++ * musial sam odszukac ekran, z ktorego przyszedl, zeby zobaczyc, co runda zmienila, i isc dalej.
++ * Cel powrotu ustawia KAZDE miejsce, ktore startuje runde, a zwykla gra z GRAJ wraca do menu.
++ */
++private sealed interface PowrotZRundy {
++    data object Menu : PowrotZRundy
++
++    /** [krok]: indeks kroku trasy, z ktorego ruszyla runda. Patrz Sesja.poUkonczonejRundzie. */
++    data class DzisiejszaSesja(val krok: Int) : PowrotZRundy
++
++    data object TrudneSlowa : PowrotZRundy
++}
++
++/**
++ * @param zegar zrodlo czasu dla dnia harmonogramu, sesji i zapisu prob. Parametr z domyslnym
++ *   zegarem systemowym, zeby test mogl przestawic dobe bez czekania do polnocy.
++ */
+ @Composable
+-fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
++fun MaturaApp(
++    repo: Repository,
++    onExitApp: () -> Unit,
++    zegar: Clock = remember { Clock { System.currentTimeMillis() } },
++) {
+     var data by remember { mutableStateOf(repo.load()) }
+     var stack by remember { mutableStateOf(listOf<Screen>(Screen.Start)) }
+     var mixSet by remember { mutableStateOf<com.matura.app.model.WordSet?>(null) }
+@@ -81,26 +110,67 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+         bladZapisu = repo.lastSaveError != null
+     }
+ 
+-    // Dzien harmonogramu dla calej aplikacji. Liczony raz przy wejsciu — przekroczenie polnocy
+-    // UTC w trakcie jednej sesji nie ma przestawiac list pod palcami ucznia.
+-    val dzisiaj = remember { Srs.dayOf(System.currentTimeMillis()) }
++    // Dzien harmonogramu dla calej aplikacji.
++    //
++    // Byl liczony RAZ na zycie Activity, a proces potrafi przezyc noc w tle. Rano sesja i trudne
++    // slowa pracowaly wtedy na wczoraj: dzisiejsze powtorki nie byly proponowane, wznawiala sie
++    // wczorajsza niedokonczona sesja, a o slowach zaleglych dzis ekran mowil "nastepna powtorka
++    // jutro". Teraz to stan odswiezany w dwoch chwilach: gdy aplikacja wraca na wierzch
++    // (ON_START nizej) i gdy uczen otwiera z menu sesje albo trudne slowa.
++    //
++    // Miedzy tymi chwilami stoi w miejscu i to tez jest celowe: polnoc UTC nie przestawia list
++    // pod palcami ucznia, ktory wlasnie na nie patrzy, ani trasy, z ktorej wlasnie wyszla runda.
++    var dzisiaj by remember { mutableIntStateOf(Srs.dayOf(zegar)) }
++    val wlascicielCyklu = LocalLifecycleOwner.current
++    DisposableEffect(wlascicielCyklu, zegar) {
++        val obserwator = LifecycleEventObserver { _, zdarzenie ->
++            if (zdarzenie == Lifecycle.Event.ON_START) dzisiaj = Srs.dayOf(zegar)
++        }
++        wlascicielCyklu.lifecycle.addObserver(obserwator)
++        onDispose { wlascicielCyklu.lifecycle.removeObserver(obserwator) }
++    }
+     // Klasa Pronunciation istniala juz wczesniej, ale nie miala ANI JEDNEGO wolajacego —
+     // "Trudne slowa" sa pierwszym ekranem, ktory czyta haslo na glos. Instancja zyje tak dlugo
+     // jak aplikacja i zwalnia zasoby przy wyjsciu z kompozycji.
+     val kontekst = LocalContext.current
+     val wymowa = remember(kontekst) { Pronunciation(kontekst) }
+     DisposableEffect(wymowa) { onDispose { wymowa.release() } }
+-    val zegar = remember { Clock { System.currentTimeMillis() } }
+-    // Runda uruchomiona z codziennej sesji jest SPOKOJNA: brief wymaga wariantu bez utraty zyc
+-    // przy nauce nowych slow. Flaga zyje tu, bo tylko App sklada opcje dla ekranu gry.
++    // CZYM RUNDA ROZNI SIE OD ZWYKLEJ GRY Z "GRAJ". Piec rzeczy, ustawianych zawsze razem przez
++    // [rodzajRundy], zeby zadne miejsce startu rundy nie zostawilo ktorejs po poprzedniej.
++    //
++    // Spokojna: potworek przy dziale nie zabiera zycia (GameConfig.calm). Tak ida rundy, w ktorych
++    // uczen dopiero poznaje slowa: krok sesji z nowymi slowami i cwiczenie trudnych slow.
+     var rundaSpokojna by remember { mutableStateOf(false) }
++    // Skonczona: zamyka sie sama, gdy kazde slowo dostalo poprawna odpowiedz (GameConfig.finite).
++    var rundaSkonczona by remember { mutableStateOf(false) }
++    // Kierunek, w ktorym runda ma byc zagrana; null znaczy "wedlug ustawien ucznia". Sesja i lista
++    // trudnych slow licza postep w JEDNYM kierunku, wiec runda nie moze losowac go slowo po slowie.
++    var kierunekRundy by remember { mutableStateOf<Direction?>(null) }
++    var powrotZRundy by remember { mutableStateOf<PowrotZRundy>(PowrotZRundy.Menu) }
+     // Plan sesji, z ktorej wyszla biezaca runda; null dla rundy uruchomionej skadinad.
+     //
+-    // Zyje tu, a nie na ekranie sesji, bo ekran sesji jest w tym momencie ZDJETY ZE STOSU
+-    // (runda konczy sie powrotem do MENU). Bez tego dzienna sesja nie dostawala z rundy ani
+-    // jednej odpowiedzi: pasek postepu stal na zerze przez cala sesje, a podsumowanie
+-    // pokazywalo "Powtorzone: 0 · Nowe: 0" po przerobieniu calej trasy.
++    // Zyje tu, a nie na ekranie sesji, bo ekran sesji jest na czas rundy poza kompozycja.
++    // Bez tego dzienna sesja nie dostawala z rundy ani jednej odpowiedzi: pasek postepu stal
++    // na zerze przez cala sesje, a podsumowanie pokazywalo "Powtorzone: 0 · Nowe: 0" po
++    // przerobieniu calej trasy.
+     var planSesji by remember { mutableStateOf<com.matura.app.learn.PlanSesji?>(null) }
++    fun rodzajRundy(
++        spokojna: Boolean,
++        skonczona: Boolean,
++        kierunek: Direction?,
++        powrot: PowrotZRundy,
++        plan: com.matura.app.learn.PlanSesji?,
++    ) {
++        rundaSpokojna = spokojna
++        rundaSkonczona = skonczona
++        kierunekRundy = kierunek
++        powrotZRundy = powrot
++        planSesji = plan
++    }
++    fun zwyklaRunda() = rodzajRundy(false, false, null, PowrotZRundy.Menu, null)
++    // Kierunek listy trudnych slow, z ktorej uczen ruszyl na cwiczenie: po rundzie wraca na te
++    // sama liste, a nie na te z ustawien. null (wejscie z menu) znaczy "wedlug ustawien".
++    var kierunekTrudnych by remember { mutableStateOf<Direction?>(null) }
+ 
+     BackHandler(enabled = stack.size > 1) { pop() }
+ 
+@@ -133,9 +203,17 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+             Screen.Menu -> MenuScreen(
+                 str = str,
+                 profile = data.profile,
+-                onDaily = { rundaSpokojna = false; planSesji = null; push(Screen.DzisiejszaSesja) },
+-                onHardWords = { push(Screen.TrudneSlowa) },
+-                onPlay = { rundaSpokojna = false; planSesji = null; push(Screen.SetPick) },
++                onDaily = {
++                    zwyklaRunda()
++                    dzisiaj = Srs.dayOf(zegar)
++                    push(Screen.DzisiejszaSesja)
++                },
++                onHardWords = {
++                    kierunekTrudnych = null
++                    dzisiaj = Srs.dayOf(zegar)
++                    push(Screen.TrudneSlowa)
++                },
++                onPlay = { zwyklaRunda(); push(Screen.SetPick) },
+                 onSets = { push(Screen.Sets) },
+                 onOptions = { push(Screen.Options) },
+                 onAchievements = { push(Screen.Achievements) },
+@@ -173,9 +251,19 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+                     // do zapisu (postep i slad w dziennej sesji), a ekran sesji czyta je wprost
+                     // z `data`. Bez tego uczen, ktory wyszedl z rundy przyciskiem, wracal do
+                     // sesji z licznikiem sprzed rundy. Odswiezenie jest tu bezpieczne, bo gra
+-                    // wlasnie sie konczy (stos wraca do MENU) - w TRAKCIE rundy byloby zabojcze,
+-                    // patrz komentarz przy zapiszProbe.
+-                    val exit: () -> Unit = { refresh(); stack = listOf(Screen.Menu) }
++                    // wlasnie sie konczy - w TRAKCIE rundy byloby zabojcze, patrz komentarz
++                    // przy zapiszProbe.
++                    //
++                    // Runda wraca TAM, SKAD RUSZYLA (patrz PowrotZRundy). Ta sama droga obsluguje
++                    // systemowe "wstecz", wyjscie z ekranu wyniku i przycisk DALEJ.
++                    val exit: () -> Unit = {
++                        refresh()
++                        stack = when (powrotZRundy) {
++                            PowrotZRundy.Menu -> listOf(Screen.Menu)
++                            is PowrotZRundy.DzisiejszaSesja -> listOf(Screen.Menu, Screen.DzisiejszaSesja)
++                            PowrotZRundy.TrudneSlowa -> listOf(Screen.Menu, Screen.TrudneSlowa)
++                        }
++                    }
+                     // JEDNO wejscie zapisu proby dla wszystkich czterech trybow. Ekrany dostaja
+                     // zwykla lambde, wiec zadne z nich nie siega do repozytorium samo i kazde
+                     // zostaje testowalne bez Androida.
+@@ -193,7 +281,7 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+                         val plan = planSesji
+                         repo.recordAttempt(
+                             proba,
+-                            System.currentTimeMillis(),
++                            zegar.nowMs(),
+                             if (plan == null) null else { stan ->
+                                 Sesja.zaliczOdpowiedz(stan, plan, proba.entryId, proba.outcome)
+                             },
+@@ -201,25 +289,57 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+                     }
+                     // Dzien harmonogramu ustalamy RAZ, przy wejsciu do rundy. Gdyby liczyl sie na
+                     // biezaco, przekroczenie polnocy UTC w trakcie gry przestawiloby plan rundy.
+-                    val dzisiaj = Srs.dayOf(System.currentTimeMillis())
++                    // Osobny od dnia aplikacji: runda bierze dzien z chwili, w ktorej ruszyla.
++                    val dzienRundy = Srs.dayOf(zegar)
+                     val finish: (com.matura.app.model.ScoreRecord) -> Unit = { record ->
+-                        repo.recordGame(record.copy(mode = s.mode), set.id)
++                        // Rundy spokojnej nie da sie przegrac, wiec jej wynik nie staje obok
++                        // prawdziwych gier ani nie odblokowuje odznak za punkty i serie.
++                        repo.recordGame(record.copy(mode = s.mode), set.id, doRankingu = !rundaSpokojna)
+                         refresh()
+                     }
+-                    // Spokojna runda z codziennej sesji dostaje zapas zyc, zeby nauka nowego
+-                    // slowa nie konczyla sie przegrana. Reszta ustawien bez zmian.
+-                    val opcjeRundy =
+-                        if (rundaSpokojna) data.options.copy(lives = maxOf(data.options.lives, 9))
+-                        else data.options
++                    // UKONCZONA runda sesji sama przesuwa trase o krok: uczen wraca na ekran sesji
++                    // i ma juz przed soba nastepny punkt, zamiast szukac przycisku DALEJ. Runda
++                    // przegrana albo porzucona tu nie trafia (PlayScreen wola to tylko po
++                    // ukonczeniu), wiec jej krok zostaje biezacy. Plan jest tym, z ktorym runda
++                    // ruszyla, a krok tym, z ktorego ruszyla: druga ukonczona runda tego samego
++                    // kroku (JESZCZE RAZ) niczego juz nie przesuwa.
++                    val ukonczona: () -> Unit = {
++                        val powrot = powrotZRundy
++                        val plan = planSesji
++                        val zapisany = repo.load().sesja
++                        if (powrot is PowrotZRundy.DzisiejszaSesja && plan != null && zapisany != null) {
++                            val po = Sesja.poUkonczonejRundzie(zapisany, plan, powrot.krok)
++                            if (po != zapisany) {
++                                repo.setSesja(po)
++                                refresh()
++                            }
++                        }
++                    }
++                    // Runda idzie w kierunku, dla ktorego ulozono plan sesji albo liste trudnych
++                    // slow. Przy ustawieniu "losowo" silnik rzucal moneta dla kazdego slowa, wiec
++                    // polowa odpowiedzi ladowala pod drugim kierunkiem: sesja ich nie widziala
++                    // i planowala te same slowa od nowa jako nigdy nieprobowane.
++                    val opcjeRundy = kierunekRundy?.let { data.options.copy(direction = it) } ?: data.options
+                     when (s.mode) {
+                         GameMode.CLASSIC -> PlayScreen(
+                             set = set, options = opcjeRundy, str = str,
+                             playerName = data.profile.name, onExit = exit, onFinished = finish,
+                             // Gra moze sama wlaczyc klawiature telefonu (awaryjna droga glosu);
+                             // zapis ta sama droga co z ekranu OPCJE, wiec zostaje na kolejne gry.
+-                            onOptionsChange = { o: Options -> repo.setOptions(o); refresh() },
++                            // Kierunek wraca przy tym do ustawienia ucznia: gra oddaje opcje
++                            // RUNDY, a kierunek rundy z sesji nie jest jego wyborem.
++                            onOptionsChange = { o: Options ->
++                                repo.setOptions(o.copy(direction = data.options.direction))
++                                refresh()
++                            },
+                             progress = data.progress,
+-                            today = dzisiaj,
++                            today = dzienRundy,
++                            calm = rundaSpokojna,
++                            finite = rundaSkonczona,
++                            onCompleted = ukonczona,
++                            // Z rundy, ktora jest krokiem sesji albo cwiczeniem, idzie sie DALEJ
++                            // (tam, skad przyszla), a nie do menu.
++                            onContinue = if (powrotZRundy == PowrotZRundy.Menu) null else exit,
+                             onAttempt = zapiszProbe,
+                         )
+                         GameMode.TRUE_FALSE -> TrueFalseScreen(
+@@ -269,24 +389,43 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+                 dzis = dzisiaj,
+                 onBack = { pop() },
+                 onWymowa = { slowo -> wymowa.play(slowo, data.options.soundEnabled) },
++                // Lista otwiera sie w kierunku ucznia ("losowo" rozstrzyga ta sama regula, ktora
++                // ma lista), a po cwiczeniu w tym, w ktorym uczen ja zostawil.
++                kierunekPoczatkowy = kierunekTrudnych ?: Trudne.kierunekDoListy(data.options.direction),
+                 onCwicz = { trudne ->
+-                    // Jedno slowo do poprawki gramy na mieszance zbudowanej wokol niego:
+-                    // plansza potrzebuje kilku hasel, zeby w ogole miec z czego losowac.
++                    // Jedno slowo do poprawki gramy w malym towarzystwie: samo wracaloby na plansze
++                    // od razu po pokazaniu odpowiedzi i uczen przepisywalby je z pamieci chwili,
++                    // a nie z pamieci. Patrz SLOW_W_CWICZENIU.
+                     mixSet = BuiltInSets.randomMix().let { mix ->
+-                        mix.copy(entries = (listOf(trudne.entry) + mix.entries).distinct().take(20))
++                        mix.copy(
++                            entries = (listOf(trudne.entry) + mix.entries).distinct().take(SLOW_W_CWICZENIU),
++                        )
+                     }
+-                    rundaSpokojna = true
+-                    // Cwiczenie trudnego slowa to NIE jest krok sesji - inaczej odpowiedzi
+-                    // z niego doliczalyby sie do dzisiejszej trasy.
+-                    planSesji = null
++                    kierunekTrudnych = trudne.kierunek
++                    // Cwiczenie trudnego slowa to NIE jest krok sesji (plan = null) - inaczej
++                    // odpowiedzi z niego doliczalyby sie do dzisiejszej trasy. Gra sie je
++                    // w kierunku listy, na ktora uczen patrzy: to w nim to slowo jest trudne.
++                    rodzajRundy(
++                        spokojna = true,
++                        skonczona = true,
++                        kierunek = trudne.kierunek,
++                        powrot = PowrotZRundy.TrudneSlowa,
++                        plan = null,
++                    )
+                     push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
+                 },
+                 onCwiczWszystkie = { lista ->
+                     mixSet = BuiltInSets.randomMix().copy(entries = lista.map { it.entry }.take(20))
+-                    rundaSpokojna = true
+-                    // Cwiczenie trudnego slowa to NIE jest krok sesji - inaczej odpowiedzi
+-                    // z niego doliczalyby sie do dzisiejszej trasy.
+-                    planSesji = null
++                    // Cala lista jest w jednym kierunku, wiec wystarczy zapytac pierwsze slowo.
++                    val kierunekListy = lista.firstOrNull()?.kierunek
++                    kierunekTrudnych = kierunekListy
++                    rodzajRundy(
++                        spokojna = true,
++                        skonczona = true,
++                        kierunek = kierunekListy,
++                        powrot = PowrotZRundy.TrudneSlowa,
++                        plan = null,
++                    )
+                     push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
+                 },
+             )
+@@ -302,40 +441,73 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+                 val idki = remember(data.sets) {
+                     data.sets.flatMap { it.entries }.map { it.id }.filter { it.isNotBlank() }
+                 }
+-                val plan = remember(data.progress, idki, kierunek, dzisiaj) {
+-                    Sesja.zaplanuj(data.progress, idki, kierunek, dzisiaj)
++                // Plan bierze sie z TRASY zapisanej w stanie sesji, a nie z biezacego harmonogramu:
++                // slowo odpowiedziane w rundzie nie znika z trasy i nic nowego na nia nie wchodzi
++                // (patrz Sesja.planNaDzis). Na swiezo plan powstaje tylko wtedy, gdy dzisiejszej
++                // sesji jeszcze nie ma.
++                val plan = remember(data.sesja, data.progress, idki, kierunek, dzisiaj) {
++                    Sesja.planNaDzis(data.sesja, data.progress, idki, kierunek, dzisiaj)
+                 }
+                 var stanSesji by remember(plan) {
+                     mutableStateOf(Sesja.wznow(data.sesja, plan, zegar))
+                 }
++                // WZNOWIONA mowi o chwili WEJSCIA na ekran: czy czekala tu sesja, w ktorej uczen
++                // cos juz zrobil. Liczona raz, bo inaczej zapalalaby sie po pierwszym DALEJ.
++                val wznowiona = remember(dzisiaj) { Sesja.czyWznawialna(data.sesja, dzisiaj) }
+                 DzisiejszaSesjaScreen(
+                     jezyk = data.options.uiLanguage,
+                     plan = plan,
+                     stan = stanSesji,
+                     podsumowanie = Sesja.podsumuj(plan, stanSesji, data.progress, dzisiaj),
+                     czasNaKoniec = Sesja.czasNaKoniec(stanSesji, plan, zegar),
+-                    wznowiona = data.sesja != null,
++                    wznowiona = wznowiona,
+                     // Przerwanie ZAPISUJE stan: brief wymaga, zeby przerwa nie kasowala nauki.
+-                    onPrzerwij = { repo.setSesja(stanSesji); refresh(); pop() },
++                    // Sesji nietknietej nie ma po co zapisywac: zapis zamrozilby trase od samego
++                    // obejrzenia ekranu, a uczen niczego jeszcze na niej nie zrobil. Stan, ktory
++                    // lezy juz w zapisie co do pola (kazdy krok zapisuje sie od razu), tez nie
++                    // idzie drugi raz na dysk.
++                    onPrzerwij = {
++                        if (Sesja.czyRuszona(stanSesji) && stanSesji != repo.load().sesja) {
++                            repo.setSesja(stanSesji)
++                            refresh()
++                        }
++                        pop()
++                    },
+                     onKrok = { krok ->
+                         if (krok.rodzaj == RodzajKroku.POWTORKA || krok.rodzaj == RodzajKroku.GRA) {
+                             val cele = krok.cele.toSet()
+-                            val wpisy = data.sets.flatMap { it.entries }.filter { it.id in cele }
++                            // To samo slowo bywa w kilku zestawach naraz; na plansze idzie raz.
++                            val wpisy = data.sets.flatMap { it.entries }
++                                .filter { it.id in cele }
++                                .distinctBy { it.id }
+                             mixSet = BuiltInSets.randomMix().copy(entries = wpisy.take(20))
+-                            rundaSpokojna = krok.spokojny
+-                            // Plan idzie razem z runda: bez niego zapiszProbe nie wie, ktore slowo
+-                            // bylo powtorka, a ktore nowe, i sesja nie policzy niczego.
+-                            planSesji = plan
++                            // Runda sesji konczy sie sama po przerobieniu slow kroku, jest spokojna
++                            // tam, gdzie plan tak mowi, i idzie w kierunku planu. Plan jedzie razem
++                            // z nia: bez niego zapiszProbe nie wie, ktore slowo bylo powtorka,
++                            // a ktore nowe, i sesja nie policzy niczego.
++                            rodzajRundy(
++                                spokojna = krok.spokojny,
++                                skonczona = true,
++                                kierunek = plan.kierunek,
++                                powrot = PowrotZRundy.DzisiejszaSesja(stanSesji.krok),
++                                plan = plan,
++                            )
++                            // Od tego zapisu sesja jest zaczeta, a jej trasa zamrozona.
+                             repo.setSesja(stanSesji)
+                             push(Screen.Play(BuiltInSets.MIX_ID, GameMode.CLASSIC))
+                         } else {
+                             stanSesji = Sesja.dalej(stanSesji, plan)
+                             repo.setSesja(stanSesji)
++                            refresh()
+                         }
+                     },
++                    // refresh() po zapisie, bo `data.sesja` to zrodlo planu i stanu przy nastepnym
++                    // wejsciu na ekran: bez niego krok pominiety przyciskiem DALEJ wracal jako
++                    // biezacy, gdy uczen wyszedl systemowym "wstecz" i otworzyl sesje ponownie.
+                     onDalej = {
+                         stanSesji = Sesja.dalej(stanSesji, plan)
+                         repo.setSesja(stanSesji)
++                        refresh()
+                     },
+                     onZakoncz = {
+                         stanSesji = Sesja.zakoncz(stanSesji, plan)
+@@ -407,6 +579,16 @@ fun MaturaApp(repo: Repository, onExitApp: () -> Unit) {
+     }
+ }
+ 
++/**
++ * Ile slow ma runda cwiczenia JEDNEGO trudnego slowa: ono samo i kilka z losowej mieszanki.
++ *
++ * Runda cwiczenia jest skonczona, czyli trwa, dopoki uczen nie odpowie na kazde slowo. Dawne
++ * dwadziescia (wypelniacz dla rundy bez konca) znaczyloby dzis kilka minut i dziewietnascie
++ * obcych hasel do zaliczenia po to, zeby poprawic jedno. Szesc daje krotka runde, w ktorej
++ * trudne slowo, jesli nie padnie od razu, wraca dopiero po kilku innych.
++ */
++private const val SLOW_W_CWICZENIU = 6
++
+ internal fun SaveData.defaultProfile(): Profile = profile
+ 
+ internal fun List<WordSet>.playable(): List<WordSet> =
+diff --git a/app/src/main/java/com/matura/app/ui/DzisiejszaSesjaScreen.kt b/app/src/main/java/com/matura/app/ui/DzisiejszaSesjaScreen.kt
+index bc7de79..f0dd022 100644
+--- a/app/src/main/java/com/matura/app/ui/DzisiejszaSesjaScreen.kt
++++ b/app/src/main/java/com/matura/app/ui/DzisiejszaSesjaScreen.kt
+@@ -121,9 +121,9 @@ fun DzisiejszaSesjaScreen(
+                 }
+             }
+ 
+-            // "DALEJ" istnieje osobno od uruchomienia kroku, bo krok konczy sie na INNYM
+-            // ekranie (powtorka, runda gry) i uczen wraca tutaj — musi miec czym przejsc
+-            // do nastepnego punktu trasy, takze wtedy, gdy krok chce pominac.
++            // "DALEJ" istnieje osobno od uruchomienia kroku. Ukonczona runda przesuwa trase
++            // sama, ale runda przegrana albo porzucona zostawia krok biezacym: uczen musi miec
++            // czym przejsc do nastepnego punktu trasy, takze wtedy, gdy krok chce pominac.
+             if (krok != null && krok.rodzaj != RodzajKroku.PODSUMOWANIE) {
+                 item {
+                     Spacer(Modifier.height(8.dp))
+@@ -382,23 +382,31 @@ class SesjaStr(private val lang: UiLanguage) {
+     val sessionStepSummary get() = pick("PODSUMOWANIE", "SUMMARY")
+ 
+     /**
+-     * OPISY KROKOW MUSZA ZGADZAC SIE Z App.kt: krok POWTORKA i krok GRA uruchamiaja DOKLADNIE
+-     * to samo — runde KLASYCZNA na tym samym slownictwie (jedna galaz `push(Screen.Play(...))`),
+-     * a jedyna roznica jest liczba zyc (spokojny krok dostaje ich dziewiec).
++     * OPISY KROKOW MUSZA ZGADZAC SIE Z App.kt: krok POWTORKA i krok GRA uruchamiaja runde
++     * KLASYCZNA na tym samym slownictwie (jedna galaz `push(Screen.Play(...))`). Obie sa
++     * skonczone (GameConfig.finite): zamykaja sie same, gdy kazde slowo dostalo poprawna
++     * odpowiedz. Powtorka jest zawsze spokojna (GameConfig.calm): zycia nie ubywaja, a slowo,
++     * ktore doszlo do dziala, pokazuje odpowiedz i wraca. Runda gry jest spokojna tylko wtedy,
++     * gdy na trasie sa nowe slowa (KrokSesji.spokojny); bez nich ma zycia jak zwykla gra.
+      *
+-     * Do 0.9.18 stalo tu "spokojnie i bez zyc" oraz "tym razem w grze", czyli obietnica dwoch
+-     * roznych mechanik i rundy bez zyc. Uczen dostawal zwykla strzelanke z sercami w HUD,
+-     * a po dziewieciu przegapionych potworkach — czaszke z napisem KONIEC GRY.
++     * Historia tych zdan: w 0.9.18 spokojna runda byla zwykla gra z dziewiecioma zyciami
++     * i konczyla sie czaszka z napisem KONIEC GRY, wiec teksty mowily o zapasie zyc. Teraz
++     * zachowanie istnieje w silniku i teksty opisuja je wprost. Opis rundy gry mowi tylko to,
++     * co jest prawda w obu jej wariantach; o wariancie spokojnym mowi plakietka [sessionCalm].
+      */
+     val sessionStepReviewDesc
+         get() = pick(
+-            "Słowa zaplanowane na dziś, spokojnie — runda z zapasem dziewięciu żyć.",
+-            "The words due today, taken calmly — a round with nine lives to spare.",
++            "Słowa zaplanowane na dziś, bez utraty żyć. Słowo, które dojdzie do działka, " +
++                "pokaże odpowiedź i wróci. Koniec, gdy na każde odpowiesz poprawnie.",
++            "The words planned for today, with no lives to lose. A word that gets through " +
++                "shows its answer and comes back. It ends once you have answered every word.",
+         )
+     val sessionStepGameDesc
+         get() = pick(
+-            "To samo słownictwo jeszcze raz, w kolejnej rundzie gry.",
+-            "The same vocabulary once more, in another game round.",
++            "To samo słownictwo jeszcze raz. Runda kończy się sama, gdy na każde słowo padnie " +
++                "poprawna odpowiedź.",
++            "The same vocabulary once more. The round ends by itself once every word has had " +
++                "a correct answer.",
+         )
+     val sessionStepContextDesc
+         get() = pick(
+@@ -412,16 +420,16 @@ class SesjaStr(private val lang: UiLanguage) {
+         )
+ 
+     /**
+-     * Plakietka przy spokojnej rundzie gry. Mowi LICZBE, bo tyle wlasnie robi kod: App.kt daje
+-     * spokojnej rundzie `lives = maxOf(options.lives, 9)`, a suwak zyc w OPCJACH konczy sie na
+-     * dziewieciu — wiec spokojna runda ma ich zawsze dokladnie dziewiec.
++     * Plakietka przy spokojnej rundzie gry. Mowi dokladnie to, co robi kod: App.kt startuje
++     * taka runde z GameConfig.calm, a wtedy na planszy nie ma serc i potworek przy dziale nie
++     * zabiera niczego, wiec rundy nie da sie przegrac.
+      *
+-     * Do 0.9.18 pisalo tu "BEZ ZYC", chociaz runda miala serca w HUD i konczyla sie ekranem
+-     * KONIEC GRY po utracie ostatniego zycia (GameEngine ustawia gameOver przy lives <= 0).
+-     * Napis ma isc za kodem: to wydanie ma byc bezpieczne, wiec zmieniamy plakietke, a nie
+-     * zachowanie silnika tuz przed wysylka.
++     * Napis zmienial sie razem z kodem i ma tak zostac. Przed 0.9.18 stalo tu "BEZ ZYC" przy
++     * rundzie, ktora miala serca i konczyla sie ekranem KONIEC GRY. W 0.9.18 runda dostala
++     * dziewiec zyc na zapas i plakietka mowila "9 ZYC". Dopiero teraz silnik ma runde bez zyc
++     * i pierwotny napis jest prawda. Krotki, bo rysuje go czcionka pikselowa w waskim wierszu.
+      */
+-    val sessionCalm get() = pick("9 ŻYĆ", "9 LIVES")
++    val sessionCalm get() = pick("BEZ ŻYĆ", "NO LIVES")
+     val sessionStart get() = pick("ZACZYNAM", "START")
+     val sessionContinue get() = pick("DALEJ", "NEXT")
+     val sessionFinish get() = pick("KONIEC NA DZIŚ", "DONE FOR TODAY")
+@@ -430,10 +438,14 @@ class SesjaStr(private val lang: UiLanguage) {
+             "Możesz wyjść w każdej chwili. Każda odpowiedź jest już zapisana, a sesja poczeka tu na Ciebie.",
+             "You can leave at any time. Every answer is already saved, and the session waits for you here.",
+         )
++    /**
++     * Bez liczby minut: szacunek liczy sie z dlugosci trasy i dla pieciu slow wynosi dwie
++     * minuty, a zdanie o "pieciu minutach" pokazywalo sie wtedy po dwoch.
++     */
+     val sessionTimeUp
+         get() = pick(
+-            "Orientacyjne pięć minut minęło. To dobry moment, żeby skończyć — albo grać dalej, jeśli masz ochotę.",
+-            "The rough five minutes are up. A good moment to stop — or to keep going, if you feel like it.",
++            "Szacowany czas tej trasy minął. To dobry moment, żeby skończyć, ale możesz też grać dalej.",
++            "The estimated time for this route is up. A good moment to stop, but you can also keep going.",
+         )
+     val sessionNothingDue
+         get() = pick(
+diff --git a/app/src/main/java/com/matura/app/ui/EkranWyniku.kt b/app/src/main/java/com/matura/app/ui/EkranWyniku.kt
+new file mode 100644
+index 0000000..e78cee0
+--- /dev/null
++++ b/app/src/main/java/com/matura/app/ui/EkranWyniku.kt
+@@ -0,0 +1,219 @@
++package com.matura.app.ui
++
++import androidx.compose.foundation.background
++import androidx.compose.foundation.border
++import androidx.compose.foundation.layout.Arrangement
++import androidx.compose.foundation.layout.Box
++import androidx.compose.foundation.layout.BoxWithConstraints
++import androidx.compose.foundation.layout.Column
++import androidx.compose.foundation.layout.ColumnScope
++import androidx.compose.foundation.layout.IntrinsicSize
++import androidx.compose.foundation.layout.Row
++import androidx.compose.foundation.layout.Spacer
++import androidx.compose.foundation.layout.fillMaxHeight
++import androidx.compose.foundation.layout.fillMaxSize
++import androidx.compose.foundation.layout.fillMaxWidth
++import androidx.compose.foundation.layout.height
++import androidx.compose.foundation.layout.heightIn
++import androidx.compose.foundation.layout.padding
++import androidx.compose.foundation.layout.safeDrawingPadding
++import androidx.compose.foundation.layout.size
++import androidx.compose.foundation.layout.width
++import androidx.compose.foundation.rememberScrollState
++import androidx.compose.foundation.verticalScroll
++import androidx.compose.material3.Text
++import androidx.compose.runtime.Composable
++import androidx.compose.ui.Alignment
++import androidx.compose.ui.Modifier
++import androidx.compose.ui.graphics.Color
++import androidx.compose.ui.graphics.ImageBitmap
++import androidx.compose.ui.semantics.contentDescription
++import androidx.compose.ui.semantics.semantics
++import androidx.compose.ui.text.style.TextAlign
++import androidx.compose.ui.unit.Dp
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.sp
++import com.matura.app.R
++import com.matura.app.game.MissedWord
++
++/** Przycisk dolnego paska [EkranWyniku]: napis i to, co robi. */
++class PrzyciskWyniku(val etykieta: String, val onClick: () -> Unit)
++
++/**
++ * Ekran wyniku rundy na CALE okno: ikona, tytul i punkty u gory, srodek do wypelnienia przez
++ * tryb gry, przyciski przypiete do dolu.
++ *
++ * Skad sie wzial. Koniec gry w trybie klasycznym byl nakladka rysowana w ramce planszy, a
++ * plansza dostaje tylko to, co zostanie po klawiaturze. Na telefonie 360 x 640 dp ucinalo to
++ * czaszke i oba przyciski, a na 320 x 568 dp przyciskow nie bylo widac wcale i z rundy dalo sie
++ * wyjsc tylko systemowym "wstecz". Stad dwie reguly tego ukladu, ktorych nie wolno rozdzielac:
++ *
++ *  - gorna czesc przewija sie i bierze cala wolna wysokosc, wiec dluga lista w [srodek] nigdy
++ *    nie wypycha niczego poza okno;
++ *  - przyciski stoja POD przewijaniem, a nie w nim, wiec widac je zawsze i bez szukania.
++ *
++ * Komponent, a nie kawalek ekranu gry, bo pozostale trzy tryby koncza sie tym samym ukladem
++ * (ikona, tytul, punkty, przyciski) i roznia sie tylko tym, co stoi w srodku: statystyki, lista
++ * slow do powtorki, a pozniej blok nagrod. Niczego nie zapisuje i nie zna silnika gry.
++ *
++ * @param opisPunktow punkty dla czytnika ekranu; sama liczba bez nazwy nic mu nie mowi.
++ * @param glowny przycisk, ktory ma byc pod kciukiem: zielony, na cala wolna szerokosc.
++ * @param drugi przycisk poboczny; null zostawia jeden przycisk.
++ * @param srodek zawartosc miedzy punktami a przyciskami. Dostaje szerokosc kolumny, zeby
++ *   napis rysowany czcionka pikselowa mial do czego zawijac (PixelText sam jej nie zna).
++ */
++@Composable
++fun EkranWyniku(
++    ikona: ImageBitmap,
++    tytul: String,
++    kolorTytulu: Color,
++    punkty: Int,
++    opisPunktow: String,
++    glowny: PrzyciskWyniku,
++    modifier: Modifier = Modifier,
++    drugi: PrzyciskWyniku? = null,
++    srodek: @Composable ColumnScope.(szerokosc: Dp) -> Unit = {},
++) {
++    BoxWithConstraints(
++        modifier
++            .fillMaxSize()
++            .background(Palette.Background)
++            // W aplikacji insety konsumuje juz MaturaApp i ta linia nic nie doklada. Zostaje dla
++            // ekranu zlozonego samodzielnie (test, podglad), zeby i tam nic nie weszlo pod paski.
++            .safeDrawingPadding(),
++        contentAlignment = Alignment.TopCenter,
++    ) {
++        // Na tablecie i w poziomie kolumna nie rozciaga sie od krawedzi do krawedzi: lista par
++        // slow szeroka na 1200 dp nie daje sie czytac wierszami.
++        val szerokosc = (maxWidth - MARGINES_EKRANU * 2).coerceIn(0.dp, MAKS_SZEROKOSC_KOLUMNY)
++        Column(Modifier.fillMaxHeight().width(szerokosc)) {
++            Column(
++                Modifier
++                    .weight(1f)
++                    .fillMaxWidth()
++                    .verticalScroll(rememberScrollState())
++                    .padding(top = 16.dp, bottom = 12.dp),
++                horizontalAlignment = Alignment.CenterHorizontally,
++                // Krotka tresc stoi na srodku, a nie pod sufitem; dluga i tak zaczyna sie od gory.
++                verticalArrangement = Arrangement.Center,
++            ) {
++                PixelImage(ikona, Modifier.size(52.dp))
++                Spacer(Modifier.height(10.dp))
++                PixelText(tytul, color = kolorTytulu, glyphHeight = 18.dp, maxWidthDp = szerokosc)
++                Spacer(Modifier.height(8.dp))
++                Row(verticalAlignment = Alignment.CenterVertically) {
++                    PixelImage(pixel(R.drawable.coin), Modifier.size(26.dp))
++                    Spacer(Modifier.width(9.dp))
++                    PixelText("$punkty", color = Palette.Gold, glyphHeight = 26.dp, opis = opisPunktow)
++                }
++                srodek(szerokosc)
++            }
++            // Kreska mowi, ze to, co nad nia, przewija sie pod przyciski, a nie konczy w tym miejscu.
++            Box(Modifier.fillMaxWidth().height(2.dp).background(Palette.SurfaceHigh))
++            Row(
++                Modifier
++                    .fillMaxWidth()
++                    .padding(top = 10.dp, bottom = 12.dp)
++                    // Oba przyciski maja te sama wysokosc, liczona z wyzszego z nich, i nigdy
++                    // mniej niz 48 dp celu dotyku.
++                    .height(IntrinsicSize.Min)
++                    .heightIn(min = 48.dp),
++            ) {
++                PrimaryButton(
++                    glowny.etykieta,
++                    Modifier.weight(1f).fillMaxHeight(),
++                    onClick = glowny.onClick,
++                )
++                if (drugi != null) {
++                    Spacer(Modifier.width(10.dp))
++                    GhostButton(drugi.etykieta, Modifier.fillMaxHeight(), onClick = drugi.onClick)
++                }
++            }
++        }
++    }
++}
++
++private val MARGINES_EKRANU = 16.dp
++private val MAKS_SZEROKOSC_KOLUMNY = 480.dp
++
++/**
++ * Lista slow, ktore doszly do dziala: haslo po lewej, oczekiwana odpowiedz po prawej.
++ *
++ * To jest tresc, dla ktorej ekran wyniku w ogole istnieje. Sam wynik mowi, jak poszla
++ * rozgrywka; lista mowi, czego sie z niej nauczyc, zanim uczen zagra jeszcze raz.
++ *
++ * Zwykla czcionka, nie pikselowa: odpowiedz bywa dluga i ma przecinki miedzy wariantami
++ * ("kolega ze szkoły, koleżanka ze szkoły"), a wiersz ma sie zawijac. Strony rozroznia MIEJSCE
++ * (lewa i prawa kolumna), kolor jest tylko dodatkiem.
++ *
++ * Pusta lista to dobra wiadomosc i tak jest pokazana: jednym zdaniem zamiast pustej ramki.
++ */
++@Composable
++fun ListaDoPowtorki(slowa: List<MissedWord>, str: Str, modifier: Modifier = Modifier) {
++    if (slowa.isEmpty()) {
++        Text(
++            str.nothingMissed,
++            color = Palette.Bone,
++            fontSize = 13.sp,
++            lineHeight = 18.sp,
++            textAlign = TextAlign.Center,
++            modifier = modifier.fillMaxWidth(),
++        )
++        return
++    }
++    // Miejsce na licznik trzymamy w KAZDYM wierszu, gdy ma go choc jeden: inaczej prawa kolumna
++    // zaczynalaby sie w wierszach z licznikiem gdzie indziej niz w pozostalych.
++    val zLicznikiem = slowa.any { it.times > 1 }
++    Column(
++        modifier
++            .fillMaxWidth()
++            .background(Palette.Surface)
++            .border(2.dp, Palette.SurfaceHigh)
++            .padding(horizontal = 12.dp, vertical = 10.dp)
++    ) {
++        PixelText(str.toReview, color = Palette.Gold, glyphHeight = 9.dp)
++        Spacer(Modifier.height(4.dp))
++        slowa.forEachIndexed { i, slowo ->
++            if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.SurfaceHigh))
++            Row(
++                Modifier
++                    .fillMaxWidth()
++                    // Jeden wezel dla czytnika ekranu: haslo, odpowiedz i licznik czytane razem.
++                    .semantics(mergeDescendants = true) {}
++                    .padding(vertical = 7.dp),
++            ) {
++                Text(
++                    slowo.prompt,
++                    color = Palette.Bone,
++                    fontSize = 14.sp,
++                    lineHeight = 19.sp,
++                    modifier = Modifier.weight(1f),
++                )
++                Spacer(Modifier.width(10.dp))
++                Text(
++                    slowo.solution,
++                    color = Palette.Gold,
++                    fontSize = 14.sp,
++                    lineHeight = 19.sp,
++                    modifier = Modifier.weight(1f),
++                )
++                if (zLicznikiem) {
++                    Box(Modifier.width(34.dp), contentAlignment = Alignment.TopEnd) {
++                        if (slowo.times > 1) {
++                            Text(
++                                "×${slowo.times}",
++                                color = Palette.Muted,
++                                fontSize = 13.sp,
++                                lineHeight = 19.sp,
++                                textAlign = TextAlign.End,
++                                modifier = Modifier.semantics {
++                                    contentDescription = str.missedTimes(slowo.times)
++                                },
++                            )
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/app/src/main/java/com/matura/app/ui/PlayScreen.kt b/app/src/main/java/com/matura/app/ui/PlayScreen.kt
+index 9652d9e..747c7be 100644
+--- a/app/src/main/java/com/matura/app/ui/PlayScreen.kt
++++ b/app/src/main/java/com/matura/app/ui/PlayScreen.kt
+@@ -28,7 +28,6 @@ import androidx.compose.foundation.Canvas
+ import androidx.compose.foundation.background
+ import androidx.compose.foundation.border
+ import androidx.compose.foundation.clickable
+-import androidx.compose.foundation.layout.Arrangement
+ import androidx.compose.foundation.layout.Box
+ import androidx.compose.foundation.layout.Column
+ import androidx.compose.foundation.layout.Row
+@@ -54,11 +53,15 @@ import androidx.compose.runtime.withFrameNanos
+ import androidx.compose.ui.Alignment
+ import androidx.compose.ui.Modifier
+ import androidx.compose.ui.geometry.Offset
++import androidx.compose.ui.geometry.Size
+ import androidx.compose.ui.graphics.Color
+ import androidx.compose.ui.graphics.drawscope.DrawScope
++import androidx.compose.ui.graphics.drawscope.Stroke
+ import androidx.compose.ui.graphics.drawscope.clipRect
+ import androidx.compose.ui.graphics.drawscope.rotate
+ import androidx.compose.ui.graphics.drawscope.translate
++import androidx.compose.ui.semantics.contentDescription
++import androidx.compose.ui.semantics.semantics
+ import androidx.compose.ui.unit.dp
+ import com.matura.app.BuildConfig
+ import com.matura.app.game.Crate
+@@ -68,6 +71,7 @@ import com.matura.app.game.GameEngine
+ import com.matura.app.game.GameSnapshot
+ import com.matura.app.game.LearningEvent
+ import com.matura.app.game.Matching
++import com.matura.app.game.Reveal
+ import com.matura.app.game.SubmitResult
+ import com.matura.app.learn.Attempt
+ import com.matura.app.learn.Srs
+@@ -79,6 +83,7 @@ import com.matura.app.model.WordSet
+ import kotlin.math.atan2
+ import kotlin.math.cos
+ import kotlin.math.hypot
++import kotlin.math.max
+ import kotlin.math.min
+ import kotlin.math.roundToInt
+ import android.Manifest
+@@ -134,6 +139,17 @@ fun opisStanuMikrofonu(stan: VoiceStan, lang: UiLanguage): String = when (stan)
+  */
+ fun wstrzymacRunde(paused: Boolean, gameOver: Boolean): Boolean = !paused && !gameOver
+ 
++/**
++ * Czy potworek, ktory doszedl do dziala, ma byc pokazany jako STRATA: drgniecie planszy i ton
++ * bledu.
++ *
++ * Silnik zglasza [FlashKind.LIFE_LOST] takze w rundzie spokojnej, chociaz zycia tam nie ubywa
++ * (nie dostal osobnej wartosci, zeby nie ruszac dzwiekow). Runda spokojna obiecuje uczniowi,
++ * ze za nieznane slowo nic nie traci, wiec ekran nie moze w tej samej chwili trzasc plansza
++ * i grac tonu porazki. Jedyna informacja zwrotna jest wtedy pokazana odpowiedz.
++ */
++fun czyStrata(flash: FlashKind?, calm: Boolean): Boolean = flash == FlashKind.LIFE_LOST && !calm
++
+ /**
+  * Podpis po awarii drogi glosowej (wyczerpana drabinka silnikow, brak okna systemowego).
+  *
+@@ -167,10 +183,11 @@ fun PlayScreen(
+      * Historia nauki (SaveData.progress) — zwykle dane, nie repozytorium: ekran gry nie ma
+      * czytac z dysku, a silnik ma zostac testowalny bez Androida.
+      *
+-     * PUSTA MAPA znaczy GRA O REKORD: slowa leca losowo, dokladnie jak przed wprowadzeniem
+-     * harmonogramu. Mapa niepusta wlacza dobor z powtorek. Wartosc domyslna jest wiec takze
+-     * zgodnoscia wstecz: wolajacy, ktory jeszcze nie podaje historii, dostaje zachowanie
+-     * sprzed tej zmiany, a nie polowicznie wlaczona nauke.
++     * PUSTA MAPA znaczy GRA O REKORD: o kolejnosci slow decyduje tasowanie, nie harmonogram.
++     * Slowa wychodza z przetasowanego worka, kazde raz na obieg (patrz GameEngine), wiec zadne
++     * nie wraca trzeci raz, zanim inne wyszlo pierwszy. Mapa niepusta wlacza dobor z powtorek.
++     * Wartosc domyslna znaczy wiec tyle, ze wolajacy, ktory nie podaje historii, dostaje zwykla
++     * gre o wynik, a nie polowicznie wlaczona nauke.
+      */
+     progress: Map<String, WordProgress> = emptyMap(),
+     /**
+@@ -178,6 +195,32 @@ fun PlayScreen(
+      * w srodku silnika: caly harmonogram ma byc testowalny na granicy doby — patrz Srs.
+      */
+     today: Int = Srs.dayOf(System.currentTimeMillis()),
++    /**
++     * RUNDA SPOKOJNA (GameConfig.calm): potworek przy dziale nie zabiera zycia i nie konczy
++     * rundy. Ekran nie rysuje wtedy serc i nie robi z przepuszczonego slowa straty (bez
++     * drgniecia planszy i bez tonu bledu): informacja zwrotna to pokazana odpowiedz.
++     */
++    calm: Boolean = false,
++    /**
++     * RUNDA SKONCZONA (GameConfig.finite): zamyka sie sama, gdy kazde slowo dostalo poprawna
++     * odpowiedz. W rogu planszy stoi wtedy licznik zaliczonych slow.
++     */
++    finite: Boolean = false,
++    /**
++     * Runda zamknela sie sama, bo uczen odpowiedzial na wszystko (GameSnapshot.completed).
++     * Wolane raz na runde, tuz przed [onFinished]; po koncu zyc i po wyjsciu w polowie nie
++     * jest wolane wcale. Osobne od [onFinished], bo rekord gry nie mowi, DLACZEGO runda sie
++     * skonczyla, a od tego zalezy, czy trasa sesji idzie dalej.
++     */
++    onCompleted: () -> Unit = {},
++    /**
++     * Runda jest krokiem czegos wiekszego (dzienna sesja, cwiczenie trudnych slow): glownym
++     * przyciskiem ekranu wyniku jest wtedy [continueLabel] i to wolajacy decyduje, dokad
++     * prowadzi. JESZCZE RAZ schodzi na drugie miejsce, a DO MENU znika, bo z takiej rundy
++     * nie wraca sie do menu. null zostawia zwykly uklad: JESZCZE RAZ i DO MENU.
++     */
++    onContinue: (() -> Unit)? = null,
++    continueLabel: String = str.next,
+     /**
+      * Zapis jednej proby (Repository.recordAttempt). Domyslnie pusty, bo ekran ma dzialac
+      * takze tam, gdzie nikt postepu nie zbiera — w podgladzie i w testach Compose.
+@@ -191,9 +234,10 @@ fun PlayScreen(
+     onAttempt: (Attempt) -> Unit,
+ ) {
+     var restarts by remember { mutableIntStateOf(0) }
+-    // Systemowy back = czyste wyjscie do menu (bez cichego gubienia rundy na SetPick).
++    // Systemowy back = czyste wyjscie z rundy tam, dokad prowadzi wolajacy (menu, a dla rundy
++    // z sesji albo z trudnych slow ekran, z ktorego ruszyla), bez cichego gubienia rundy na SetPick.
+     BackHandler { onExit() }
+-    val engine = remember(set.id, restarts, options.lives, options.direction, options.speed) {
++    val engine = remember(set.id, restarts, options.lives, options.direction, options.speed, calm, finite) {
+         GameEngine(
+             set = set,
+             config = GameConfig(
+@@ -206,6 +250,8 @@ fun PlayScreen(
+                 // silnik i kasowala trwajaca gre. Przekroczenie polnocy UTC — tak samo.
+                 progress = progress,
+                 today = today,
++                calm = calm,
++                finite = finite,
+             ),
+         )
+     }
+@@ -278,13 +324,16 @@ fun PlayScreen(
+ 
+     LaunchedEffect(snap.flash) {
+         val f = snap.flash
+-        if (f != null && f != lastFlash) sfx.play(f, options.soundEnabled)
++        // Ton bledu jest tonem straty, a runda spokojna strat nie ma (patrz [czyStrata]).
++        val bezStraty = f == FlashKind.LIFE_LOST && !czyStrata(f, snap.calm)
++        if (f != null && f != lastFlash && !bezStraty) sfx.play(f, options.soundEnabled)
+         lastFlash = f
+     }
+ 
+     LaunchedEffect(snap.gameOver) {
+         if (snap.gameOver && !reported) {
+             reported = true
++            if (snap.completed) onCompleted()
+             onFinished(
+                 ScoreRecord(
+                     playerName = playerName,
+@@ -763,7 +812,35 @@ fun PlayScreen(
+     // czy jest zwykla gra o wynik: dobor slow rozni sie miedzy nimi zasadniczo i bez podpisu
+     // wygladalby na kaprys losowania. Bez nowego ekranu przed gra — o trybie rozstrzyga to,
+     // czy wolajacy poda historie nauki tego zestawu (patrz [progress]).
+-    val podpisTrybu = if (engine.plannedLearning) t("NAUKA", "STUDY", lang) else t("REKORD", "SCORE", lang)
++    //
++    // Runda spokojna jest NAUKA takze wtedy, gdy uczen nie ma jeszcze zadnej historii (pierwsza
++    // sesja na swiezej instalacji): jej wynik nie idzie do rankingu, wiec REKORD bylby nieprawda.
++    val podpisTrybu =
++        if (engine.plannedLearning || calm) t("NAUKA", "STUDY", lang) else t("REKORD", "SCORE", lang)
++
++    // KONIEC RUNDY: ekran wyniku stoi ZAMIAST planszy, pola odpowiedzi, paska glosu i klawiatury,
++    // a nie nad nimi. Nakladka w ramce planszy byla ucinana na niskich telefonach (patrz
++    // EkranWyniku), a klawisze pod spodem zostawaly pod palcem i w drzewie czytnika ekranu.
++    // Wczesny powrot zdejmuje je z kompozycji; stan rundy i efekty zalozone wyzej zyja dalej,
++    // wiec JESZCZE RAZ tworzy nowy silnik tym samym licznikiem `restarts` co dotad.
++    if (snap.gameOver) {
++        WynikRundyKlasycznej(
++            snap = snap,
++            str = str,
++            onAgain = { restarts++ },
++            onMenu = onExit,
++            onContinue = onContinue,
++            continueLabel = continueLabel,
++        )
++        return
++    }
++
++    // Odkryta odpowiedz jest rysunkiem na Canvasie, wiec bez opisu nie istnialaby dla czytnika
++    // ekranu wcale. Minimum to obecnosc w semantyce: kto najedzie na plansze, uslyszy pare slow.
++    val odkrycie = snap.reveal
++    val opisPlanszy = if (odkrycie != null) {
++        Modifier.semantics { contentDescription = odkrycie.prompt + ": " + odkrycie.solution }
++    } else Modifier
+ 
+     Column(
+         Modifier
+@@ -777,7 +854,7 @@ fun PlayScreen(
+                 .padding(5.dp)
+                 .border(3.dp, Palette.Ink)
+         ) {
+-            Canvas(Modifier.fillMaxSize()) {
++            Canvas(Modifier.fillMaxSize().then(opisPlanszy)) {
+                 drawField(
+                     snap, highlighted, highlightedCrates, theme, sprites, font, options,
+                     muzzle, podpisTrybu,
+@@ -830,10 +907,6 @@ fun PlayScreen(
+                 }
+             }
+ 
+-            if (snap.gameOver) {
+-                GameOverOverlay(snap, str, sprites, font, onAgain = { restarts++ }, onMenu = onExit)
+-            }
+-
+             diagnostyka?.let { tekst ->
+                 DiagnosticsOverlay(tekst, str, font, onClose = { zamknijDiagnostyke() })
+             }
+@@ -972,45 +1045,50 @@ private fun AnswerBar(typed: String, cursor: Int, font: PixelFont) {
+     }
+ }
+ 
++/**
++ * Wynik rundy klasycznej: dwa zakonczenia na jednym ukladzie ([EkranWyniku]).
++ *
++ * Koniec zyc zostaje przy czaszce i czerwonym KONIEC GRY. Runda skonczona, ktora zamknela sie
++ * sama, dostaje zielony znak i wlasny tytul: uczen, ktory odpowiedzial na wszystko, nie moze
++ * zobaczyc ekranu porazki. Roznice niesie ikona i napis, kolor jest dodatkiem.
++ *
++ * Pod punktami stoi to, po co ten ekran jest w trybie do nauki: slowa, ktore doszly do dziala,
++ * razem z odpowiedziami.
++ */
+ @Composable
+-private fun GameOverOverlay(
++private fun WynikRundyKlasycznej(
+     snap: GameSnapshot,
+     str: Str,
+-    sprites: Sprites,
+-    font: PixelFont,
+     onAgain: () -> Unit,
+     onMenu: () -> Unit,
++    onContinue: (() -> Unit)?,
++    continueLabel: String,
+ ) {
+-    Box(
+-        Modifier
+-            .fillMaxSize()
+-            .background(Palette.Ink.copy(alpha = 0.86f)),
+-        contentAlignment = Alignment.Center,
+-    ) {
+-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+-            PixelImage(pixel(com.matura.app.R.drawable.skull), Modifier.size(60.dp))
+-            Spacer(Modifier.height(12.dp))
+-            PixelText(str.gameOver, color = Palette.Danger, glyphHeight = 18.dp, font = font)
+-            Spacer(Modifier.height(16.dp))
+-            Row(verticalAlignment = Alignment.CenterVertically) {
+-                PixelImage(sprites.coin, Modifier.size(26.dp))
+-                Spacer(Modifier.width(9.dp))
+-                PixelText("${snap.score}", color = Palette.Gold, glyphHeight = 26.dp, font = font)
+-            }
+-            Spacer(Modifier.height(14.dp))
+-            PixelText(
+-                "LVL ${snap.level}  ${str.killsLabel} ${snap.kills}  x${snap.bestStreak}",
+-                color = Palette.Muted,
+-                glyphHeight = 9.dp,
+-                font = font,
+-            )
+-            Spacer(Modifier.height(24.dp))
+-            Row(horizontalArrangement = Arrangement.Center) {
+-                PrimaryButton(str.playAgain, onClick = onAgain)
+-                Spacer(Modifier.width(12.dp))
+-                GhostButton(str.toMenu, onClick = onMenu)
+-            }
+-        }
++    val jeszczeRaz = PrzyciskWyniku(str.playAgain, onAgain)
++    EkranWyniku(
++        ikona = pixel(
++            if (snap.completed) com.matura.app.R.drawable.checkmark else com.matura.app.R.drawable.skull
++        ),
++        tytul = if (snap.completed) str.roundComplete else str.gameOver,
++        kolorTytulu = if (snap.completed) Palette.Accent else Palette.Danger,
++        punkty = snap.score,
++        opisPunktow = str.score + " " + snap.score,
++        glowny = if (onContinue != null) PrzyciskWyniku(continueLabel, onContinue) else jeszczeRaz,
++        drugi = if (onContinue != null) jeszczeRaz else PrzyciskWyniku(str.toMenu, onMenu),
++    ) { szerokosc ->
++        Spacer(Modifier.height(8.dp))
++        PixelText(
++            "LVL ${snap.level}  ${str.killsLabel} ${snap.kills}  x${snap.bestStreak}",
++            color = Palette.Muted,
++            glyphHeight = 9.dp,
++            maxWidthDp = szerokosc,
++            // Skroty z planszy (LVL, x5) czytane na glos nic nie znacza, wiec czytnik dostaje
++            // te same trzy liczby z pelnymi nazwami.
++            opis = str.level + " " + snap.level + ", " + str.killsLabel + " " + snap.kills +
++                ", " + str.bestStreakLabel + " " + snap.bestStreak,
++        )
++        Spacer(Modifier.height(16.dp))
++        ListaDoPowtorki(snap.missedWords, str)
+     }
+ }
+ 
+@@ -1089,7 +1167,8 @@ private fun DrawScope.drawField(
+     }
+ 
+     // A hit knocks the whole field about a little; keeps the camera alive without animation.
+-    val shake = if (snap.flash == FlashKind.LIFE_LOST) unit * 0.006f else 0f
++    // Not in a calm round: nothing is lost there, so nothing shakes (see czyStrata).
++    val shake = if (czyStrata(snap.flash, snap.calm)) unit * 0.006f else 0f
+ 
+     translate(
+         left = if (shake > 0f) (snap.elapsed * 97f % 2f - 1f) * shake else 0f,
+@@ -1173,6 +1252,102 @@ private fun DrawScope.drawField(
+             drawCentredLabel(font, "LVL ${snap.level}", w / 2f, by + bh * 0.18f, fs, Palette.Ink, outline = null)
+         }
+     }
++
++    // Outside the shake and after everything else: this is text to be read, so it stands still
++    // and nothing is drawn over it.
++    snap.reveal?.let { drawReveal(it, font, unit, fs) }
++}
++
++/** How long before it disappears the revealed answer starts to fade, in seconds. */
++private const val REVEAL_FADE = 0.5f
++
++/**
++ * The answer the game was waiting for, shown for [GameEngine.REVEAL_TIME] after a monster has
++ * reached the cannon: the prompt, and under it the solution in gold, on a dark plate.
++ *
++ * Without it the classic mode taught nothing on first contact: an unknown word walked in, took
++ * a life and vanished, and the student never saw what it meant.
++ *
++ * WHERE: right BELOW the cannon. A monster's label is drawn above the monster, so the label of
++ * the one that arrives next (the word the student is typing right now) sits level with the
++ * cannon or above it. Measured on 60 simulated rounds per board size: a plate above the cannon
++ * lay on the label of a monster less than six seconds from the cannon in 20 to 48 percent of
++ * the frames it was visible, a plate below it in 0 to 2 percent. Below, the plate only crosses
++ * the bodies of monsters coming from the lower lanes and now and then the tail of a far label.
++ *
++ * It keeps clear of the HUD: the two bottom corners hold the score and the level, so the plate
++ * never goes lower than the row they stand in, and it is centred, away from both.
++ *
++ * Text longer than the canvas is drawn smaller, in whole steps, because the bitmap font only
++ * stays sharp at integer scales. One that does not fit even at scale 1 is centred, as a long
++ * monster label is.
++ */
++private fun DrawScope.drawReveal(reveal: Reveal, font: PixelFont, unit: Float, fs: Float) {
++    val alpha = (reveal.ttl / REVEAL_FADE).coerceIn(0f, 1f)
++    if (alpha <= 0f) return
++
++    fun textWidth(scale: Float) =
++        max(font.widthPx(reveal.prompt, scale), font.widthPx(reveal.solution, scale))
++    fun plateWidth(scale: Float) = textWidth(scale) + 6f * scale
++
++    // The plate may run from edge to edge: asking for a margin as well would drop a long answer
++    // a whole size on a board where it fits.
++    var scale = fs
++    while (scale > 1f && plateWidth(scale) > size.width) scale -= 1f
++
++    // Vertical rhythm in font pixels: accents reach 3 px above a glyph and ogonki 3 px below it,
++    // so 4 px of padding and 5 px between the lines keep every mark inside the plate.
++    val glyph = PixelFont.GLYPH_H * scale
++    val plateW = plateWidth(scale)
++    val plateH = 4f * scale + glyph + 5f * scale + glyph + 4f * scale
++    val left = clampToCanvas(size.width / 2f - plateW / 2f, plateW, 0f)
++    // Bottom HUD row, same numbers as drawHud: the plate stops above it when the board is so
++    // low that the two would meet.
++    val gap = 2f * fs
++    val hudTop = size.height - unit * 0.030f - unit * 0.048f
++    val top = (size.height * GameEngine.CANNON_Y + unit * 0.058f)
++        .coerceAtMost(hudTop - gap - plateH)
++        .coerceAtLeast(gap)
++
++    drawRect(
++        color = Palette.Ink.copy(alpha = 0.80f * alpha),
++        topLeft = Offset(left, top),
++        size = Size(plateW, plateH),
++    )
++    drawRect(
++        color = Palette.SurfaceHigh.copy(alpha = alpha),
++        topLeft = Offset(left, top),
++        size = Size(plateW, plateH),
++        style = Stroke(width = scale),
++    )
++
++    val outline = Palette.Ink.copy(alpha = alpha)
++    val promptY = top + 4f * scale
++    drawPixelText(
++        font, reveal.prompt,
++        x = size.width / 2f - font.widthPx(reveal.prompt, scale) / 2f,
++        y = promptY,
++        scale = scale,
++        color = Palette.Bone.copy(alpha = alpha),
++        outline = outline,
++    )
++    drawPixelText(
++        font, reveal.solution,
++        x = size.width / 2f - font.widthPx(reveal.solution, scale) / 2f,
++        y = promptY + glyph + 5f * scale,
++        scale = scale,
++        color = Palette.Gold.copy(alpha = alpha),
++        outline = outline,
++    )
++}
++
++/**
++ * Keeps something [width] wide inside the canvas, [margin] away from both edges. Wider than
++ * the canvas, it is centred instead, so that it runs off both sides evenly.
++ */
++private fun DrawScope.clampToCanvas(x: Float, width: Float, margin: Float): Float = when {
++    width + 2 * margin >= size.width -> (size.width - width) / 2f   // dłuższe niż ekran
++    else -> x.coerceIn(margin, size.width - width - margin)
+ }
+ 
+ /**
+@@ -1195,13 +1370,7 @@ private fun DrawScope.drawCentredLabel(
+ ) {
+     val width = font.widthPx(text, scale)
+     var x = cx - width / 2f
+-    if (clampToCanvas) {
+-        val margin = 2f * scale
+-        x = when {
+-            width + 2 * margin >= size.width -> (size.width - width) / 2f   // dłuższe niż ekran
+-            else -> x.coerceIn(margin, size.width - width - margin)
+-        }
+-    }
++    if (clampToCanvas) x = clampToCanvas(x, width, 2f * scale)
+     drawPixelText(
+         font = font,
+         text = text,
+@@ -1257,10 +1426,31 @@ private fun DrawScope.drawHud(
+     val pad = unit * 0.030f
+     val iconH = unit * 0.048f
+ 
+-    // lives, top-left
+-    for (i in 0 until snap.maxLives) {
+-        val sprite = if (i < snap.lives) sprites.heart else sprites.heartEmpty
+-        drawSprite(sprite, pad + iconH / 2f + i * (iconH + unit * 0.012f), pad + iconH / 2f, iconH)
++    // lives, top-left. A calm round takes no lives, so hearts that can never empty would only
++    // promise a penalty that does not exist: they are not drawn at all.
++    var cornerY = pad + iconH / 2f
++    if (!snap.calm) {
++        for (i in 0 until snap.maxLives) {
++            val sprite = if (i < snap.lives) sprites.heart else sprites.heartEmpty
++            drawSprite(sprite, pad + iconH / 2f + i * (iconH + unit * 0.012f), cornerY, iconH)
++        }
++        cornerY += iconH + unit * 0.014f
++    }
++
++    // Progress of a finite round, in the same corner: how many words have had a correct answer
++    // and how many there are. It takes the place of the hearts in a calm round and stands under
++    // them otherwise (beside them it would run into the pause button with five lives or more).
++    // Both numbers are zero unless the round is finite, so this needs no separate flag.
++    if (snap.targetsTotal > 0) {
++        drawSprite(sprites.iconTarget, pad + iconH / 2f, cornerY, iconH * 0.8f)
++        drawPixelText(
++            font,
++            "${snap.targetsDone}/${snap.targetsTotal}",
++            pad + iconH + unit * 0.012f,
++            cornerY - PixelFont.GLYPH_H * fs / 2f,
++            fs,
++            Palette.Bone,
++        )
+     }
+ 
+     // ammo, top-right. Basic rounds are endless, so an "∞" readout could never change
+diff --git a/app/src/main/java/com/matura/app/ui/Strings.kt b/app/src/main/java/com/matura/app/ui/Strings.kt
+index dc8d900..c6e5ca7 100644
+--- a/app/src/main/java/com/matura/app/ui/Strings.kt
++++ b/app/src/main/java/com/matura/app/ui/Strings.kt
+@@ -458,8 +458,23 @@ class Str(private val lang: UiLanguage) {
+     val score get() = pick("Punkty", "Score")
+     val level get() = pick("Poziom", "Level")
+     val gameOver get() = pick("KONIEC GRY", "GAME OVER")
++    /** Tytul ekranu wyniku, gdy runda skonczona zamknela sie sama: kazde slowo ma odpowiedz. */
++    val roundComplete get() = pick("RUNDA UKOŃCZONA", "ROUND COMPLETE")
+     val playAgain get() = pick("JESZCZE RAZ", "PLAY AGAIN")
+     val toMenu get() = pick("DO MENU", "TO MENU")
++    /** Glowny przycisk ekranu wyniku, gdy runda jest krokiem czegos wiekszego (sesja, trudne slowa). */
++    val next get() = pick("DALEJ", "NEXT")
++
++    // ---- EKRAN WYNIKU: slowa, ktore doszly do dziala --------------------------
++    // Naglowek rysuje czcionka pikselowa, wiec bez nawiasow i cudzyslowow; wiersze listy i
++    // zdanie o pustej liscie ida zwyklym Text.
++    val toReview get() = pick("DO POWTÓRKI", "TO REVIEW")
++    val nothingMissed get() = pick(
++        "Nic do powtórki: żadne słowo nie doszło do działka.",
++        "Nothing to review: no word reached the cannon.",
++    )
++    /** Licznik przy slowie przepuszczonym wiecej niz raz, dla czytnika ekranu (na ekranie stoi "×2"). */
++    fun missedTimes(n: Int): String = pick("$n razy", "$n times")
+     val pause get() = pick("Pauza", "Pause")
+     val resume get() = pick("Wróć do gry", "Resume")
+     val killsLabel get() = pick("Pokonane", "Defeated")
+diff --git a/app/src/test/java/com/matura/app/PersistenceTest.kt b/app/src/test/java/com/matura/app/PersistenceTest.kt
+index 4e1f8fd..00ae65e 100644
+--- a/app/src/test/java/com/matura/app/PersistenceTest.kt
++++ b/app/src/test/java/com/matura/app/PersistenceTest.kt
+@@ -244,6 +244,37 @@ class PersistenceTest {
+         assertEquals("Nowe imie", Repository(katalog.root).load().profile.name)
+     }
+ 
++    @Test
++    fun `runda spokojna liczy sie jako rozegrana, ale nie trafia do rankingu ani do rekordow`() {
++        // Rundy spokojnej nie da sie przegrac: gra sie ja tak dlugo, az sie skonczy sama. Jej
++        // wynik obok prawdziwych gier byl by rekordem za cierpliwosc, a odznaki za punkty
++        // i serie odblokowywalyby sie w trybie, w ktorym nie ma czego ryzykowac.
++        val repo = Repository(katalog.root)
++        assertTrue(repo.save(daneUcznia("Kuba")))
++        val przed = repo.load()
++
++        val spokojna = ScoreRecord("Kuba", "Moje słówka", 5_000, 1, 40, 12, 1_700_000_100_000L)
++        assertTrue(repo.recordGame(spokojna, "user-1", doRankingu = false))
++
++        val po = Repository(katalog.root).load()
++        assertEquals("ranking nie moze dostac rundy, ktorej nie da sie przegrac", przed.scores, po.scores)
++        assertEquals(przed.profile.bestScore, po.profile.bestScore)
++        assertEquals(przed.profile.bestStreak, po.profile.bestStreak)
++        // Runda sie jednak odbyla: gra, pokonane potworki i rozegranie zestawu licza sie jak zawsze.
++        assertEquals(przed.profile.gamesPlayed + 1, po.profile.gamesPlayed)
++        assertEquals(przed.profile.totalKills + 12, po.profile.totalKills)
++        assertEquals(1, po.sets.first { it.id == "user-1" }.timesPlayed)
++
++        // Kontrola: ta sama runda zapisana zwyczajnie trafia wszedzie, wiec to parametr ja wstrzymal.
++        assertTrue(repo.recordGame(spokojna, "user-1"))
++        val zwykla = Repository(katalog.root).load()
++        assertEquals(przed.scores.size + 1, zwykla.scores.size)
++        assertEquals(5_000, zwykla.profile.bestScore)
++        assertEquals(40, zwykla.profile.bestStreak)
++        assertEquals(przed.profile.gamesPlayed + 2, zwykla.profile.gamesPlayed)
++        assertEquals(2, zwykla.sets.first { it.id == "user-1" }.timesPlayed)
++    }
++
+     @Test
+     fun `plik bez pola wersji dostaje numer schematu, a powtorne wczytanie nic nie zmienia`() {
+         // Zapis sprzed wersjonowania: pola schemaVersion w pliku po prostu nie ma.
+diff --git a/app/src/test/java/com/matura/app/SesjaTest.kt b/app/src/test/java/com/matura/app/SesjaTest.kt
+index d14f14b..e2d685d 100644
+--- a/app/src/test/java/com/matura/app/SesjaTest.kt
++++ b/app/src/test/java/com/matura/app/SesjaTest.kt
+@@ -10,8 +10,10 @@ import com.matura.app.learn.Srs
+ import com.matura.app.learn.Stage
+ import com.matura.app.learn.StanSesji
+ import com.matura.app.model.Direction
++import com.matura.app.model.SaveData
+ import com.matura.app.model.TaskKind
+ import com.matura.app.model.WordProgress
++import kotlinx.serialization.json.Json
+ import org.junit.Assert.assertEquals
+ import org.junit.Assert.assertFalse
+ import org.junit.Assert.assertNull
+@@ -441,4 +443,388 @@ class SesjaTest {
+         // Pierwsza nauka to awans 0 -> 1, czyli powrot jutro.
+         assertEquals(Srs.intervalDays(Srs.FIRST_BOX), pods.nastepnaPowtorkaZaDni)
+     }
++
++    // --- trasa dnia jest zamrozona ----------------------------------------------------------
++
++    /** Uczen odpowiada poprawnie na [ids]: nauka idzie do mapy postepu, slad do stanu sesji. */
++    private fun przerob(
++        ids: List<String>,
++        plan: PlanSesji,
++        stan: StanSesji,
++        progress: Map<String, WordProgress>,
++    ): Pair<StanSesji, Map<String, WordProgress>> {
++        var s = stan
++        var p = progress
++        for (id in ids) {
++            p = odpowiedz(p, id, DZIS)
++            s = Sesja.zaliczOdpowiedz(s, plan, id, Outcome.POPRAWNA)
++        }
++        return s to p
++    }
++
++    @Test
++    fun `po pierwszym kroku trasa dalej ma te same piec slow, a licznik domyka sie na 5 z 5`() {
++        // Slownik wiekszy niz jedna sesja: to on ujawnial blad. Slowa odpowiedziane poprawnie
++        // nie sa juz zalegle, wiec plan ukladany od nowa wpuszczal na ich miejsce piec kolejnych.
++        val slownik = slowa(30)
++        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
++        val pierwszaPiatka = slownik.take(Sesja.MAKS_NOWYCH)
++        assertEquals(pierwszaPiatka, plan.nowe)
++
++        val (stan, progress) = przerob(plan.nowe, plan, Sesja.rozpocznij(plan, Zegar(0L)), emptyMap())
++
++        // Kontrola: stara droga naprawde zmieniala trase. Bez tej asercji test przechodzilby
++        // takze wtedy, gdyby harmonogram w ogole nie ruszal sie po odpowiedziach.
++        val poStaremu = Sesja.zaplanuj(progress, slownik, KIERUNEK, DZIS)
++        assertEquals(slownik.subList(5, 10), poStaremu.nowe)
++
++        val poPowrocie = Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS)
++
++        assertEquals(pierwszaPiatka, poPowrocie.nowe)
++        assertTrue(poPowrocie.powtorki.isEmpty())
++        assertEquals(pierwszaPiatka, krok(poPowrocie, RodzajKroku.POWTORKA).cele)
++        // "To samo slownictwo jeszcze raz" ma byc tym samym slownictwem.
++        assertEquals(pierwszaPiatka, krok(poPowrocie, RodzajKroku.GRA).cele)
++        assertFalse("szoste slowo weszlo na trase", "w06" in poPowrocie.slownictwo)
++        assertEquals(
++            listOf(RodzajKroku.POWTORKA, RodzajKroku.GRA, RodzajKroku.PODSUMOWANIE),
++            poPowrocie.kroki.map { it.rodzaj },
++        )
++        // Na trasie sa nowe slowa, wiec runda gry zostaje spokojna takze po powrocie.
++        assertTrue(krok(poPowrocie, RodzajKroku.GRA).spokojny)
++
++        val postep = Sesja.postep(Sesja.wznow(stan, poPowrocie, Zegar(0L)), poPowrocie)
++        assertEquals(5, postep.celeZrobione)
++        assertEquals(5, postep.celeRazem)
++
++        val pods = Sesja.podsumuj(poPowrocie, stan, progress, DZIS)
++        assertEquals(5, pods.nowe)
++        assertEquals(5, pods.zaplanowane)
++    }
++
++    @Test
++    fun `trasa zostaje ta sama takze w drugim kroku i po kolejnych odpowiedziach`() {
++        val slownik = slowa(30)
++        val plan0 = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
++        var (stan, progress) = przerob(plan0.nowe, plan0, Sesja.rozpocznij(plan0, Zegar(0L)), emptyMap())
++
++        val plan1 = Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS)
++        stan = Sesja.poUkonczonejRundzie(stan, plan1, 0)
++        // Druga runda: te same slowa jeszcze raz. Awansu juz dzis nie bedzie, ale trasa stoi.
++        val poDrugiej = przerob(plan1.slownictwo, plan1, stan, progress)
++        stan = Sesja.poUkonczonejRundzie(poDrugiej.first, plan1, 1)
++        progress = poDrugiej.second
++
++        val plan2 = Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS)
++
++        assertEquals(plan1, plan2)
++        assertEquals(RodzajKroku.PODSUMOWANIE, Sesja.biezacy(stan, plan2)?.rodzaj)
++        assertEquals(5, Sesja.postep(stan, plan2).celeRazem)
++    }
++
++    @Test
++    fun `pierwszy dzien zostaje pierwszym dniem takze po pierwszej rundzie`() {
++        val slownik = slowa(30)
++        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
++        assertTrue(plan.bezHistorii)
++        val (stan, progress) = przerob(plan.nowe, plan, Sesja.rozpocznij(plan, Zegar(0L)), emptyMap())
++
++        // Slowa trasy maja juz historie, bo uczen wlasnie na nie odpowiedzial. Naglowek ekranu
++        // nie moze od tego przestac mowic, ze to pierwszy dzien z tym slownictwem.
++        assertTrue(Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS).bezHistorii)
++
++        // Historia slowa SPOZA trasy to juz co innego: uczen gral tym slownictwem poza sesja.
++        val zInnaGra = odpowiedz(progress, "w20", DZIS)
++        assertFalse(Sesja.planNaDzis(stan, zInnaGra, slownik, KIERUNEK, DZIS).bezHistorii)
++    }
++
++    @Test
++    fun `stan z innego dnia nie trzyma trasy - dzis plan powstaje na swiezo`() {
++        val slownik = slowa(30)
++        val wczoraj = DZIS - 1
++        val planWczoraj = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, wczoraj)
++        var stan = Sesja.rozpocznij(planWczoraj, Zegar(0L))
++        var progress: Map<String, WordProgress> = emptyMap()
++        for (id in planWczoraj.nowe.take(2)) {
++            progress = odpowiedz(progress, id, wczoraj)
++            stan = Sesja.zaliczOdpowiedz(stan, planWczoraj, id, Outcome.POPRAWNA)
++        }
++
++        val dzis = Sesja.planNaDzis(stan, progress, slownik, KIERUNEK, DZIS)
++
++        assertEquals(Sesja.zaplanuj(progress, slownik, KIERUNEK, DZIS), dzis)
++        // Dwa wczorajsze slowa wracaja dzis jako powtorki, trzy nietkniete nie maja pierwszenstwa
++        // tylko dlatego, ze staly na wczorajszej trasie: dzien bez dokonczenia niczego nie rezerwuje.
++        assertEquals(listOf("w01", "w02"), dzis.powtorki)
++        assertEquals(DZIS, dzis.dzien)
++        // A stan z wczoraj po prostu ustepuje nowej sesji, bez kary i bez sladu.
++        val nowy = Sesja.wznow(stan, dzis, Zegar(7L))
++        assertEquals(DZIS, nowy.dzien)
++        assertEquals(0, nowy.krok)
++        assertTrue(nowy.zrobione.isEmpty())
++        assertEquals(dzis.powtorki, nowy.trasaPowtorki)
++        assertEquals(dzis.nowe, nowy.trasaNowe)
++    }
++
++    @Test
++    fun `zakonczona sesja nie trzyma trasy - nastepna tego samego dnia jest nowa`() {
++        val slownik = slowa(30)
++        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
++        val (stan, progress) = przerob(plan.nowe, plan, Sesja.rozpocznij(plan, Zegar(0L)), emptyMap())
++        val zakonczona = Sesja.zakoncz(stan, plan)
++
++        val nastepna = Sesja.planNaDzis(zakonczona, progress, slownik, KIERUNEK, DZIS)
++
++        assertEquals(Sesja.zaplanuj(progress, slownik, KIERUNEK, DZIS), nastepna)
++        assertEquals(slownik.subList(5, 10), nastepna.nowe)
++    }
++
++    @Test
++    fun `stan bez trasy ze starszej wersji dostaje plan na swiezo i trase przy wznowieniu`() {
++        // Tak wyglada zapis sprzed wprowadzenia trasy: ten sam dzien, krok i zrobione slowa sa,
++        // list trasy nie ma (wartosci domyslne).
++        val slownik = slowa(30)
++        var progress: Map<String, WordProgress> = emptyMap()
++        for (id in slownik.take(5)) progress = odpowiedz(progress, id, DZIS)
++        val stary = StanSesji(dzien = DZIS, krok = 1, zrobioneNowe = slownik.take(5), startMs = 99L)
++        assertTrue(stary.trasaPowtorki.isEmpty() && stary.trasaNowe.isEmpty())
++
++        val plan = Sesja.planNaDzis(stary, progress, slownik, KIERUNEK, DZIS)
++        assertEquals(Sesja.zaplanuj(progress, slownik, KIERUNEK, DZIS), plan)
++
++        val wznowiony = Sesja.wznow(stary, plan, Zegar(0L))
++        // Miejsce w trasie, zrobione slowa i chwila startu zostaja; dochodzi sama trasa.
++        assertEquals(1, wznowiony.krok)
++        assertEquals(slownik.take(5), wznowiony.zrobioneNowe)
++        assertEquals(99L, wznowiony.startMs)
++        assertEquals(plan.powtorki, wznowiony.trasaPowtorki)
++        assertEquals(plan.nowe, wznowiony.trasaNowe)
++        assertEquals(plan.kierunek, wznowiony.trasaKierunek)
++
++        // Od tej chwili trasa stoi, cokolwiek uczen odpowie.
++        val (poRundzie, poOdpowiedziach) = przerob(plan.nowe, plan, wznowiony, progress)
++        assertEquals(plan, Sesja.planNaDzis(poRundzie, poOdpowiedziach, slownik, KIERUNEK, DZIS))
++        // Slowa zrobione przed aktualizacja licza sie dalej, wiec licznik sie domyka.
++        val postep = Sesja.postep(poRundzie, plan)
++        assertEquals(postep.celeRazem, postep.celeZrobione)
++    }
++
++    @Test
++    fun `stary zapis stanu sesji bez pol trasy dalej sie wczytuje`() {
++        // Dokladnie te pola, ktore StanSesji mial przed wprowadzeniem trasy.
++        val staryJson = """{"dzien":19875,"krok":1,"zrobionePowtorki":["w01"],""" +
++            """"zrobioneNowe":["w07","w08"],"startMs":1234,"odpowiedzWToku":false,"zakonczona":false}"""
++        // Ta sama konfiguracja co w Repository.
++        val json = Json { prettyPrint = false; ignoreUnknownKeys = true; encodeDefaults = true }
++
++        val stan = json.decodeFromString(StanSesji.serializer(), staryJson)
++
++        assertEquals(
++            StanSesji(
++                dzien = DZIS,
++                krok = 1,
++                zrobionePowtorki = listOf("w01"),
++                zrobioneNowe = listOf("w07", "w08"),
++                startMs = 1234L,
++            ),
++            stan,
++        )
++        assertTrue(stan.trasaPowtorki.isEmpty())
++        assertTrue(stan.trasaNowe.isEmpty())
++
++        // To samo w calym dokumencie zapisu, bo tak ten stan lezy na dysku.
++        val dokument = json.decodeFromString(SaveData.serializer(), """{"schemaVersion":3,"sesja":$staryJson}""")
++        assertEquals(stan, dokument.sesja)
++
++        // A nowy stan przechodzi przez zapis i odczyt razem z trasa.
++        val zTrasa = stan.copy(
++            trasaPowtorki = listOf("w01"),
++            trasaNowe = listOf("w07", "w08"),
++            trasaKierunek = Direction.DEF_TO_TERM,
++        )
++        assertEquals(zTrasa, json.decodeFromString(StanSesji.serializer(), json.encodeToString(StanSesji.serializer(), zTrasa)))
++    }
++
++    @Test
++    fun `trasa trzyma kierunek, w ktorym ja ulozono, takze po zmianie ustawienia`() {
++        val slownik = slowa(10)
++        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, Direction.DEF_TO_TERM, DZIS)
++        val stan = Sesja.zaliczOdpowiedz(Sesja.rozpocznij(plan, Zegar(0L)), plan, "w01", Outcome.POPRAWNA)
++        assertEquals(Direction.DEF_TO_TERM, stan.trasaKierunek)
++
++        // Uczen przestawil kierunek w opcjach w polowie sesji. Licznik, runda i podsumowanie
++        // maja dalej mowic o tych samych slowach w tym samym kierunku.
++        val poZmianie = Sesja.planNaDzis(stan, emptyMap(), slownik, Direction.TERM_TO_DEF, DZIS)
++
++        assertEquals(Direction.DEF_TO_TERM, poZmianie.kierunek)
++        assertEquals(plan.nowe, poZmianie.nowe)
++    }
++
++    @Test
++    fun `slowo usuniete ze slownika wypada z trasy, zamiast blokowac licznik`() {
++        val slownik = slowa(10)
++        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
++        val (stan, progress) = przerob(listOf("w01"), plan, Sesja.rozpocznij(plan, Zegar(0L)), emptyMap())
++
++        // Uczen usunal wlasny zestaw ze slowami w03 i w05: zadna runda juz ich nie pokaze.
++        val bezDwoch = slownik - listOf("w03", "w05")
++        val poUsunieciu = Sesja.planNaDzis(stan, progress, bezDwoch, KIERUNEK, DZIS)
++
++        assertEquals(listOf("w01", "w02", "w04"), poUsunieciu.nowe)
++        assertEquals(3, Sesja.postep(stan, poUsunieciu).celeRazem)
++
++        // Gdy z trasy nie zostalo nic, plan powstaje na swiezo z tego, co jest.
++        val inny = slowa(4, "x")
++        assertEquals(
++            Sesja.zaplanuj(progress, inny, KIERUNEK, DZIS),
++            Sesja.planNaDzis(stan, progress, inny, KIERUNEK, DZIS),
++        )
++    }
++
++    @Test
++    fun `trasa z kierunkiem losowym w zapisie nie wywraca ekranu sesji`() {
++        // RANDOM to ustawienie, nie kierunek, wiec w trasie moze sie wziac tylko z uszkodzonego
++        // pliku. Srs.key rzuca na nim wyjatkiem, a plan sklada sie w trakcie rysowania ekranu.
++        val slownik = slowa(10)
++        val plan = Sesja.planNaDzis(null, emptyMap(), slownik, KIERUNEK, DZIS)
++        val zepsuty = Sesja.zaliczOdpowiedz(Sesja.rozpocznij(plan, Zegar(0L)), plan, "w01", Outcome.POPRAWNA)
++            .copy(trasaKierunek = Direction.RANDOM)
++
++        val odzyskany = Sesja.planNaDzis(zepsuty, emptyMap(), slownik, KIERUNEK, DZIS)
++
++        assertEquals(Sesja.zaplanuj(emptyMap(), slownik, KIERUNEK, DZIS), odzyskany)
++        // Wznowienie naprawia stan: dostaje trase i kierunek z planu.
++        assertEquals(KIERUNEK, Sesja.wznow(zepsuty, odzyskany, Zegar(0L)).trasaKierunek)
++    }
++
++    @Test
++    fun `nowa sesja zapamietuje trase w kolejnosci planu`() {
++        val zalegle = slowa(3)
++        val progress = postepy(zalegle, box = 1, dueDay = DZIS - 1)
++        val plan = Sesja.zaplanuj(progress, zalegle + slowa(4, "n"), KIERUNEK, DZIS)
++
++        val stan = Sesja.rozpocznij(plan, Zegar(5L))
++
++        assertEquals(plan.powtorki, stan.trasaPowtorki)
++        assertEquals(plan.nowe, stan.trasaNowe)
++        assertEquals(KIERUNEK, stan.trasaKierunek)
++        // Plan odtworzony z zapisu jest tym samym planem, a nie podobnym.
++        assertEquals(plan, Sesja.planNaDzis(stan, progress, zalegle + slowa(4, "n"), KIERUNEK, DZIS))
++    }
++
++    // --- co wolno nazwac wznowiona sesja ----------------------------------------------------
++
++    @Test
++    fun `sesja tylko otwarta nie jest sesja do wznowienia`() {
++        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
++        val swieza = Sesja.rozpocznij(plan, Zegar(0L))
++
++        assertFalse(Sesja.czyRuszona(swieza))
++        assertFalse("plakietka WZNOWIONA nad sesja, w ktorej nic sie nie wydarzylo", Sesja.czyWznawialna(swieza, DZIS))
++
++        // Wystarczy jedna odpowiedz albo jedno przejscie dalej.
++        val poOdpowiedzi = Sesja.zaliczOdpowiedz(swieza, plan, "w01", Outcome.BLEDNA)
++        assertTrue(Sesja.czyRuszona(poOdpowiedzi))
++        assertTrue(Sesja.czyWznawialna(poOdpowiedzi, DZIS))
++        val poKroku = Sesja.dalej(swieza, plan)
++        assertTrue(Sesja.czyRuszona(poKroku))
++        assertTrue(Sesja.czyWznawialna(poKroku, DZIS))
++        // Proba przerwana to nie jest nic zrobionego.
++        assertFalse(Sesja.czyRuszona(Sesja.zaliczOdpowiedz(swieza, plan, "w01", Outcome.PRZERWANA)))
++    }
++
++    @Test
++    fun `pusta trasa nie ma czasu, ktory moglby minac`() {
++        val zestaw = slowa(4)
++        val plan = Sesja.zaplanuj(postepy(zestaw, box = 3, dueDay = DZIS + 7), zestaw, KIERUNEK, DZIS)
++        assertTrue(plan.pusty)
++        val zegar = Zegar(0L)
++        val stan = Sesja.rozpocznij(plan, zegar)
++
++        assertFalse(Sesja.czasNaKoniec(stan, plan, zegar))
++        zegar.ms = 3_600_000L
++        assertFalse(Sesja.czasNaKoniec(stan, plan, zegar))
++    }
++
++    // --- ukonczona runda sama przesuwa trase ------------------------------------------------
++
++    @Test
++    fun `ukonczona runda przesuwa trase o jeden krok`() {
++        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
++        val stan = Sesja.rozpocznij(plan, Zegar(0L))
++
++        val po = Sesja.poUkonczonejRundzie(stan, plan, 0)
++
++        assertEquals(1, po.krok)
++        assertEquals(RodzajKroku.GRA, Sesja.biezacy(po, plan)?.rodzaj)
++        assertFalse(po.zakonczona)
++    }
++
++    @Test
++    fun `po ostatniej rundzie stoi podsumowanie, a sesja nie konczy sie sama`() {
++        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
++        var stan = Sesja.rozpocznij(plan, Zegar(0L))
++        for (id in plan.nowe) stan = Sesja.zaliczOdpowiedz(stan, plan, id, Outcome.POPRAWNA)
++        stan = Sesja.poUkonczonejRundzie(stan, plan, 0)
++        stan = Sesja.zacznijOdpowiedz(stan)
++
++        val po = Sesja.poUkonczonejRundzie(stan, plan, 1)
++
++        assertEquals(2, po.krok)
++        assertEquals(RodzajKroku.PODSUMOWANIE, Sesja.biezacy(po, plan)?.rodzaj)
++        // Podsumowanie zamyka uczen, przyciskiem. Sesja zakonczona za jego plecami zniknelaby
++        // z zapisu, zanim zobaczyl, co zrobil.
++        assertFalse(po.zakonczona)
++        assertEquals(plan.nowe, po.zrobioneNowe)
++        assertTrue(po.zrobionePowtorki.isEmpty())
++        assertFalse(po.odpowiedzWToku)
++        assertEquals(stan.trasaNowe, po.trasaNowe)
++    }
++
++    @Test
++    fun `druga ukonczona runda tego samego kroku niczego juz nie przesuwa`() {
++        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
++        val poPierwszej = Sesja.poUkonczonejRundzie(Sesja.rozpocznij(plan, Zegar(0L)), plan, 0)
++
++        // JESZCZE RAZ na ekranie wyniku: ta sama runda kroku 0 ukonczona drugi raz.
++        assertEquals(poPierwszej, Sesja.poUkonczonejRundzie(poPierwszej, plan, 0))
++
++        // I w druga strone: uczen przeszedl dalej reka, zanim runda sie skonczyla.
++        val recznie = Sesja.dalej(Sesja.dalej(Sesja.rozpocznij(plan, Zegar(0L)), plan), plan)
++        assertEquals(recznie, Sesja.poUkonczonejRundzie(recznie, plan, 0))
++        assertEquals(recznie, Sesja.poUkonczonejRundzie(recznie, plan, 1))
++        // Numer kroku spoza planu to tez nie jest powod, zeby cokolwiek ruszac.
++        val start = Sesja.rozpocznij(plan, Zegar(0L))
++        assertEquals(start, Sesja.poUkonczonejRundzie(start, plan, 7))
++        assertEquals(start, Sesja.poUkonczonejRundzie(start, plan, -1))
++    }
++
++    @Test
++    fun `na podsumowaniu i po zakonczeniu ukonczona runda nie zmienia niczego`() {
++        val plan = Sesja.zaplanuj(emptyMap(), slowa(8), KIERUNEK, DZIS)
++        val naPodsumowaniu = Sesja.dalej(Sesja.dalej(Sesja.rozpocznij(plan, Zegar(0L)), plan), plan)
++        assertEquals(RodzajKroku.PODSUMOWANIE, Sesja.biezacy(naPodsumowaniu, plan)?.rodzaj)
++
++        // Podsumowanie nie jest runda, wiec nie ma czego konczyc.
++        assertEquals(naPodsumowaniu, Sesja.poUkonczonejRundzie(naPodsumowaniu, plan, 2))
++
++        val zakonczona = Sesja.zakoncz(naPodsumowaniu, plan)
++        assertEquals(zakonczona, Sesja.poUkonczonejRundzie(zakonczona, plan, 2))
++
++        // Stan z innego dnia niz plan nie nalezy do tej trasy.
++        val wczorajszy = Sesja.rozpocznij(plan, Zegar(0L)).copy(dzien = DZIS - 1)
++        assertEquals(wczorajszy, Sesja.poUkonczonejRundzie(wczorajszy, plan, 0))
++    }
++
++    @Test
++    fun `krok ze zdaniami w kontekscie nie jest runda i nie przesuwa sie sam`() {
++        val plan = Sesja.zaplanuj(emptyMap(), slowa(5), KIERUNEK, DZIS, zadaniaWKontekscie = listOf("z1"))
++        val naKontekscie = Sesja.dalej(Sesja.dalej(Sesja.rozpocznij(plan, Zegar(0L)), plan), plan)
++        assertEquals(RodzajKroku.KONTEKST, Sesja.biezacy(naKontekscie, plan)?.rodzaj)
++
++        assertEquals(naKontekscie, Sesja.poUkonczonejRundzie(naKontekscie, plan, 2))
++        // Runda przed nim przesuwa sie normalnie, tez gdy za nia stoi kontekst, a nie podsumowanie.
++        val naGrze = Sesja.dalej(Sesja.rozpocznij(plan, Zegar(0L)), plan)
++        assertEquals(2, Sesja.poUkonczonejRundzie(naGrze, plan, 1).krok)
++    }
+ }
+diff --git a/app/src/testDebug/java/com/matura/app/EkranWynikuTest.kt b/app/src/testDebug/java/com/matura/app/EkranWynikuTest.kt
+new file mode 100644
+index 0000000..3f9a21d
+--- /dev/null
++++ b/app/src/testDebug/java/com/matura/app/EkranWynikuTest.kt
+@@ -0,0 +1,332 @@
++package com.matura.app
++
++import androidx.compose.ui.test.assertIsDisplayed
++import androidx.compose.ui.test.getUnclippedBoundsInRoot
++import androidx.compose.ui.test.hasText
++import androidx.compose.ui.test.junit4.createComposeRule
++import androidx.compose.ui.test.onAllNodesWithContentDescription
++import androidx.compose.ui.test.onNodeWithContentDescription
++import androidx.compose.ui.test.onNodeWithText
++import androidx.compose.ui.test.onRoot
++import androidx.compose.ui.test.performClick
++import androidx.compose.ui.test.performScrollTo
++import androidx.compose.ui.unit.dp
++import androidx.compose.ui.unit.height
++import androidx.compose.ui.unit.width
++import com.matura.app.game.FlashKind
++import com.matura.app.game.MissedWord
++import com.matura.app.model.Direction
++import com.matura.app.model.Entry
++import com.matura.app.model.Options
++import com.matura.app.model.ScoreRecord
++import com.matura.app.model.Speed
++import com.matura.app.model.UiLanguage
++import com.matura.app.model.WordSet
++import com.matura.app.ui.EkranWyniku
++import com.matura.app.ui.ListaDoPowtorki
++import com.matura.app.ui.PlayScreen
++import com.matura.app.ui.PrzyciskWyniku
++import com.matura.app.ui.Palette
++import com.matura.app.ui.Str
++import com.matura.app.ui.czyStrata
++import com.matura.app.ui.pixel
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertTrue
++import org.junit.Assert.fail
++import org.junit.Rule
++import org.junit.Test
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++
++/**
++ * DLACZEGO TEN TEST ISTNIEJE
++ *
++ * Koniec rundy w trybie klasycznym byl nakladka rysowana w ramce planszy. Na telefonie
++ * 320 x 568 dp przyciski JESZCZE RAZ i DO MENU ladowaly pod polem odpowiedzi i klawiatura:
++ * nie bylo ich widac, nie dalo sie w nie trafic, a jedynym wyjsciem z rundy bylo systemowe
++ * "wstecz". Pod nakladka zostawala tez cala klawiatura, dalej klikalna i dalej czytana przez
++ * czytnik ekranu.
++ *
++ * Wszystko tutaj dzieje sie WLASNIE na 320 x 568 dp, bo to ten rozmiar pokazal blad. Runde
++ * konczymy naprawde (potworek dochodzi do dziala albo pada poprawna odpowiedz), a nie
++ * podstawionym stanem: ekran wyniku ma sie pojawic tam, gdzie pojawia sie uczniowi.
++ */
++@RunWith(RobolectricTestRunner::class)
++@Config(sdk = [34], qualifiers = "w320dp-h568dp-xhdpi")
++class EkranWynikuTest {
++
++    @get:Rule
++    val rule = createComposeRule()
++
++    private val str = Str(UiLanguage.PL)
++
++    /** Jedno slowo: wiadomo, co wyjdzie na plansze i co uczen ma wpisac. */
++    private val jednoSlowo = WordSet(
++        id = "t",
++        title = "Test",
++        entries = listOf(Entry("ache", "ból", "w000000000001")),
++    )
++
++    private val klawisze: List<String> =
++        ('A'..'Z').map { it.toString() } +
++            listOf(str.keyBackspace, str.keyEnter, str.keySpace, str.keyCursorLeft, str.keyCursorRight)
++
++    private var wyjscia = 0
++    private var dalej = 0
++    private var ukonczone = 0
++    private val rekordy = ArrayList<ScoreRecord>()
++
++    private fun pokazGre(
++        zycia: Int = 1,
++        spokojna: Boolean = false,
++        skonczona: Boolean = false,
++        zKontynuacja: Boolean = false,
++    ) {
++        // Petla klatek gry nigdy nie zglasza bezczynnosci, wiec zegar prowadzimy recznie
++        // (tak samo jak SystemKeyboardTest).
++        rule.mainClock.autoAdvance = false
++        rule.setContent {
++            PlayScreen(
++                set = jednoSlowo,
++                options = Options(lives = zycia, soundEnabled = false, speed = Speed.FAST),
++                str = str,
++                playerName = "Test",
++                onExit = { wyjscia++ },
++                onFinished = { rekordy += it },
++                calm = spokojna,
++                finite = skonczona,
++                onCompleted = { ukonczone++ },
++                onContinue = if (zKontynuacja) ({ dalej++ }) else null,
++                onAttempt = {},
++            )
++        }
++        rule.mainClock.advanceTimeByFrame()
++    }
++
++    /** Czy w drzewie jest wezel o takim opisie (napisy pikselowe, klawisze, plansza). */
++    private fun jest(opis: String): Boolean =
++        rule.onAllNodesWithContentDescription(opis).fetchSemanticsNodes().isNotEmpty()
++
++    /** Czy w drzewie jest zwykly napis o takiej tresci. */
++    private fun jestTekst(tekst: String): Boolean =
++        rule.onAllNodes(hasText(tekst)).fetchSemanticsNodes().isNotEmpty()
++
++    /** Przesuwa zegar gry, az [warunek] bedzie prawda. Potworek idzie do dziala najwyzej 22 s. */
++    private fun grajAz(co: String, warunek: () -> Boolean) {
++        repeat(240) {
++            if (warunek()) {
++                // Jeszcze dwie klatki: efekty zalozone po koncu rundy (zgloszenie wyniku) maja ruszyc.
++                rule.mainClock.advanceTimeByFrame()
++                rule.mainClock.advanceTimeByFrame()
++                return
++            }
++            rule.mainClock.advanceTimeBy(250)
++        }
++        fail("po 60 s gry dalej nie ma: $co")
++    }
++
++    /** Odpowiedz wpisana klawiatura gry, klawisz po klawiszu, i zatwierdzona. */
++    private fun wpisz(odpowiedz: String) {
++        for (znak in odpowiedz) {
++            rule.onNodeWithContentDescription(if (znak == ' ') str.keySpace else znak.uppercase()).performClick()
++        }
++        rule.onNodeWithContentDescription(str.keyEnter).performClick()
++    }
++
++    private fun wymagajWCalosciWOknie(opis: String) {
++        val okno = rule.onRoot().getUnclippedBoundsInRoot()
++        val wezel = rule.onNodeWithContentDescription(opis)
++        wezel.assertIsDisplayed()
++        val b = wezel.getUnclippedBoundsInRoot()
++        assertTrue(
++            "przycisk \"$opis\" wystaje poza okno: $b w oknie $okno",
++            b.left >= okno.left && b.top >= okno.top && b.right <= okno.right && b.bottom <= okno.bottom,
++        )
++        // Cel dotyku: 48 dp w obu osiach (ten sam prog co w TouchTargetAuditTest).
++        assertTrue(
++            "przycisk \"$opis\" jest mniejszy niz 48 dp: ${b.width} x ${b.height}",
++            b.width >= 48.dp && b.height >= 48.dp,
++        )
++    }
++
++    // ---- koniec zyc --------------------------------------------------------
++
++    @Test
++    fun poKoncuZyc_obaPrzyciskiSaWCalosciWOknieIDzialaja() {
++        pokazGre()
++        grajAz("ekran KONIEC GRY") { jest(str.gameOver) }
++
++        wymagajWCalosciWOknie(str.playAgain)
++        wymagajWCalosciWOknie(str.toMenu)
++
++        // Dotkniecie w srodek przycisku ma trafic w przycisk. Pod stara nakladka w tym miejscu
++        // lezalo pole odpowiedzi albo klawisz, wiec samo "wezel istnieje" nic by nie dowodzilo.
++        rule.onNodeWithContentDescription(str.toMenu).performClick()
++        assertEquals("DO MENU nie wywolalo wyjscia", 1, wyjscia)
++
++        rule.onNodeWithContentDescription(str.playAgain).performClick()
++        rule.mainClock.advanceTimeByFrame()
++        rule.mainClock.advanceTimeByFrame()
++        assertFalse("JESZCZE RAZ nie zaczelo nowej rundy", jest(str.gameOver))
++        assertTrue("nowa runda nie ma klawiatury", jest("Q"))
++    }
++
++    @Test
++    fun przepuszczoneSlowo_stoiNaEkranieWynikuRazemZTlumaczeniem() {
++        // Dwa zycia, jedno slowo: to samo haslo dochodzi do dziala dwa razy.
++        pokazGre(zycia = 2)
++        grajAz("ekran KONIEC GRY") { jest(str.gameOver) }
++
++        rule.onNodeWithContentDescription(str.toReview).assertIsDisplayed()
++        rule.onNodeWithText("ache").assertIsDisplayed()
++        rule.onNodeWithText("ból").assertIsDisplayed()
++        // Haslo, odpowiedz i licznik to JEDEN wiersz, a nie trzy napisy gdzies na ekranie.
++        rule.onNode(hasText("ache") and hasText("ból") and hasText("×2")).assertIsDisplayed()
++        rule.onNodeWithContentDescription(str.missedTimes(2)).assertIsDisplayed()
++        assertFalse("zdanie o pustej liscie obok listy", jestTekst(str.nothingMissed))
++    }
++
++    @Test
++    fun poKoncuZyc_wynikIdzieDoWolajacegoRaz_aRundaNieJestUkonczona() {
++        pokazGre()
++        grajAz("ekran KONIEC GRY") { jest(str.gameOver) }
++        rule.mainClock.advanceTimeBy(1_000)
++
++        assertEquals(1, rekordy.size)
++        assertEquals("koniec zyc to nie jest ukonczona runda", 0, ukonczone)
++        assertFalse(jest(str.roundComplete))
++    }
++
++    // ---- klawiatura znika --------------------------------------------------
++
++    @Test
++    fun naEkranieWyniku_nieMaAniJednegoKlawisza() {
++        pokazGre()
++        // Kontrola pozytywna: w trakcie rundy klawisze SA. Bez niej test przechodzilby takze
++        // wtedy, gdyby te opisy w ogole nie istnialy.
++        for (klawisz in klawisze) assertTrue("w trakcie gry brakuje klawisza $klawisz", jest(klawisz))
++        assertTrue("w trakcie gry brakuje paska glosu", jestTekst(str.speakAnswer))
++
++        grajAz("ekran KONIEC GRY") { jest(str.gameOver) }
++
++        val zostaly = klawisze.filter { jest(it) }
++        assertEquals("klawisze dostepne pod ekranem wyniku", emptyList<String>(), zostaly)
++        assertFalse("pasek glosu zostal pod ekranem wyniku", jestTekst(str.speakAnswer))
++    }
++
++    // ---- runda jako krok czegos wiekszego ----------------------------------
++
++    @Test
++    fun zKontynuacja_jestDalej_aNieMaDoMenu() {
++        pokazGre(zKontynuacja = true)
++        grajAz("ekran KONIEC GRY") { jest(str.gameOver) }
++
++        wymagajWCalosciWOknie(str.next)
++        wymagajWCalosciWOknie(str.playAgain)
++        assertFalse("DO MENU obok DALEJ", jest(str.toMenu))
++
++        rule.onNodeWithContentDescription(str.next).performClick()
++        assertEquals(1, dalej)
++        assertEquals("DALEJ nie jest wyjsciem do menu", 0, wyjscia)
++    }
++
++    // ---- runda ukonczona ---------------------------------------------------
++
++    @Test
++    fun ukonczonaRunda_maWlasnyEkran_iZglaszaSieRaz() {
++        pokazGre(spokojna = true, skonczona = true, zKontynuacja = true)
++        // Potworek wychodzi po 0,9 s; odpowiedz pada, gdy juz stoi na planszy.
++        rule.mainClock.advanceTimeBy(1_500)
++        wpisz("bol")
++        grajAz("ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
++        rule.mainClock.advanceTimeBy(1_000)
++
++        assertFalse("ukonczona runda pokazala ekran porazki", jest(str.gameOver))
++        rule.onNodeWithText(str.nothingMissed).assertIsDisplayed()
++        assertFalse("pusta ramka DO POWTORKI", jest(str.toReview))
++        wymagajWCalosciWOknie(str.next)
++        wymagajWCalosciWOknie(str.playAgain)
++        assertEquals(1, ukonczone)
++        assertEquals(1, rekordy.size)
++
++        // JESZCZE RAZ: nowa runda tego samego kroku, zgloszona osobno, gdy tez sie skonczy.
++        rule.onNodeWithContentDescription(str.playAgain).performClick()
++        rule.mainClock.advanceTimeBy(1_500)
++        assertFalse(jest(str.roundComplete))
++        wpisz("bol")
++        grajAz("drugi ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
++        assertEquals(2, ukonczone)
++        assertEquals(2, rekordy.size)
++    }
++
++    @Test
++    fun wRundzieSpokojnej_slowoPrzyDziale_pokazujeOdpowiedzINieKonczyRundy() {
++        pokazGre(spokojna = true, skonczona = true)
++
++        // Plansza jest rysunkiem, wiec odkryta odpowiedz sprawdzamy po opisie dla czytnika ekranu.
++        grajAz("odkryta odpowiedz") { jest("ache: ból") }
++
++        assertFalse("runda spokojna skonczyla sie, bo slowo doszlo do dziala", jest(str.gameOver))
++        assertTrue("klawiatura zniknela w trakcie rundy", jest("Q"))
++        assertEquals(0, rekordy.size)
++
++        // Odpowiedz gasnie sama po trzech sekundach, a slowo wraca na plansze i da sie je zaliczyc.
++        rule.mainClock.advanceTimeBy(3_500)
++        assertFalse("odkryta odpowiedz nie zgasla", jest("ache: ból"))
++        // Slowo wyszlo ponownie najpozniej 3,8 s po tym, jak doszlo do dziala.
++        rule.mainClock.advanceTimeBy(1_000)
++        wpisz("bol")
++        grajAz("ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
++
++        // Na ukonczonej rundzie lista tez jest: slowo, ktore raz doszlo do dziala.
++        rule.onNode(hasText("ache") and hasText("ból")).assertIsDisplayed()
++        assertEquals(1, ukonczone)
++    }
++
++    // ---- sam uklad, bez gry ------------------------------------------------
++
++    @Test
++    fun dlugaLista_przewijaSiePodPrzyciskami_aPrzyciskiZostajaWOknie() {
++        val slowa = (1..24).map {
++            MissedWord("haslo numer $it", "odpowiedz numer $it", "w$it", Direction.TERM_TO_DEF, 1)
++        }
++        rule.setContent {
++            EkranWyniku(
++                ikona = pixel(R.drawable.skull),
++                tytul = str.gameOver,
++                kolorTytulu = Palette.Danger,
++                punkty = 120,
++                opisPunktow = str.score + " 120",
++                glowny = PrzyciskWyniku(str.playAgain) {},
++                drugi = PrzyciskWyniku(str.toMenu) {},
++            ) { ListaDoPowtorki(slowa, str) }
++        }
++
++        wymagajWCalosciWOknie(str.playAgain)
++        wymagajWCalosciWOknie(str.toMenu)
++        rule.onNodeWithText("haslo numer 1").assertIsDisplayed()
++        // Ostatni wiersz jest ponizej okna, ale da sie do niego dojechac, a przyciski nie uciekaja.
++        rule.onNodeWithText("haslo numer 24").performScrollTo().assertIsDisplayed()
++        wymagajWCalosciWOknie(str.playAgain)
++        wymagajWCalosciWOknie(str.toMenu)
++        // Wiersz, do ktorego dojechalismy, konczy sie NAD przyciskami, a nie pod nimi.
++        val wiersz = rule.onNodeWithText("haslo numer 24").getUnclippedBoundsInRoot()
++        val przycisk = rule.onNodeWithContentDescription(str.playAgain).getUnclippedBoundsInRoot()
++        assertTrue("lista wjezdza pod przyciski: $wiersz / $przycisk", wiersz.bottom <= przycisk.top)
++    }
++
++    // ---- runda spokojna nie udaje straty -----------------------------------
++
++    @Test
++    fun rundaSpokojna_nieRobiZPrzepuszczonegoSlowaStraty() {
++        assertTrue(czyStrata(FlashKind.LIFE_LOST, calm = false))
++        assertFalse("runda spokojna trzesie plansza i gra ton bledu", czyStrata(FlashKind.LIFE_LOST, calm = true))
++        for (inny in FlashKind.values().filter { it != FlashKind.LIFE_LOST }) {
++            assertFalse(czyStrata(inny, calm = false))
++            assertFalse(czyStrata(inny, calm = true))
++        }
++        assertFalse(czyStrata(null, calm = false))
++    }
++}
+diff --git a/app/src/testDebug/java/com/matura/app/PetlaSesjiTest.kt b/app/src/testDebug/java/com/matura/app/PetlaSesjiTest.kt
+new file mode 100644
+index 0000000..3435488
+--- /dev/null
++++ b/app/src/testDebug/java/com/matura/app/PetlaSesjiTest.kt
+@@ -0,0 +1,367 @@
++package com.matura.app
++
++import androidx.activity.ComponentActivity
++import androidx.compose.runtime.CompositionLocalProvider
++import androidx.compose.ui.test.junit4.createAndroidComposeRule
++import androidx.compose.ui.test.onAllNodesWithContentDescription
++import androidx.compose.ui.test.onNodeWithContentDescription
++import androidx.compose.ui.test.onNodeWithText
++import androidx.compose.ui.test.performClick
++import androidx.lifecycle.Lifecycle
++import androidx.lifecycle.LifecycleOwner
++import androidx.lifecycle.LifecycleRegistry
++import androidx.lifecycle.compose.LocalLifecycleOwner
++import com.matura.app.data.Repository
++import com.matura.app.game.Matching
++import com.matura.app.learn.Attempt
++import com.matura.app.learn.Clock
++import com.matura.app.learn.Outcome
++import com.matura.app.learn.Srs
++import com.matura.app.model.Direction
++import com.matura.app.model.Entry
++import com.matura.app.model.TaskKind
++import com.matura.app.model.UiLanguage
++import com.matura.app.ui.MaturaApp
++import com.matura.app.ui.SesjaStr
++import com.matura.app.ui.Str
++import org.junit.Assert.assertEquals
++import org.junit.Assert.assertFalse
++import org.junit.Assert.assertNull
++import org.junit.Assert.assertTrue
++import org.junit.Assert.fail
++import org.junit.Rule
++import org.junit.Test
++import org.junit.rules.TemporaryFolder
++import org.junit.runner.RunWith
++import org.robolectric.RobolectricTestRunner
++import org.robolectric.annotation.Config
++
++/**
++ * DLACZEGO TEN TEST ISTNIEJE
++ *
++ * Dzienna sesja byla zlozona z czesci, z ktorych kazda miala testy, a razem nie dzialaly:
++ *
++ *  - runda z sesji konczyla sie w MENU i uczen musial sam wrocic na ekran sesji, zeby nacisnac
++ *    DALEJ;
++ *  - po powrocie plan byl ukladany od nowa i krok pierwszy mial juz INNE slowa (licznik szedl
++ *    5 / 10, 10 / 15 i nigdy sie nie domykal);
++ *  - przy ustawieniu "losowo" runda losowala kierunek dla kazdego slowa, a sesja liczyla tylko
++ *    jeden, wiec polowy odpowiedzi nie widziala;
++ *  - dzien harmonogramu byl liczony raz na zycie procesu, wiec rano aplikacja wznawiala
++ *    wczorajsza sesje.
++ *
++ * Tego nie widac w testach czystej logiki, bo blad siedzial w tym, CO aplikacja jej podaje.
++ * Dlatego idziemy tu przez prawdziwa aplikacje: ekran startowy, menu, sesja, runda grana
++ * klawiatura gry, ekran wyniku, powrot. Zapis jest prawdziwy (katalog tymczasowy), zegar
++ * podstawiony, zeby dalo sie przejsc przez polnoc.
++ */
++@RunWith(RobolectricTestRunner::class)
++// Ekran wyzszy niz jakikolwiek telefon, celowo: lista ekranu sesji miesci sie wtedy cala i do
++// przyciskow na jej koncu nie trzeba dojezdzac. Przewijanie z poziomu testu (performScrollToNode)
++// przy zatrzymanym zegarze nie konczy sie nigdy, a zegar musi stac, bo gra ma petle klatek.
++// Malym telefonem zajmuje sie EkranWynikuTest.
++@Config(sdk = [34], qualifiers = "w411dp-h1200dp-xhdpi")
++class PetlaSesjiTest {
++
++    @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
++    @get:Rule val katalog = TemporaryFolder()
++
++    private val str = Str(UiLanguage.PL)
++    private val sesja = SesjaStr(UiLanguage.PL)
++
++    private companion object {
++        const val DZIS = 19_875
++    }
++
++    /** Poludnie danego dnia UTC: godzina nie ma tu znaczenia, liczy sie sam dzien. */
++    private fun poludnie(dzien: Int) = dzien.toLong() * Srs.MS_PER_DAY + 12 * 3_600_000L
++
++    private var teraz = poludnie(DZIS)
++    private val zegar = Clock { teraz }
++
++    /** Wlasciciel cyklu zycia pod kontrola testu, zeby dalo sie wrocic "z tla" bez telefonu. */
++    private class SterowanyWlasciciel : LifecycleOwner {
++        val rejestr: LifecycleRegistry = LifecycleRegistry.createUnsafe(this)
++        override val lifecycle: Lifecycle get() = rejestr
++    }
++
++    private val wlasciciel = SterowanyWlasciciel()
++    private lateinit var repo: Repository
++
++    private fun uruchom(przygotuj: (Repository) -> Unit = {}) {
++        repo = Repository(katalog.root)
++        przygotuj(repo)
++        wlasciciel.rejestr.currentState = Lifecycle.State.RESUMED
++        // Ekran gry ma nieprzerwana petle klatek, wiec zegar testu prowadzimy recznie od poczatku.
++        rule.mainClock.autoAdvance = false
++        rule.setContent {
++            CompositionLocalProvider(LocalLifecycleOwner provides wlasciciel) {
++                MaturaApp(repo = repo, onExitApp = {}, zegar = zegar)
++            }
++        }
++        klatki()
++        dotknij(str.playAnonymously)
++    }
++
++    private fun klatki(ile: Int = 4) = repeat(ile) { rule.mainClock.advanceTimeByFrame() }
++
++    private fun jest(opis: String): Boolean =
++        rule.onAllNodesWithContentDescription(opis).fetchSemanticsNodes().isNotEmpty()
++
++    private fun dotknij(opis: String) {
++        rule.onNodeWithContentDescription(opis).performClick()
++        klatki()
++    }
++
++    /**
++     * Po zmianie stanu, ktora przyszla SPOZA Compose (systemowe "wstecz", obserwator cyklu zycia).
++     * Taki zapis dociera do rekompozycji przez petle glowna watku: na telefonie kreci sie ona
++     * sama, tutaj trzeba ja oproznic, a dopiero potem dac klatki. Dotkniecia tego nie potrzebuja,
++     * bo ich obsluga biegnie w korutynie Compose.
++     */
++    private fun poZmianieSpozaCompose() {
++        rule.waitForIdle()
++        klatki()
++    }
++
++    private fun wstecz() {
++        rule.runOnUiThread { rule.activity.onBackPressedDispatcher.onBackPressed() }
++        poZmianieSpozaCompose()
++    }
++
++    private fun grajAz(co: String, warunek: () -> Boolean) {
++        repeat(240) {
++            if (warunek()) {
++                klatki()
++                return
++            }
++            rule.mainClock.advanceTimeBy(250)
++        }
++        fail("po 60 s gry dalej nie ma: $co")
++    }
++
++    private fun wpisz(odpowiedz: String) {
++        for (znak in odpowiedz) {
++            rule.onNodeWithContentDescription(if (znak == ' ') str.keySpace else znak.uppercase()).performClick()
++        }
++        rule.onNodeWithContentDescription(str.keyEnter).performClick()
++    }
++
++    /** Wpisy pierwszej trasy na swiezej instalacji: piec pierwszych slow katalogu. */
++    private fun pierwszaPiatka(): List<Entry> =
++        repo.load().sets.flatMap { it.entries }.filter { it.id.isNotBlank() }.distinctBy { it.id }.take(5)
++
++    /** Najkrotsza odpowiedz, jaka gra przyjmie dla tej strony wpisu: mniej klawiszy w tescie. */
++    private fun odpowiedz(strona: String): String = Matching.acceptedAnswers(strona).minBy { it.length }
++
++    /**
++     * Przechodzi cala runde kroku sesji: czeka, az wszystkie slowa stana na planszy, i odpowiada
++     * na kazde. Potworki wychodza co 3,8 s (0,9 s, 4,7 s, ... 16,1 s), a najszybszy potrzebuje
++     * ponad 17 s marszu, wiec w 16,5 sekundzie stoi piec i zaden jeszcze nie doszedl do dziala.
++     */
++    private fun przejdzRunde(odpowiedzi: List<String>) {
++        assertTrue("runda nie ruszyla: nie ma klawiatury gry", jest("Q"))
++        rule.mainClock.advanceTimeBy(16_500)
++        for (o in odpowiedzi) wpisz(o)
++        grajAz("ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
++        rule.mainClock.advanceTimeBy(500)
++    }
++
++    private fun naEkranieSesji(): Boolean = jest(sesja.sessionTitle) && !jest(str.play)
++
++    // ---- cala trasa -------------------------------------------------------
++
++    @Test
++    fun calaTrasaDnia_dwieRundyTychSamychSlow_iLicznikKtorySieDomyka() {
++        // "Losowo" to ustawienie, przy ktorym runda sesji grala polowe slow w odwrotna strone.
++        uruchom { it.setOptions(it.load().options.copy(direction = Direction.RANDOM)) }
++        val piatka = pierwszaPiatka()
++        val poPolsku = piatka.map { odpowiedz(it.definition) }
++
++        dotknij(str.dailyMenu)
++        assertTrue(naEkranieSesji())
++        assertTrue(jest("0 / 5"))
++        assertFalse("plakietka WZNOWIONA nad sesja, ktorej nikt jeszcze nie zaczal", jest(sesja.sessionResumed))
++
++        // KROK 1: runda spokojna, odpowiedzi po polsku, bo plan jest w kierunku haslo -> tlumaczenie.
++        dotknij(sesja.sessionStart)
++        przejdzRunde(poPolsku)
++
++        assertTrue("z rundy sesji idzie sie DALEJ", jest(str.next))
++        assertFalse("runda sesji nie konczy sie w menu", jest(str.toMenu))
++        dotknij(str.next)
++
++        assertTrue("DALEJ po rundzie sesji ma prowadzic na ekran sesji", naEkranieSesji())
++        assertTrue("ukonczona runda nie przesunela trasy", jest(krok(2)))
++        // Te same piec slow, a nie piec zrobionych z dziesieciu.
++        assertTrue("licznik sesji sie nie domknal", jest("5 / 5"))
++        assertTrue(jest(sesja.sessionResumed))
++
++        val poPierwszej = repo.load()
++        val stan = requireNotNull(poPierwszej.sesja) { "sesja zniknela z zapisu" }
++        assertEquals(1, stan.krok)
++        assertEquals(piatka.map { it.id }, stan.zrobioneNowe)
++        assertEquals(piatka.map { it.id }, stan.trasaNowe)
++        // Wszystkie odpowiedzi poszly pod kierunek planu, zadna pod odwrotny.
++        for (wpis in piatka) {
++            assertEquals(Srs.FIRST_BOX, Srs.progressOf(poPierwszej.progress, wpis.id, Direction.TERM_TO_DEF).box)
++        }
++        assertEquals(5, poPierwszej.progress.size)
++        // Rundy spokojnej nie da sie przegrac, wiec nie ma jej w rankingu ani w rekordach.
++        assertTrue(poPierwszej.scores.isEmpty())
++        assertEquals(0, poPierwszej.profile.bestScore)
++        assertEquals(0, poPierwszej.profile.bestStreak)
++        assertEquals(1, poPierwszej.profile.gamesPlayed)
++        assertEquals(5, poPierwszej.profile.totalKills)
++
++        // KROK 2: "to samo slownictwo jeszcze raz". Gdyby runda dostala inne slowa, te same piec
++        // odpowiedzi by jej nie skonczylo.
++        dotknij(sesja.sessionStart)
++        przejdzRunde(poPolsku)
++        dotknij(str.next)
++
++        assertTrue(naEkranieSesji())
++        assertTrue(jest(krok(3)))
++        assertTrue(jest("5 / 5"))
++        val poDrugiej = requireNotNull(repo.load().sesja)
++        assertEquals(2, poDrugiej.krok)
++        assertFalse("sesja zamknela sie sama, bez podsumowania", poDrugiej.zakonczona)
++
++        // Podsumowanie zamyka uczen.
++        dotknij(sesja.sessionFinish)
++        assertTrue("po KONIEC NA DZIS wraca sie do menu", jest(str.play))
++        assertNull(repo.load().sesja)
++    }
++
++    private fun krok(nr: Int) = sesja.sessionStepLabel.replace("%1", nr.toString()).replace("%2", "3")
++
++    // ---- wyjscie w polowie -------------------------------------------------
++
++    @Test
++    fun wyjscieZRundySesji_wracaNaSesje_iNiczegoNiePrzesuwa() {
++        uruchom()
++        val piatka = pierwszaPiatka()
++
++        dotknij(str.dailyMenu)
++        dotknij(sesja.sessionStart)
++        assertTrue(jest("Q"))
++        // Jedno slowo zaliczone, potem systemowe "wstecz".
++        rule.mainClock.advanceTimeBy(16_500)
++        wpisz(odpowiedz(piatka[2].definition))
++        rule.mainClock.advanceTimeBy(1_000)
++        wstecz()
++
++        assertTrue("wyjscie z rundy sesji ma prowadzic na ekran sesji, nie do menu", naEkranieSesji())
++        // Runda porzucona nie jest ukonczona: krok zostaje biezacy, a odpowiedz i tak sie liczy.
++        assertTrue(jest(krok(1)))
++        assertTrue(jest("1 / 5"))
++        val stan = requireNotNull(repo.load().sesja)
++        assertEquals(0, stan.krok)
++        assertEquals(listOf(piatka[2].id), stan.zrobioneNowe)
++
++        // Drugie "wstecz" jest juz zwyklym wyjsciem z ekranu sesji do menu.
++        wstecz()
++        assertTrue(jest(str.play))
++    }
++
++    @Test
++    fun sesjaTylkoObejrzana_nieZostajeWZapisie() {
++        uruchom()
++
++        dotknij(str.dailyMenu)
++        assertTrue(naEkranieSesji())
++        dotknij(str.back)
++
++        assertTrue(jest(str.play))
++        assertNull("sesja, w ktorej nic sie nie wydarzylo, trafila do zapisu", repo.load().sesja)
++    }
++
++    // ---- dzien harmonogramu ------------------------------------------------
++
++    @Test
++    fun poNocyWTle_aplikacjaPracujeNaDzisiejszymDniu() {
++        uruchom()
++        dotknij(str.dailyMenu)
++        // Uczen pomija pierwszy krok: sesja jest ruszona i zapisana.
++        dotknij(sesja.sessionContinue)
++        assertTrue(jest(krok(2)))
++        assertEquals(DZIS, requireNotNull(repo.load().sesja).dzien)
++
++        // Telefon lezy cala noc z aplikacja w tle, proces zyje. Rano uczen do niej wraca.
++        wlasciciel.rejestr.currentState = Lifecycle.State.CREATED
++        teraz = poludnie(DZIS + 1)
++        wlasciciel.rejestr.currentState = Lifecycle.State.RESUMED
++        poZmianieSpozaCompose()
++
++        // Ekran sesji stoi otwarty i ma pokazac DZISIEJSZA trase, a nie wczorajszy krok drugi.
++        assertTrue("po nocy w tle wznowila sie wczorajsza sesja", jest(krok(1)))
++        assertFalse(jest(sesja.sessionResumed))
++    }
++
++    @Test
++    fun wejscieNaSesjeZMenu_tezOdswiezaDzien() {
++        uruchom()
++        dotknij(str.dailyMenu)
++        dotknij(sesja.sessionContinue)
++        dotknij(str.back)
++        assertTrue(jest(str.play))
++
++        // Polnoc mija, gdy uczen patrzy na menu: zadnego powrotu z tla nie ma.
++        teraz = poludnie(DZIS + 1)
++        dotknij(str.dailyMenu)
++
++        assertTrue("sesja otwarta z menu pracuje na wczorajszym dniu", jest(krok(1)))
++        assertFalse(jest(sesja.sessionResumed))
++    }
++
++    // ---- trudne slowa ------------------------------------------------------
++
++    @Test
++    fun cwiczenieTrudnegoSlowa_idzieWKierunkuListy_iWracaNaTeSamaListe() {
++        lateinit var trudne: Entry
++        uruchom { r ->
++            // Pomylka sprzed trzech dni w kierunku tlumaczenie -> haslo: slowo jest trudne tylko
++            // na tej liscie, a ustawienie ucznia ("losowo") otwiera liste w kierunku przeciwnym.
++            trudne = r.load().sets.first().entries.first()
++            r.setOptions(r.load().options.copy(direction = Direction.RANDOM))
++            r.recordAttempt(
++                Attempt(trudne.id, Direction.DEF_TO_TERM, TaskKind.PRZYPOMNIENIE, Outcome.BLEDNA, "dawno"),
++                poludnie(DZIS - 3),
++            )
++        }
++
++        dotknij(str.hardWordsMenu)
++        assertFalse("lista w kierunku ustawien nie ma tego slowa", jest(str.hardPractice))
++        rule.onNodeWithText(str.dirDefToTerm).performClick()
++        klatki()
++        assertTrue(jest(str.hardPractice))
++
++        dotknij(str.hardPractice)
++        assertTrue("cwiczenie nie ruszylo", jest("Q"))
++        // Trudne slowo jest zalegle, wiec wychodzi pierwsze (0,9 s). Odpowiedz po ANGIELSKU:
++        // na tej liscie haslem jest polskie tlumaczenie.
++        rule.mainClock.advanceTimeBy(1_500)
++        wpisz(odpowiedz(trudne.term))
++        rule.mainClock.advanceTimeBy(1_000)
++
++        val poOdpowiedzi = repo.load().progress
++        assertEquals(
++            "odpowiedz nie trafila pod kierunek listy",
++            Srs.FIRST_BOX,
++            Srs.progressOf(poOdpowiedzi, trudne.id, Direction.DEF_TO_TERM).box,
++        )
++        assertFalse(
++            "runda zagrala slowo w kierunku, ktorego uczen nie cwiczyl",
++            poOdpowiedzi.containsKey(Srs.key(trudne.id, Direction.TERM_TO_DEF)),
++        )
++
++        wstecz()
++        assertFalse("wyjscie z cwiczenia zaprowadzilo do menu", jest(str.play))
++        // Ta sama lista co przed runda. Slowo ma historie tylko w kierunku tlumaczenie -> haslo,
++        // wiec jego karta z przyciskiem CWICZ istnieje wylacznie na tej liscie.
++        assertTrue("po cwiczeniu lista wrocila do kierunku z ustawien", jest(str.hardPractice))
++        assertTrue(jest(trudne.definition))
++        // Ustawienie ucznia nie zmienilo sie od tego, ze runda szla w innym kierunku.
++        assertEquals(Direction.RANDOM, repo.load().options.direction)
++    }
++}
+diff --git a/app/src/testDebug/java/com/matura/app/PodgladEkranowTest.kt b/app/src/testDebug/java/com/matura/app/PodgladEkranowTest.kt
+index 7848a2c..e5c9cfc 100644
+--- a/app/src/testDebug/java/com/matura/app/PodgladEkranowTest.kt
++++ b/app/src/testDebug/java/com/matura/app/PodgladEkranowTest.kt
+@@ -6,15 +6,23 @@ import androidx.activity.ComponentActivity
+ import androidx.activity.compose.setContent
+ import androidx.compose.runtime.Composable
+ import androidx.compose.ui.test.junit4.createEmptyComposeRule
++import androidx.compose.ui.test.onAllNodesWithContentDescription
++import androidx.compose.ui.test.onNodeWithContentDescription
++import androidx.compose.ui.test.performClick
+ import androidx.test.core.app.ActivityScenario
+ import com.matura.app.data.BuiltInSets
++import com.matura.app.learn.Sesja
++import com.matura.app.model.Direction
++import com.matura.app.model.Entry
+ import com.matura.app.model.GameMode
+ import com.matura.app.model.Options
+ import com.matura.app.model.Profile
+ import com.matura.app.model.SaveData
+ import com.matura.app.model.ScoreRecord
+ import com.matura.app.model.UiLanguage
++import com.matura.app.model.WordSet
+ import com.matura.app.ui.AchievementsScreen
++import com.matura.app.ui.DzisiejszaSesjaScreen
+ import com.matura.app.ui.MenuScreen
+ import com.matura.app.ui.ModePickScreen
+ import com.matura.app.ui.MultipleChoiceScreen
+@@ -184,6 +192,125 @@ class PodgladEkranowTest {
+         )
+     }
+ 
++    /**
++     * Cztery slowa, zeby runde skonczona dalo sie w podgladzie PRZEJSC klawiatura gry, a nie
++     * tylko obejrzec w biegu. "schoolmate" ma najdluzsza odpowiedz w calym katalogu: to na niej
++     * widac, czy odkryta odpowiedz i wiersz listy mieszcza sie na waskim telefonie.
++     */
++    private val malyZestaw = WordSet(
++        id = "podglad",
++        title = "Podglad",
++        entries = listOf(
++            Entry("ache", "ból", "w000000000001"),
++            Entry("schoolmate", "kolega ze szkoły, koleżanka ze szkoły", "w000000000002"),
++            Entry("salary", "pensja", "w000000000003"),
++            Entry("homework", "praca domowa", "w000000000004"),
++        ),
++    )
++
++    private fun jest(opis: String): Boolean =
++        rule.onAllNodesWithContentDescription(opis).fetchSemanticsNodes().isNotEmpty()
++
++    /** Przesuwa zegar gry, az [warunek] bedzie prawda (plansza jest rysunkiem, wiec pytamy semantyke). */
++    private fun grajAz(co: String, warunek: () -> Boolean) {
++        repeat(400) {
++            if (warunek()) return
++            rule.mainClock.advanceTimeBy(250)
++        }
++        error("po 100 s gry dalej nie ma: $co")
++    }
++
++    /** Odpowiedz wpisana klawiatura gry i zatwierdzona. */
++    private fun wpisz(odpowiedz: String) {
++        for (znak in odpowiedz) {
++            rule.onNodeWithContentDescription(if (znak == ' ') str.keySpace else znak.uppercase()).performClick()
++        }
++        rule.onNodeWithContentDescription(str.keyEnter).performClick()
++    }
++
++    /**
++     * Runda spokojna i skonczona od srodka do konca, tak jak idzie krok dziennej sesji:
++     *  - "w-toku": cztery slowa na planszy, jedno zaliczone, w rogu licznik zamiast serc;
++     *  - "odkrycie": trzy zaliczone, czwarte doszlo do dziala i plansza pokazuje odpowiedz;
++     *  - "koniec": czwarte wrocilo i dostalo odpowiedz, wiec runda zamknela sie sama.
++     */
++    @Test
++    fun gra_klasyczna_spokojna() = podglad(
++        "gra-klasyczna-spokojna",
++        kroki = listOf(
++            // Po 13 s wszystkie cztery potworki sa juz na planszy, a zaden jeszcze nie doszedl.
++            "w-toku" to { czas(13_000)(); wpisz("pensja"); czas(700)() },
++            "odkrycie" to {
++                wpisz("bol"); wpisz("praca domowa")
++                grajAz("odkryta odpowiedz") { jest("schoolmate: kolega ze szkoły, koleżanka ze szkoły") }
++                czas(400)()
++            },
++            "koniec" to {
++                // Slowo wraca na plansze najpozniej 3,8 s po tym, jak doszlo do dziala.
++                czas(4_500)()
++                wpisz("kolega ze szkoly")
++                grajAz("ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
++            },
++        ),
++    ) {
++        PlayScreen(
++            set = malyZestaw, options = Options(), str = str,
++            playerName = "Kuba", onExit = {}, onFinished = {},
++            calm = true, finite = true, onContinue = {}, onAttempt = {},
++        )
++    }
++
++    /** Runda ukonczona bez jednego przepuszczonego slowa: zdanie zamiast pustej ramki listy. */
++    @Test
++    fun gra_klasyczna_bez_bledow() = podglad(
++        "gra-klasyczna-bez-bledow",
++        kroki = listOf(
++            "koniec" to {
++                czas(13_000)()
++                wpisz("pensja"); wpisz("bol"); wpisz("praca domowa"); wpisz("kolega ze szkoly")
++                grajAz("ekran RUNDA UKONCZONA") { jest(str.roundComplete) }
++            },
++        ),
++    ) {
++        PlayScreen(
++            set = malyZestaw, options = Options(), str = str,
++            playerName = "Kuba", onExit = {}, onFinished = {},
++            calm = true, finite = true, onAttempt = {},
++        )
++    }
++
++    /** Runda skonczona z zyciami (krok GRA bez nowych slow): serca, a pod nimi licznik. */
++    @Test
++    fun gra_klasyczna_skonczona() = podglad(
++        "gra-klasyczna-skonczona",
++        kroki = listOf("w-toku" to { czas(13_000)(); wpisz("pensja"); czas(700)() }),
++    ) {
++        PlayScreen(
++            set = malyZestaw, options = Options(lives = 5), str = str,
++            playerName = "Kuba", onExit = {}, onFinished = {},
++            finite = true, onContinue = {}, onAttempt = {},
++        )
++    }
++
++    /** Pierwszy dzien: piec nowych slow, wiec runda gry jest spokojna i ma plakietke. */
++    @Test
++    fun dzisiejsza_sesja() = podglad("dzisiejsza-sesja") {
++        val dzien = 19_875
++        val plan = Sesja.zaplanuj(
++            emptyMap(), BuiltInSets.all().first().entries.map { it.id }, Direction.TERM_TO_DEF, dzien,
++        )
++        val stan = Sesja.rozpocznij(plan) { 0L }
++        DzisiejszaSesjaScreen(
++            jezyk = UiLanguage.PL,
++            plan = plan,
++            stan = stan,
++            podsumowanie = Sesja.podsumuj(plan, stan, emptyMap(), dzien),
++            czasNaKoniec = true,
++            wznowiona = true,
++            onPrzerwij = {}, onKrok = {}, onDalej = {}, onZakoncz = {},
++        )
++    }
++
+     @Test
+     fun prawda_falsz() = podglad(
+         "prawda-falsz",
