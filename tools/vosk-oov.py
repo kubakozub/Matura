@@ -13,8 +13,10 @@ Skrypt czyta hasla wprost z data/BuiltInSets.kt i normalizuje je DOKLADNIE tak j
 VoskGrammar.normalizeForGrammar w Kotlinie - jesli tamto sie zmieni, to musi zmienic sie tutaj.
 
 UZYCIE:
-    tools/vosk-oov.py                         # oba jezyki, modele z app/src/main/assets/vosk
+    tools/vosk-oov.py                         # oba jezyki, modele z app/src/vosk-assets/vosk
     tools/vosk-oov.py --lista                 # same hasla, po jednym w linii (do wklejenia)
+
+Modeli nie ma w repozytorium: przed pierwszym uzyciem odtwarza je tools/vosk-fetch.sh.
 """
 
 import importlib.util
@@ -24,7 +26,8 @@ import sys
 
 KORZEN = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ZESTAWY = os.path.join(KORZEN, "app/src/main/java/com/matura/app/data/BuiltInSets.kt")
-MODELE = os.path.join(KORZEN, "app/src/main/assets/vosk")
+MODELE = os.path.join(KORZEN, "app/src/vosk-assets/vosk")
+JEZYKI = (("angielski", 0, "en"), ("polski", 1, "pl"))
 
 # --- normalizacja: lustro VoskGrammar.normalizeForGrammar ---------------------------------
 ROZDZIELACZE = re.compile(r"[,;/]")
@@ -66,12 +69,23 @@ def hasla():
     return pary
 
 
+def wymagaj_modeli():
+    """Brak katalogu modelu to nie blad skryptu, tylko pominiety krok: mowimy, ktory."""
+    brak = [kod for _, _, kod in JEZYKI if not os.path.isdir(os.path.join(MODELE, kod))]
+    if brak:
+        raise SystemExit(
+            "brak modeli Vosk (%s) w %s\n"
+            "Modeli nie ma w repozytorium. Odtworz je: tools/vosk-fetch.sh"
+            % (", ".join(brak), MODELE))
+
+
 def main(argv):
     tylko_lista = "--lista" in argv
+    wymagaj_modeli()
     pary = hasla()
     if not tylko_lista:
         print("hasel w BuiltInSets: %d" % len(pary))
-    for jezyk, kolumna, kod in (("angielski", 0, "en"), ("polski", 1, "pl")):
+    for jezyk, kolumna, kod in JEZYKI:
         leks = slownik_modelu(kod)
         strony = sorted({p[kolumna] for p in pary})
         # Haslo jest nieme dopiero wtedy, gdy ZADEN jego wariant nie ma kompletu tokenow:

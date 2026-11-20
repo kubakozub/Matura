@@ -414,12 +414,33 @@ class Repository(private val dir: File) {
      * Przedtem kazdy blad parsowania szedl od razu do danych domyslnych, a pierwszy zapis
      * (juz samo podanie imienia na ekranie startowym) nadpisywal uszkodzony plik w miejscu
      * i kasowal resztki, z ktorych dalo sie jeszcze cokolwiek wylowic.
+     *
+     * Jeden wyjatek od "potem kopia": gdy pliku glownego NIE MA, pierwszenstwo ma kompletny
+     * plik tymczasowy. [writeAtomically] robi dwie zmiany nazw (glowny na kopie, tymczasowy na
+     * glowny) i miedzy nimi pliku glownego nie ma; aplikacja ubita w tej chwili zostawia kopie
+     * z POPRZEDNIM stanem i caly, zsynchronizowany plik tymczasowy z NAJNOWSZYM. Odczyt z samej
+     * kopii po cichu gubil wtedy ostatni zapis, choc lezal obok.
+     *
+     * Odczyt dalej niczego nie pisze: plik tymczasowy zostaje na miejscu, a plik glowny
+     * odtwarza dopiero nastepny zapis. Do tego czasu najnowszy stan lezy na dysku tylko w pliku
+     * tymczasowym, a [writeAtomically] zaczyna od nadpisania wlasnie jego: ubicie w trakcie
+     * TEGO jednego zapisu cofa wiec do kopii. Zamkniecie tej luki wymaga zmiany w zapisie,
+     * nie w odczycie.
      */
     private fun readBestAvailable(): SaveData {
         read(file)?.let { return it }
 
-        // Skoro plik glowny istnieje, a odczyt zwrocil null, to znaczy, ze sie nie sparsowal.
-        if (file.exists()) quarantineMainFile()
+        if (file.exists()) {
+            // Skoro plik glowny istnieje, a odczyt zwrocil null, to znaczy, ze sie nie sparsowal.
+            quarantineMainFile()
+        } else {
+            // Urwany plik tymczasowy (ubicie w trakcie jego pisania) nie sparsuje sie i wtedy
+            // read() zwraca null, wiec dalej idziemy do kopii jak dotad.
+            read(File(dir, TEMP_NAME))?.let {
+                Log.w(TAG, "odczyt z $TEMP_NAME: zapis przerwany przed zmiana nazwy na $FILE_NAME")
+                return it
+            }
+        }
 
         read(backup)?.let {
             Log.w(TAG, "odczyt z kopii $BACKUP_NAME — $FILE_NAME byl nie do odczytania")

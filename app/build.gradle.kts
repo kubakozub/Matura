@@ -80,9 +80,22 @@ android {
 
     buildTypes {
         release {
-            // R8 wylaczone swiadomie: wiekszosc rozmiaru to grafika PNG, ktorej
-            // i tak nie skurczy, a wlaczenie go bez testu na urzadzeniu grozi
-            // wywrotka dopiero u testerow. Reguly sa gotowe w proguard-rules.pro.
+            // R8 wylaczone swiadomie, ale NIE dlatego, ze nie ma czego skracac. Zmierzone na
+            // paczce release 0.9.18 (14 979 246 B): grafika PNG to 0,4 procent, nagrania
+            // wymowy 49 procent, a kod (dex) 44 procent, w wiekszosci nieuzywane czesci
+            // bibliotek. R8 skrocilby pobieranie mniej wiecej o jedna trzecia, z okolo 15,0 MB
+            // do okolo 9,5 MB.
+            //
+            // Zostaje wylaczone, bo nic w tym repozytorium nie uruchamia kodu PO R8: testy
+            // jednostkowe ida na klasach sprzed minifikacji, a testow na urzadzeniu nie ma.
+            // Zminifikowana paczka wymaga wiec jednego recznego przejscia na telefonie przed
+            // wydaniem; bez niego blad wyszedlby dopiero u uczniow.
+            //
+            // Reguly w proguard-rules.pro pokrywaja build domyslny. Dla wariantu z glosem
+            // offline (-Pvosk=true) regul BRAKUJE: ani vosk-android, ani JNA nie przynosza
+            // wlasnych, a w pliku nie ma wpisow dla com.sun.jna ani org.vosk. JNA wiaze kod
+            // natywny z klasami Javy po nazwach, wiec tego wariantu nie wolno minifikowac,
+            // dopoki takich regul nie dostanie.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // brak keystore.properties -> paczka wychodzi niepodpisana,
